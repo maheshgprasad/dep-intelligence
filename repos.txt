@@ -1,0 +1,5 @@
+# Local fixtures ship with the repo so the dashboard runs without tokens.
+# Add GitHub URLs below, one per line. github.ibm.com repos need GHE_TOKEN.
+fixtures/auth-service
+fixtures/user-service
+fixtures/report-job

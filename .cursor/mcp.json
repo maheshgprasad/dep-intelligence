@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dep-intel": {
+      "command": "bash",
+      "args": ["scripts/dep-intel-mcp.sh"]
+    }
+  }
+}

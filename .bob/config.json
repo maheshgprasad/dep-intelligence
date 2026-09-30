@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "dep-intel": {
+      "command": "bash",
+      "args": ["${PROJECT_ROOT}/scripts/dep-intel-mcp.sh"],
+      "env": {
+        "GHE_TOKEN": "${GHE_TOKEN}",
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}",
+        "REPOS_FILE": "${REPOS_FILE}",
+        "OUTPUT_DIR": "${OUTPUT_DIR}"
+      },
+      "mode": "read_only",
+      "require_approval": false
+    }
+  }
+}

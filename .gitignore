@@ -1,0 +1,12 @@
+.env
+.venv/
+server/.venv/
+*.egg-info/
+node_modules/
+web/dist/
+output/
+__pycache__/
+*.pyc
+.coverage
+.DS_Store
+fixtures/**/.git

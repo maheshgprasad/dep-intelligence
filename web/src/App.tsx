@@ -1,0 +1,105 @@
+import { useCallback, useEffect, useState } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
+import {
+  Button,
+  Content,
+  Header,
+  HeaderGlobalBar,
+  HeaderMenuItem,
+  HeaderName,
+  HeaderNavigation,
+  Modal,
+  ProgressBar,
+  Theme,
+} from "@carbon/react";
+import { Play } from "@carbon/icons-react";
+import { getSnapshot, startRun, type Snapshot } from "./api";
+import { Dashboard } from "./pages/Dashboard";
+import { GraphPage } from "./pages/GraphPage";
+
+type Progress = { phase: string; percent: number; message: string };
+
+export function App() {
+  const location = useLocation();
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [progress, setProgress] = useState<Progress>({ phase: "idle", percent: 0, message: "Waiting to start" });
+
+  const refresh = useCallback(async () => {
+    try {
+      setSnapshot(await getSnapshot());
+      setError("");
+    } catch {
+      setError("The analysis API is not reachable on port 8010.");
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const source = new EventSource("/api/events");
+    source.addEventListener("progress", (event) => {
+      const data = JSON.parse((event as MessageEvent).data) as Progress;
+      setProgress(data);
+      setOpen(true);
+      if (data.phase === "complete") void refresh();
+    });
+    source.addEventListener("file_updated", () => {
+      void refresh();
+    });
+    return () => source.close();
+  }, [refresh]);
+
+  async function run(path: string) {
+    setProgress({ phase: "starting", percent: 0, message: "Starting" });
+    setOpen(true);
+    await startRun(path);
+  }
+
+  return (
+    <Theme theme="g10">
+      <Header aria-label="dep-intel">
+        <HeaderName href="/" prefix="">
+          dep-intel
+        </HeaderName>
+        <HeaderNavigation aria-label="sections">
+          <HeaderMenuItem href="/" isCurrentPage={location.pathname === "/"}>
+            Dashboard
+          </HeaderMenuItem>
+          <HeaderMenuItem href="/graph" isCurrentPage={location.pathname === "/graph"}>
+            Code graph
+          </HeaderMenuItem>
+        </HeaderNavigation>
+        <HeaderGlobalBar>
+          <Button kind="primary" size="md" renderIcon={Play} onClick={() => void run("/api/analysis/run")}>
+            Run analysis
+          </Button>
+        </HeaderGlobalBar>
+      </Header>
+      <Content className="app-content">
+        <Routes>
+          <Route path="/" element={<Dashboard snapshot={snapshot} error={error} loaded={loaded} />} />
+          <Route
+            path="/graph"
+            element={<GraphPage snapshot={snapshot} error={error} loaded={loaded} onBuild={() => void run("/api/graphs/build")} />}
+          />
+        </Routes>
+      </Content>
+      <Modal
+        open={open}
+        passiveModal
+        modalHeading="Analysis"
+        onRequestClose={() => setOpen(false)}
+      >
+        <p>{progress.message}</p>
+        <ProgressBar label="Analysis progress" value={progress.percent} max={100} status={progress.percent >= 100 ? "finished" : "active"} />
+      </Modal>
+    </Theme>
+  );
+}

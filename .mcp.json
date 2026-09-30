@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dep-intel": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["${CLAUDE_PROJECT_DIR}/scripts/dep-intel-mcp.sh"]
+    }
+  }
+}
