@@ -325,34 +325,37 @@ function CoverageTable({ snapshot }: { snapshot: Snapshot | null }) {
 }
 
 function SecurityPanel({ snapshot }: { snapshot: Snapshot | null }) {
-  const advisories = snapshot?.vulnerabilities?.findings ?? [];
+  const report = snapshot?.vulnerabilities;
+  const scanned = report?.meta?.scanned ?? report?.scanned?.length ?? 0;
+  const advisories = (report?.findings ?? []).filter((item) => item.id);
+  const suggestions = (report?.findings ?? []).filter((item) => item.suggestion);
   return (
     <div className="stack-gap">
       <InlineNotification
         kind="info"
-        title="Sources"
-        subtitle="Advisories come from OSV. Mend GitHub issues are included when repos.txt lists GitHub URLs."
+        title="OSV"
+        subtitle={`${scanned} packages from repos.txt were queried one by one against https://osv.dev/. ${advisories.length} advisories, ${suggestions.length} suggestions.`}
         lowContrast
         hideCloseButton
       />
       <Table size="lg" useZebraStyles>
         <TableHead>
           <TableRow>
-            <TableHeader>ID</TableHeader>
-            <TableHeader>Package</TableHeader>
             <TableHeader>Repository</TableHeader>
-            <TableHeader>Summary</TableHeader>
+            <TableHeader>Package</TableHeader>
+            <TableHeader>Advisory</TableHeader>
+            <TableHeader>Suggestion</TableHeader>
           </TableRow>
         </TableHead>
         <TableBody>
-          {advisories.map((item) => (
-            <TableRow key={`${item.repo}-${item.id}-${item.package}`}>
-              <TableCell>{item.id}</TableCell>
+          {suggestions.map((item) => (
+            <TableRow key={`${item.repo}-${item.id}-${item.package}-${item.version}`}>
+              <TableCell>{item.repo}</TableCell>
               <TableCell>
                 {item.package}@{item.version}
               </TableCell>
-              <TableCell>{item.repo}</TableCell>
-              <TableCell>{item.summary}</TableCell>
+              <TableCell>{item.id || "—"}</TableCell>
+              <TableCell>{item.suggestion}</TableCell>
             </TableRow>
           ))}
         </TableBody>

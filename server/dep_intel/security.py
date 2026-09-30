@@ -15,7 +15,8 @@ def generate_security_report(settings: Settings) -> dict:
         "dependency_advisories": advisories,
         "summary": {
             "github_issues": len(issues),
-            "advisories": len(advisories),
+            "advisories": len([item for item in advisories if item.get("id")]),
+            "suggestions": len([item for item in advisories if item.get("suggestion")]),
         },
     }
     write_json(settings.output_dir, "security_release_report.json", payload)
@@ -27,12 +28,19 @@ def generate_security_report(settings: Settings) -> dict:
         f"GitHub Mend issues: {len(issues)}",
         f"OSV advisories: {len(advisories)}",
         "",
-        "## OSV advisories",
+        "## Suggestions",
         "",
     ]
-    if not advisories:
+    suggestions = [item for item in advisories if item.get("suggestion")]
+    if not suggestions:
         lines.append("None.")
-    for item in advisories:
+    for item in suggestions:
+        lines.append(f"- {item.get('repo')}: {item.get('suggestion')}")
+    lines.extend(["", "## OSV advisories", ""])
+    identified = [item for item in advisories if item.get("id")]
+    if not identified:
+        lines.append("None.")
+    for item in identified:
         lines.append(
             f"- `{item.get('id')}` {item.get('package')}@{item.get('version')} in {item.get('repo')}: {item.get('summary')}"
         )
@@ -44,7 +52,9 @@ def generate_security_report(settings: Settings) -> dict:
         lines.append(f"- {item.get('cve') or 'CVE unknown'} {item.get('title')} ({item.get('url')})")
     markdown = "\n".join(lines) + "\n"
     (settings.output_dir / "security_release_report.md").write_text(markdown, encoding="utf-8")
+    advisory_count = len([item for item in advisories if item.get("id")])
+    suggestion_count = len([item for item in advisories if item.get("suggestion")])
     return {
         "success": True,
-        "message": f"Security report written with {len(advisories)} advisories and {len(issues)} GitHub issues.",
+        "message": f"Security report written with {advisory_count} OSV advisories, {suggestion_count} suggestions, and {len(issues)} GitHub issues.",
     }

@@ -24,18 +24,27 @@ class Package:
 
 
 def packages_in(files: dict[str, str]) -> list[Package]:
-    found: list[Package] = []
+    declared: list[Package] = []
+    locked: list[Package] = []
     for path, text in files.items():
         name = path.rsplit("/", 1)[-1]
         if name == "package.json":
-            found.extend(_npm(text))
+            declared.extend(_npm(text))
         elif name == "requirements.txt":
-            found.extend(_requirements(text))
+            declared.extend(_requirements(text))
         elif name == "pyproject.toml":
-            found.extend(_pyproject(text))
+            declared.extend(_pyproject(text))
         elif name == "go.mod":
-            found.extend(_gomod(text))
-    return _dedupe(found)
+            declared.extend(_gomod(text))
+        elif name == "package-lock.json":
+            locked.extend(_npm_lock(text))
+        elif name == "poetry.lock":
+            locked.extend(_poetry_lock(text))
+        elif name == "Pipfile.lock":
+            locked.extend(_pipfile_lock(text))
+        elif name == "go.sum":
+            locked.extend(_gosum(text))
+    return _overlay(declared, locked)
 
 
 def build_matrix(workspaces: list[Workspace], settings: Settings) -> dict:
@@ -136,8 +145,78 @@ def _gomod(text: str) -> list[Package]:
     return found
 
 
-def _dedupe(packages: list[Package]) -> list[Package]:
-    seen: dict[tuple[str, str], Package] = {}
-    for package in packages:
-        seen[(package.ecosystem, package.name)] = package
-    return list(seen.values())
+def _overlay(declared: list[Package], locked: list[Package]) -> list[Package]:
+    """Keep every locked package, and any declared package the lockfile does not name."""
+    chosen: dict[tuple[str, str], Package] = {}
+    for package in declared:
+        chosen[(package.ecosystem, package.name.lower())] = package
+    for package in locked:
+        if package.version:
+            chosen[(package.ecosystem, package.name.lower())] = package
+    return list(chosen.values())
+
+
+def _npm_lock(text: str) -> list[Package]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    found = []
+    packages = data.get("packages")
+    if isinstance(packages, dict):
+        for path, meta in packages.items():
+            if not path or not isinstance(meta, dict):
+                continue
+            name = path.split("node_modules/")[-1]
+            version = str(meta.get("version") or "")
+            if name and version:
+                found.append(Package("npm", name, version))
+    for name, meta in (data.get("dependencies") or {}).items():
+        if isinstance(meta, dict) and meta.get("version"):
+            found.append(Package("npm", name, str(meta["version"])))
+    return found
+
+
+def _poetry_lock(text: str) -> list[Package]:
+    found = []
+    name = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == "[[package]]":
+            name = ""
+            continue
+        if line.startswith("name = "):
+            name = line.split("=", 1)[1].strip().strip('"').strip("'")
+        elif line.startswith("version = ") and name:
+            version = line.split("=", 1)[1].strip().strip('"').strip("'")
+            found.append(Package("pypi", name, version))
+            name = ""
+    return found
+
+
+def _pipfile_lock(text: str) -> list[Package]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    found = []
+    for section in ("default", "develop"):
+        for name, meta in (data.get(section) or {}).items():
+            if not isinstance(meta, dict):
+                continue
+            version = str(meta.get("version") or "").lstrip("=")
+            if version:
+                found.append(Package("pypi", name, version))
+    return found
+
+
+def _gosum(text: str) -> list[Package]:
+    found = []
+    for raw in text.splitlines():
+        parts = raw.split()
+        if len(parts) < 2 or parts[1].endswith("/go.mod"):
+            continue
+        version = parts[1][1:] if parts[1].startswith("v") else parts[1]
+        if version:
+            found.append(Package("go", parts[0], version))
+    return found

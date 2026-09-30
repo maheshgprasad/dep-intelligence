@@ -39,7 +39,18 @@ export type Snapshot = {
     };
   } | null;
   vulnerabilities: {
-    findings: { repo: string; id: string; package: string; version: string; summary: string; severity: string }[];
+    meta?: { scanned: number; total: number; suggestions: number };
+    findings: {
+      repo: string;
+      id: string;
+      package: string;
+      version: string;
+      summary: string;
+      severity: string;
+      suggestion?: string;
+      fixed?: string;
+    }[];
+    scanned?: { repo: string; package: string; version: string; advisory_count: number; status: string }[];
   } | null;
   cves: { issues: { repo: string; title: string; url: string; state: string; cve: string }[]; summary: { message?: string } } | null;
   security: { summary: { github_issues: number; advisories: number } } | null;
