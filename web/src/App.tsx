@@ -4,6 +4,7 @@ import {
   Button,
   Content,
   Header,
+  HeaderGlobalAction,
   HeaderGlobalBar,
   HeaderMenuItem,
   HeaderName,
@@ -12,12 +13,19 @@ import {
   ProgressBar,
   Theme,
 } from "@carbon/react";
-import { Play } from "@carbon/icons-react";
+import { Asleep, Light, Play } from "@carbon/icons-react";
 import { getSnapshot, startRun, type Snapshot } from "./api";
 import { Dashboard } from "./pages/Dashboard";
 import { GraphPage } from "./pages/GraphPage";
 
 type Progress = { phase: string; percent: number; message: string };
+type ThemeName = "g10" | "g100";
+
+function storedTheme(): ThemeName {
+  const saved = localStorage.getItem("dep-intel-theme");
+  if (saved === "g100" || saved === "g10") return saved;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "g100" : "g10";
+}
 
 export function App() {
   const location = useLocation();
@@ -26,6 +34,14 @@ export function App() {
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<Progress>({ phase: "idle", percent: 0, message: "Waiting to start" });
+  const [theme, setTheme] = useState<ThemeName>(storedTheme);
+  const dark = theme === "g100";
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("cds--g100", dark);
+    document.documentElement.classList.toggle("cds--g10", !dark);
+    localStorage.setItem("dep-intel-theme", theme);
+  }, [dark, theme]);
 
   const refresh = useCallback(async () => {
     try {
@@ -63,7 +79,7 @@ export function App() {
   }
 
   return (
-    <Theme theme="g10">
+    <Theme theme={theme}>
       <Header aria-label="dep-intel">
         <HeaderName href="/" prefix="">
           dep-intel
@@ -80,6 +96,13 @@ export function App() {
           <Button kind="primary" size="md" renderIcon={Play} onClick={() => void run("/api/analysis/run")}>
             Run analysis
           </Button>
+          <HeaderGlobalAction
+            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            tooltipAlignment="end"
+            onClick={() => setTheme(dark ? "g10" : "g100")}
+          >
+            {dark ? <Light size={20} /> : <Asleep size={20} />}
+          </HeaderGlobalAction>
         </HeaderGlobalBar>
       </Header>
       <Content className="app-content">

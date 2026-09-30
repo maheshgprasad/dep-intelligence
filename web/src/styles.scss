@@ -1,8 +1,17 @@
 @use "@carbon/react";
 
+html.cds--g100 {
+  color-scheme: dark;
+}
+
+html.cds--g10 {
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   background: var(--cds-background);
+  color: var(--cds-text-primary);
 }
 
 .app-content {

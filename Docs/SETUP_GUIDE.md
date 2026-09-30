@@ -3,11 +3,12 @@
 Python 3.11 or newer, and Node.js 18 or newer.
 
 ```bash
-python3 -m venv server/.venv
-server/.venv/bin/pip install -e "server[dev]"
+skills/install-mcp-pydriller/scripts/install.sh
 cd web
 npm install
 ```
+
+That script installs the MCP server (`mcp` and the `dep-intel-mcp` command) and PyDriller into `server/.venv`.
 
 Start the API:
 
