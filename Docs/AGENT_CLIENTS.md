@@ -2,7 +2,7 @@
 
 One stdio MCP server, `scripts/dep-intel-mcp.sh`, registers the analysis tools. Install the Python virtualenv first (`Docs/SETUP_GUIDE.md`). The script runs `server/.venv/bin/python -m dep_intel.mcp_server`.
 
-Skills are written once under `skills/` and linked into each client:
+Skills are written once under `skills/` and linked into each client. `install-mcp-pydriller` is the install step: it installs the MCP server and PyDriller.
 
 | Client | MCP config | Skills |
 | --- | --- | --- |

@@ -7,10 +7,11 @@ The behavior is taken from the notes in [Docs/spec](Docs/spec). This tree is a n
 ## Run
 
 ```bash
-python3 -m venv server/.venv
-server/.venv/bin/pip install -e "server[dev]"
+skills/install-mcp-pydriller/scripts/install.sh
 cd web && npm install && cd ..
 ```
+
+The install script creates `server/.venv` and installs the MCP server and PyDriller.
 
 Two processes:
 
