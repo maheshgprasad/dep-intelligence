@@ -33,6 +33,7 @@ const PATTERNS = [
 ];
 
 const SKIP = new Set(["_hints", "_graph", "context_savings", "next_tool_suggestions"]);
+const PATH_COLUMNS = new Set(["qualified_name", "source_qualified", "target_qualified", "file_path", "relative_path"]);
 
 export function GraphPage({
   snapshot,
@@ -129,11 +130,17 @@ export function GraphPage({
         </TabList>
         <TabPanels>
           <TabPanel>
+            <Hint>
+              A snapshot of this repository: how many files and symbols the graph contains, how risky the latest changes look, and review questions worth asking.
+            </Hint>
             <PayloadView payload={tools?.stats ?? null} />
             <PayloadView payload={tools?.minimal ?? null} />
             <PayloadView payload={tools?.questions ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Search finds a function, class, or file by name. Query shows one relationship, such as who calls a symbol or what it imports. Explore walks outward from the best match.
+            </Hint>
             <div className="graph-toolbar">
               <TextInput
                 id="symbol-search"
@@ -196,20 +203,32 @@ export function GraphPage({
             <LiveResult tab="search" liveTab={liveTab} payload={live} error={liveError} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              A flow is one path the program takes from an entry point, such as an HTTP handler or a test, through the functions it calls. Higher criticality means more of the system depends on it.
+            </Hint>
             <PayloadView payload={tools?.flows ?? null} />
             <FlowLookup slug={selected?.slug} busy={busy} onAsk={(tool, args) => void ask("flows", tool, args)} />
             <LiveResult tab="flows" liveTab={liveTab} payload={live} error={liveError} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              A community is a cluster of symbols that call each other more than they call the rest of the code. It usually lines up with a feature or a folder.
+            </Hint>
             <PayloadView payload={tools?.communities ?? null} />
             <CommunityLookup slug={selected?.slug} busy={busy} onAsk={(tool, args) => void ask("communities", tool, args)} />
             <LiveResult tab="communities" liveTab={liveTab} payload={live} error={liveError} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              A hub has many connections, so a change there spreads widely. A bridge sits between communities. If it breaks, those areas lose their link to each other.
+            </Hint>
             <PayloadView payload={tools?.hubs ?? null} />
             <PayloadView payload={tools?.bridges ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Impact is the set of symbols reached by following calls and imports out from a changed file. Affected flows are the entry-point paths that pass through that file.
+            </Hint>
             <div className="graph-toolbar">
               <TextInput
                 id="impact-file"
@@ -242,23 +261,41 @@ export function GraphPage({
             <LiveResult tab="impact" liveTab={liveTab} payload={live} error={liveError} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Architecture is the map of communities and the links between them. A warning means two areas are coupled more tightly than their boundary suggests.
+            </Hint>
             <PayloadView payload={tools?.architecture ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Quality lists oversized files, symbols with no connections, and busy symbols that have no test. These are structural weak spots, not style nits.
+            </Hint>
             <PayloadView payload={tools?.large_functions ?? null} />
             <PayloadView payload={tools?.knowledge_gaps ?? null} />
             <PayloadView payload={tools?.dead_code ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Refactor suggestions say which symbols look unused or misplaced in their community. The dashboard only reports them. It does not edit the repository.
+            </Hint>
             <PayloadView payload={tools?.refactor ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Coupling lists symbol pairs whose connection is unexpected, for example across communities, languages, or the boundary between production code and tests.
+            </Hint>
             <PayloadView payload={tools?.surprises ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Changes scores the latest git diff: which functions moved, which flows those functions sit on, and which of them have no test.
+            </Hint>
             <PayloadView payload={tools?.changes ?? null} />
           </TabPanel>
           <TabPanel>
+            <Hint>
+              Hotspots are files that git history shows changing often, or changing together. A high coupling score means two files tend to be edited in the same commits.
+            </Hint>
             <div className="stack-gap">
               {cochange?.message ? (
                 <InlineNotification kind="warning" title="History" subtitle={cochange.message} lowContrast hideCloseButton />
@@ -277,6 +314,10 @@ export function GraphPage({
       </Tabs>
     </div>
   );
+}
+
+function Hint({ children }: { children: string }) {
+  return <p className="tab-hint">{children}</p>;
 }
 
 function FlowLookup({
@@ -357,7 +398,7 @@ function PayloadView({ payload }: { payload: CrgPayload | null }) {
   );
   return (
     <div className="stack-gap payload-block">
-      {typeof summary === "string" && summary ? <p className="stat-label">{summary}</p> : null}
+      {typeof summary === "string" && summary ? <p className="stat-label">{symbolText(summary)}</p> : null}
       {isRecord(summary) ? <RecordTable rows={[summary]} /> : null}
       {warnings.map((warning) => (
         <InlineNotification key={warning} kind="warning" title="Graph" subtitle={warning} lowContrast hideCloseButton />
@@ -396,7 +437,11 @@ function RecordTable({ rows }: { rows: Record<string, unknown>[] }) {
       keys.push(key);
     }
   }
-  const visible = keys.filter((key) => rows.some((row) => !isRecord(row[key]) || Array.isArray(row[key]))).slice(0, 8);
+  const hasSymbol = rows.some((row) => "name" in row || "source" in row);
+  const visible = keys
+    .filter((key) => !PATH_COLUMNS.has(key) && !(key === "file" && hasSymbol))
+    .filter((key) => rows.some((row) => !isRecord(row[key]) || Array.isArray(row[key])))
+    .slice(0, 8);
   return (
     <div className="table-scroll">
       <Table size="lg" useZebraStyles>
@@ -427,9 +472,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function cell(value: unknown): string {
   if (value == null || value === "") return "—";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string") return symbolText(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map((item) => cell(item)).filter(Boolean).join(", ");
-  return JSON.stringify(value);
+  return symbolText(JSON.stringify(value));
+}
+
+function symbolText(value: string): string {
+  return value
+    .split(/(\s+)/)
+    .map((piece) => {
+      if (piece.includes("::")) return piece.slice(piece.lastIndexOf("::") + 2);
+      if (piece.startsWith("/")) return piece.slice(piece.lastIndexOf("/") + 1).replace(/[),.;:]+$/, "");
+      return piece;
+    })
+    .join("")
+    .replace(/\s+\([^)\n]*\/[^)\n]*\)/g, "");
 }
 
 function label(key: string): string {

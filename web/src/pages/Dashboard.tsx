@@ -148,6 +148,7 @@ function RepoTable({ snapshot }: { snapshot: Snapshot | null }) {
 function DependencyTable({ snapshot }: { snapshot: Snapshot | null }) {
   const mismatches = snapshot?.matrix?.version_mismatches ?? [];
   const repos = Object.keys(snapshot?.matrix?.repositories ?? {});
+  const unique = snapshot?.matrix?.unique_packages ?? [];
   return (
     <div className="stack-gap">
       <Table size="lg" useZebraStyles>
@@ -181,9 +182,46 @@ function DependencyTable({ snapshot }: { snapshot: Snapshot | null }) {
         </TableBody>
       </Table>
       <p className="stat-label">
-        {(snapshot?.matrix?.common_packages.length ?? 0)} shared packages, {(snapshot?.matrix?.unique_packages.length ?? 0)} unique.
-        The table lists version mismatches.
+        {(snapshot?.matrix?.common_packages.length ?? 0)} shared packages, {unique.length} unique.
+        The table above lists version mismatches.
       </p>
+      {repos.map((repo) => {
+        const rows = unique.filter((item) => item.repo === repo);
+        return (
+          <section key={repo} className="stack-gap">
+            <h2 className="section-title">{repo}</h2>
+            <p className="stat-label">{rows.length} unique {rows.length === 1 ? "package" : "packages"}</p>
+            <Table size="lg" useZebraStyles>
+              <TableHead>
+                <TableRow>
+                  <TableHeader>Package</TableHeader>
+                  <TableHeader>Ecosystem</TableHeader>
+                  <TableHeader>Version</TableHeader>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.length ? (
+                  rows.map((item) => (
+                    <TableRow key={`${item.ecosystem}-${item.name}`}>
+                      <TableCell>{item.name}</TableCell>
+                      <TableCell>
+                        <Tag size="sm">{item.ecosystem}</Tag>
+                      </TableCell>
+                      <TableCell>{item.version || "—"}</TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell>None</TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>—</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </section>
+        );
+      })}
     </div>
   );
 }

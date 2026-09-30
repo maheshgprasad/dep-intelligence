@@ -38,6 +38,12 @@ body {
   color: var(--cds-text-secondary);
 }
 
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0;
+}
+
 .stat-label {
   margin: 0;
   font-size: 0.75rem;
@@ -78,6 +84,12 @@ body {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+
+.tab-hint {
+  margin: 0 0 1rem;
+  max-width: 52rem;
+  color: var(--cds-text-secondary);
 }
 
 .payload-block {
