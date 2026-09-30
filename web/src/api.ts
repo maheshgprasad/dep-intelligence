@@ -56,31 +56,50 @@ export type Snapshot = {
   security: { summary: { github_issues: number; advisories: number } } | null;
   security_markdown: string;
   graphs: { repos: GraphRepo[] } | null;
-  graph_details: Record<string, { graph: ImportGraph | null; cochange: Cochange | null }>;
+  graph_details: Record<string, { crg: CrgBundle | null; cochange: Cochange | null }>;
   running: boolean;
 };
 
 export type Update = { repo: string; ecosystem: string; package: string; from: string; to: string };
 export type Finding = { repo: string; file: string; name: string; line: number; message: string };
 export type Route = { path: string; method: string; framework: string };
-export type GraphRepo = { slug: string; name: string; stats: { files: number; edges: number; communities: number } };
-export type ImportGraph = {
-  nodes: { id: string; language: string; lines: number }[];
-  edges: { from: string; to: string; kind: string }[];
-  communities: { id: string; size: number; files: string[] }[];
-  hubs: { id: string; degree: number }[];
-  bridges: { id: string; connects: string[] }[];
-  quality: { large_files: { id: string; lines: number }[]; isolated_files: string[] };
-  note?: string;
+export type GraphRepo = {
+  slug: string;
+  name: string;
+  url?: string;
+  checkout?: string;
+  error?: string;
+  stats?: {
+    files?: number;
+    edges?: number;
+    communities?: number;
+    files_count?: number;
+    total_nodes?: number;
+    total_edges?: number;
+    languages?: string[];
+  };
 };
+export type CrgPayload = Record<string, unknown>;
+export type CrgBundle = { meta?: { source?: string; generated_at?: string }; tools?: Record<string, CrgPayload> };
 export type Cochange = {
   window_label: string;
   commit_count: number;
   author_count: number;
   message?: string;
   hotspots: { file: string; commits: number; additions: number; deletions: number; churn_score: number }[];
-  cochange: { file_a: string; file_b: string; commits: number; coupling: number; is_structural: boolean }[];
+  cochange: { file_a: string; file_b: string; commits: number; coupling: number; is_structural?: boolean }[];
 };
+
+export async function queryGraph(slug: string, tool: string, args: Record<string, unknown>): Promise<CrgPayload> {
+  const response = await fetch("/api/graphs/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug, tool, arguments: args }),
+  });
+  const body = (await response.json().catch(() => ({}))) as { detail?: string };
+  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Graph query failed");
+  return body as CrgPayload;
+}
 
 export async function getSnapshot(): Promise<Snapshot> {
   const response = await fetch("/api/snapshot");

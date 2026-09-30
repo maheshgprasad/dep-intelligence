@@ -48,7 +48,7 @@ export function App() {
       setSnapshot(await getSnapshot());
       setError("");
     } catch {
-      setError("The analysis API is not reachable on port 8010.");
+      setError("Nami Trace is not running. Start it with scripts/nami-trace.sh.");
     } finally {
       setLoaded(true);
     }
@@ -80,9 +80,9 @@ export function App() {
 
   return (
     <Theme theme={theme}>
-      <Header aria-label="dep-intel">
+      <Header aria-label="Nami Trace">
         <HeaderName href="/" prefix="">
-          dep-intel
+          Nami Trace
         </HeaderName>
         <HeaderNavigation aria-label="sections">
           <HeaderMenuItem href="/" isCurrentPage={location.pathname === "/"}>

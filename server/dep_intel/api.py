@@ -6,16 +6,40 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
-from dep_intel.config import Settings
+from dep_intel.config import PROJECT_ROOT, Settings
+from dep_intel.crg import call_tool
+from dep_intel.graph import checkout_for, refresh_graphs
 from dep_intel.pipeline import run_all, run_graphs
 from dep_intel.store import read_json
 
-app = FastAPI(title="dep-intel")
+DIST = PROJECT_ROOT / "web" / "dist"
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def warm() -> None:
+        try:
+            await asyncio.to_thread(refresh_graphs, Settings.load())
+            publish("file_updated", {"filename": "crg"})
+        except Exception:
+            return
+
+    task = asyncio.create_task(warm())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="Nami Trace", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,7 +67,7 @@ def _snapshot(settings: Settings) -> dict:
     for repo in graphs.get("repos") or []:
         slug = repo["slug"]
         details[slug] = {
-            "graph": read_json(output / "graphs" / slug, "graph.json"),
+            "crg": read_json(output / "graphs" / slug, "crg.json"),
             "cochange": read_json(output / "graphs" / slug, "cochange.json"),
         }
     report_md = output / "security_release_report.md"
@@ -139,8 +163,58 @@ async def start_graphs() -> dict:
     return {"started": True}
 
 
+class GraphQuery(BaseModel):
+    slug: str
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/graphs/query")
+async def graph_query(body: GraphQuery) -> dict:
+    settings = Settings.load()
+    try:
+        root = checkout_for(settings, body.slug)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="That repository is not in repos.txt.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        return await asyncio.to_thread(call_tool, body.tool, root, body.arguments)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _ui(full_path: str) -> FileResponse:
+    index = DIST / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="The dashboard build is missing. Run scripts/nami-trace.sh.")
+    if full_path:
+        candidate = (DIST / full_path).resolve()
+        if str(candidate).startswith(str(DIST.resolve())) and candidate.is_file():
+            return FileResponse(candidate)
+    return FileResponse(index)
+
+
+@app.get("/")
+def dashboard() -> FileResponse:
+    return _ui("")
+
+
+@app.get("/{full_path:path}")
+def dashboard_files(full_path: str) -> FileResponse:
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(status_code=404)
+    return _ui(full_path)
+
+
 def main() -> None:
     import uvicorn
 
-    port = int(os.environ.get("API_PORT", "8010"))
+    port = int(os.environ.get("PORT") or os.environ.get("API_PORT") or "3002")
     uvicorn.run("dep_intel.api:app", host="127.0.0.1", port=port)
+
+
+if __name__ == "__main__":
+    main()

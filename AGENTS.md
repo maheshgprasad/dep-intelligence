@@ -1,6 +1,6 @@
 # Agents
 
-dep-intel is a React + Carbon dashboard and a Python analysis service. Cursor, Claude, and IBM Bob share one MCP server: `scripts/dep-intel-mcp.sh`.
+Nami Trace is a React + Carbon dashboard and a Python analysis service, started together with `scripts/nami-trace.sh`. Cursor, Claude, and IBM Bob share one MCP server: `scripts/dep-intel-mcp.sh`.
 
 ## Approved without another confirmation
 

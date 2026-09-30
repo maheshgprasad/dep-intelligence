@@ -80,7 +80,7 @@ def run_graphs(repos_file: str = "", output_dir: str = "", since_days: int = 365
     with httpx.Client(follow_redirects=True) as client:
         workspaces = [load_workspace(repo, client, settings) for repo in load_repos(settings)]
         if on_progress:
-            on_progress("build_repo_graph", 20, "Building import graphs")
+            on_progress("build_repo_graph", 20, "Updating code graphs")
         graphs = build_graphs(workspaces, settings)
         if on_progress:
             on_progress("analyze_commit_history", 70, "Mining commit history")

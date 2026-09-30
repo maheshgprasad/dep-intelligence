@@ -103,7 +103,7 @@ def generate_security_release_report(output_dir: str = "") -> str:
 
 @mcp.tool()
 def build_repo_graph(repos_file: str = "", output_dir: str = "") -> str:
-    """Build a structural import graph per repository. Writes repo_graphs.json."""
+    """Build each repository with the code-review-graph MCP server. Writes repo_graphs.json and crg.json."""
     with _open(repos_file, output_dir) as (settings, _client, workspaces):
         return _message(build_graphs(workspaces, settings))
 
