@@ -48,8 +48,11 @@ TEXT_SUFFIXES = {
 }
 MANIFEST_NAMES = {
     "package.json",
-    "tsconfig.json",
+    "package-lock.json",
     "yarn.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "tsconfig.json",
     "go.mod",
     "go.sum",
     "requirements.txt",
@@ -129,32 +132,74 @@ def _slug(name: str) -> str:
     return "".join(cleaned).strip("_") or "repo"
 
 
+def ensure_checkout(ref: RepoRef, settings: Settings) -> Path:
+    """Return a local git checkout for code-review-graph and PyDriller.
+
+    Local paths are used in place. GitHub URLs are cloned under output/checkouts.
+    """
+    if ref.kind == "local" and ref.path and ref.path.is_dir():
+        return ref.path
+    dest = settings.output_dir / "checkouts" / ref.slug
+    if (dest / ".git").exists():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        raise RuntimeError(f"Checkout path exists without a git directory: {dest}")
+    url = ref.raw
+    token = _token_for(ref, settings)
+    if token and url.startswith("https://"):
+        url = url.replace("https://", f"https://x-access-token:{token}@", 1)
+    import subprocess
+
+    completed = subprocess.run(
+        ["git", "clone", "--single-branch", "--no-tags", url, str(dest)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    if completed.returncode != 0 or not (dest / ".git").exists():
+        detail = (completed.stderr or completed.stdout or "git clone failed").strip()
+        raise RuntimeError(detail.splitlines()[-1][:300])
+    return dest
+
+
 def load_workspace(ref: RepoRef, client: httpx.Client, settings: Settings, file_limit: int = 80) -> Workspace:
     if ref.kind == "local":
         return Workspace(ref=ref, files=_read_local(ref.path or Path("."), file_limit))
-    return Workspace(ref=ref, files=_read_github(ref, client, settings, file_limit))
+    try:
+        return Workspace(ref=ref, files=_read_github(ref, client, settings, file_limit))
+    except httpx.HTTPError:
+        checkout = ensure_checkout(ref, settings)
+        return Workspace(ref=ref, files=_read_local(checkout, file_limit))
 
 
 def _read_local(root: Path, file_limit: int) -> dict[str, str]:
     files: dict[str, str] = {}
     if not root.is_dir():
         return files
+    extras = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS and not name.startswith(".")]
         for filename in filenames:
             path = Path(dirpath) / filename
             relative = path.relative_to(root).as_posix()
-            if path.suffix.lower() not in TEXT_SUFFIXES and filename not in MANIFEST_NAMES:
+            is_manifest = filename in MANIFEST_NAMES
+            if not is_manifest and path.suffix.lower() not in TEXT_SUFFIXES:
                 continue
-            if path.stat().st_size > 200_000:
+            if not is_manifest and extras >= file_limit:
+                continue
+            if path.stat().st_size > 1_000_000 and filename not in {"package-lock.json", "yarn.lock", "poetry.lock", "go.sum"}:
+                continue
+            if path.stat().st_size > 4_000_000:
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
             files[relative] = text
-            if len(files) >= file_limit:
-                return files
+            if not is_manifest:
+                extras += 1
     return files
 
 
@@ -195,8 +240,10 @@ def _read_github(ref: RepoRef, client: httpx.Client, settings: Settings, file_li
         if name in MANIFEST_NAMES or suffix in TEXT_SUFFIXES:
             paths.append(path)
     paths.sort(key=lambda path: (0 if Path(path).name in MANIFEST_NAMES else 1, path.count("/"), path))
+    manifests = [path for path in paths if Path(path).name in MANIFEST_NAMES]
+    others = [path for path in paths if Path(path).name not in MANIFEST_NAMES][:file_limit]
     files: dict[str, str] = {}
-    for path in paths[:file_limit]:
+    for path in manifests + others:
         response = client.get(
             f"{base}/repos/{ref.owner}/{ref.repo}/contents/{path}",
             params={"ref": branch},

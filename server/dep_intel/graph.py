@@ -1,117 +1,203 @@
-"""Import graph for the code graph page.
+"""Code graph built by code-review-graph.
 
-This is a structural graph built from import and require edges. It is not the
-code-review-graph SQLite database. The page says so.
+Each repository is checked out, then code-review-graph parses it and writes
+graph.db under output/graphs/<slug>/. The dashboard snapshot is a projection
+of that database: nodes, communities, hubs, bridges, and quality findings.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from dep_intel.config import Settings
-from dep_intel.sources import Workspace
-from dep_intel.store import now, write_json
-
-_JS_IMPORT = re.compile(r"(?:require\(\s*|from\s+)['\"](\.[^'\"]+)['\"]")
-_PY_IMPORT = re.compile(r"^(?:from|import)\s+([A-Za-z_][\w.]*)", re.M)
+from dep_intel.sources import Workspace, ensure_checkout
+from dep_intel.store import now, read_json, write_json
 
 
 def build_graphs(workspaces: list[Workspace], settings: Settings) -> dict:
     manifest = []
     for workspace in workspaces:
-        graph = _graph(workspace)
         slug_dir = settings.output_dir / "graphs" / workspace.ref.slug
         slug_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            checkout = ensure_checkout(workspace.ref, settings)
+            graph = _from_crg(checkout, slug_dir, workspace)
+        except Exception as exc:
+            graph = _empty(workspace, str(exc))
         write_json(slug_dir, "graph.json", graph)
         manifest.append(
             {
                 "slug": workspace.ref.slug,
                 "name": workspace.ref.name,
                 "url": workspace.ref.raw,
+                "checkout": graph.get("checkout", ""),
                 "builtAt": now(),
                 "stats": {
-                    "files": len(graph["nodes"]),
-                    "edges": len(graph["edges"]),
+                    "files": graph["stats"]["files"],
+                    "edges": graph["stats"]["edges"],
                     "communities": len(graph["communities"]),
                 },
+                "error": graph.get("error", ""),
             }
         )
-    payload = {"meta": {"generated_at": now(), "source": "dep-intel"}, "repos": manifest}
+    payload = {"meta": {"generated_at": now(), "source": "code-review-graph"}, "repos": manifest}
     write_json(settings.output_dir, "repo_graphs.json", payload)
-    return {"success": True, "message": f"Built import graphs for {len(manifest)} repositories."}
+    built = sum(1 for item in manifest if not item["error"])
+    return {"success": built == len(manifest), "message": f"Built code-review-graph databases for {built} of {len(manifest)} repositories."}
 
 
-def _graph(workspace: Workspace) -> dict:
+def impact_for(settings: Settings, slug: str, file: str) -> dict:
+    """Blast radius from code-review-graph for one file in a built repository."""
+    manifest = read_json(settings.output_dir, "repo_graphs.json") or {}
+    entry = next((item for item in manifest.get("repos") or [] if item.get("slug") == slug), None)
+    if not entry or not entry.get("checkout"):
+        return {"summary": "Build the code graph before asking for impact.", "nodes": []}
+    if not file.strip():
+        return {"summary": "", "nodes": []}
+    from code_review_graph.tools.query import get_impact_radius
+
+    result = get_impact_radius(
+        changed_files=[file.strip()],
+        repo_root=entry["checkout"],
+        max_depth=2,
+        max_results=40,
+    )
+    root = Path(entry["checkout"])
     nodes = []
-    edges = []
-    files = set(workspace.files)
-    for path, text in workspace.files.items():
-        if Path(path).suffix.lower() not in {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".go"}:
+    seen = set()
+    for path in result.get("impacted_files") or []:
+        relative = _relative(root, str(path))
+        if relative in seen:
             continue
-        line_count = text.count("\n") + 1
-        nodes.append({"id": path, "language": Path(path).suffix.lstrip("."), "lines": line_count})
-        for target in _targets(path, text, files):
-            edges.append({"from": path, "to": target, "kind": "import"})
-    communities: dict[str, list[str]] = {}
-    for node in nodes:
-        group = node["id"].split("/", 1)[0] if "/" in node["id"] else "(root)"
-        communities.setdefault(group, []).append(node["id"])
-    degree: dict[str, int] = {node["id"]: 0 for node in nodes}
-    for edge in edges:
-        degree[edge["from"]] = degree.get(edge["from"], 0) + 1
-        degree[edge["to"]] = degree.get(edge["to"], 0) + 1
-    hubs = [
-        {"id": node_id, "degree": score}
-        for node_id, score in sorted(degree.items(), key=lambda item: item[1], reverse=True)
-        if score
-    ][:12]
-    community_of = {file: name for name, members in communities.items() for file in members}
-    bridges = []
-    for node in nodes:
-        groups = {community_of.get(edge["to"]) for edge in edges if edge["from"] == node["id"]}
-        groups.discard(None)
-        groups.discard(community_of.get(node["id"]))
-        if groups:
-            bridges.append({"id": node["id"], "connects": sorted(groups)})
-    large = [node for node in nodes if node["lines"] >= 80]
-    connected = {edge["from"] for edge in edges} | {edge["to"] for edge in edges}
-    isolated = [node["id"] for node in nodes if node["id"] not in connected and "test" not in node["id"]]
+        seen.add(relative)
+        nodes.append({"id": relative, "language": Path(relative).suffix.lstrip("."), "lines": 0})
+    summary = str(result.get("summary") or result.get("error") or "")
+    return {"summary": summary, "nodes": nodes}
+
+
+def _from_crg(checkout: Path, slug_dir: Path, workspace: Workspace) -> dict:
+    from code_review_graph.analysis import find_bridge_nodes, find_hub_nodes
+    from code_review_graph.communities import get_communities
+    from code_review_graph.graph import GraphStore
+    from code_review_graph.incremental import get_db_path
+    from code_review_graph.refactor import find_dead_code
+    from code_review_graph.registry import Registry
+    from code_review_graph.tools.build import build_or_update_graph
+    from code_review_graph.tools.query import find_large_functions
+
+    if not (checkout / ".git").exists() and not (checkout / ".svn").exists():
+        raise RuntimeError(f"{checkout} has no git history, so code-review-graph cannot build it.")
+    Registry().set_data_dir(str(checkout), str(slug_dir))
+    build_or_update_graph(full_rebuild=True, repo_root=str(checkout), postprocess="full")
+    store = GraphStore(get_db_path(checkout))
+    try:
+        file_nodes = store.get_all_nodes(exclude_files=False)
+        files = [node for node in file_nodes if node.kind == "File"]
+        symbols = [node for node in file_nodes if node.kind != "File"]
+        edges = []
+        seen_edges = set()
+        for edge in store.get_all_edges():
+            left = _relative(checkout, edge.file_path or "")
+            target = ""
+            # Prefer the target node's file when the edge stores a qualified name.
+            right = left
+            for node in symbols:
+                if node.qualified_name == edge.target_qualified and node.file_path:
+                    target = _relative(checkout, node.file_path)
+                    break
+            if target:
+                right = target
+            if not left or not right or left == right:
+                continue
+            key = (edge.kind, *sorted((left, right)))
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
+            edges.append({"from": left, "to": right, "kind": edge.kind})
+        communities = []
+        names = {}
+        for community in get_communities(store, sort_by="size"):
+            names[community["id"]] = community["name"]
+            members = community.get("members") or []
+            communities.append(
+                {
+                    "id": community["name"] or str(community["id"]),
+                    "size": community["size"],
+                    "files": members[:20],
+                }
+            )
+        hubs = [
+            {"id": f"{hub['name']} ({_relative(checkout, hub.get('file') or '')})", "degree": hub["total_degree"]}
+            for hub in find_hub_nodes(store, top_n=12)
+        ]
+        bridges = [
+            {
+                "id": f"{bridge['name']} ({_relative(checkout, bridge.get('file') or '')})",
+                "connects": [names.get(bridge.get("community_id"), str(bridge.get("community_id") or ""))],
+            }
+            for bridge in find_bridge_nodes(store, top_n=12)
+        ]
+        search_nodes = []
+        for node in (files + symbols)[:400]:
+            relative = _relative(checkout, node.file_path or "")
+            lines = 0
+            if node.line_start and node.line_end and node.line_end >= node.line_start:
+                lines = node.line_end - node.line_start + 1
+            label = relative if node.kind == "File" else f"{node.name} ({relative})"
+            search_nodes.append(
+                {"id": label, "language": node.language or Path(relative).suffix.lstrip("."), "lines": lines}
+            )
+    finally:
+        store.close()
+    large = find_large_functions(min_lines=80, kind="File", limit=20, repo_root=str(checkout))
+    dead_store = GraphStore(get_db_path(checkout))
+    try:
+        dead = find_dead_code(store=dead_store, root=checkout)
+        large_files = []
+        for item in (large.get("results") or large.get("functions") or [])[:20]:
+            path = item.get("relative_path") or item.get("file_path") or item.get("file") or item.get("name")
+            large_files.append({"id": _relative(checkout, str(path)), "lines": item.get("line_count") or item.get("lines") or 0})
+        isolated = []
+        for item in dead[:20]:
+            path = item.get("relative_path") or item.get("file_path") or ""
+            isolated.append(f"{item.get('kind', 'symbol')} {item.get('name')} ({_relative(checkout, path)})")
+    finally:
+        dead_store.close()
     return {
         "slug": workspace.ref.slug,
-        "nodes": nodes,
-        "edges": edges,
-        "communities": [{"id": name, "files": members, "size": len(members)} for name, members in communities.items()],
+        "checkout": str(checkout),
+        "source": "code-review-graph",
+        "nodes": search_nodes,
+        "edges": edges[:2000],
+        "communities": communities,
         "hubs": hubs,
         "bridges": bridges,
-        "quality": {"large_files": large, "isolated_files": isolated},
-        "note": "Structural import graph. Execution flows from code-review-graph are not computed here.",
+        "quality": {"large_files": large_files, "isolated_files": isolated},
+        "stats": {"files": len(files), "edges": len(edges)},
     }
 
 
-def _targets(path: str, text: str, files: set[str]) -> list[str]:
-    found = []
-    parent = str(Path(path).parent)
-    if parent == ".":
-        parent = ""
-    for match in _JS_IMPORT.findall(text):
-        resolved = _resolve(parent, match, files)
-        if resolved:
-            found.append(resolved)
-    if path.endswith(".py"):
-        for module in _PY_IMPORT.findall(text):
-            candidate = module.split(".")[0] + ".py"
-            if candidate in files:
-                found.append(candidate)
-    return found
+def _empty(workspace: Workspace, message: str) -> dict:
+    return {
+        "slug": workspace.ref.slug,
+        "checkout": "",
+        "source": "code-review-graph",
+        "nodes": [],
+        "edges": [],
+        "communities": [],
+        "hubs": [],
+        "bridges": [],
+        "quality": {"large_files": [], "isolated_files": []},
+        "stats": {"files": 0, "edges": 0},
+        "error": message,
+    }
 
 
-def _resolve(parent: str, spec: str, files: set[str]) -> str:
-    raw = spec[2:] if spec.startswith("./") else spec
-    base = f"{parent}/{raw}" if parent else raw
-    base = str(Path(base))
-    for candidate in (base, f"{base}.js", f"{base}.ts", f"{base}.tsx", f"{base}/index.js"):
-        normalized = candidate.replace("\\", "/")
-        if normalized in files:
-            return normalized
-    return ""
+def _relative(root: Path, file_path: str) -> str:
+    if not file_path:
+        return ""
+    path = Path(file_path)
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return path.as_posix()
