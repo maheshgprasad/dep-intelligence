@@ -73,3 +73,17 @@ body {
   align-items: end;
   margin-bottom: 1rem;
 }
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.payload-block {
+  margin-bottom: 1.5rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}

@@ -1,6 +1,6 @@
-# dep-intel
+# Nami Trace
 
-Cross-repository dependency intelligence. The dashboard is a React app on [Carbon](https://carbondesignsystem.com/). Analysis is a Python service. Cursor, Claude, and IBM Bob call that same service over MCP.
+Cross-repository dependency intelligence. The dashboard is a React app on [Carbon](https://carbondesignsystem.com/). Analysis is the same Python process. Cursor, Claude, and IBM Bob call that service over MCP.
 
 The behavior is taken from the notes in [Docs/spec](Docs/spec). This tree is a new implementation of that spec, not the earlier Express app.
 
@@ -13,11 +13,10 @@ cd web && npm install && cd ..
 
 The install script creates `server/.venv` and installs the MCP server and PyDriller.
 
-Two processes:
+One process serves the dashboard and the API:
 
 ```bash
-server/.venv/bin/uvicorn dep_intel.api:app --app-dir server --port 8010
-cd web && npm run dev
+./scripts/nami-trace.sh
 ```
 
 Dashboard: http://127.0.0.1:3002
@@ -37,9 +36,9 @@ Dashboard: http://127.0.0.1:3002
 | `scan_vulnerabilities` | `output/vulnerabilities.json` |
 | `scan_cve_from_github_issues` | `output/cve_analysis.json` |
 | `generate_security_release_report` | `output/security_release_report.json` |
-| `build_repo_graph` | `output/repo_graphs.json` |
+| `build_repo_graph` | `output/repo_graphs.json` and `output/graphs/<slug>/crg.json` |
 | `analyze_commit_history` | `output/graphs/<slug>/cochange.json` |
 
-The code graph is an import graph plus git co-change. It does not embed code-review-graph.
+Code graph pages show the code-review-graph MCP payloads. Nami Trace stores those payloads and does not recompute communities, hubs, flows, or impact.
 
 Client setup: [Docs/AGENT_CLIENTS.md](Docs/AGENT_CLIENTS.md).

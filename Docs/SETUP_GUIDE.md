@@ -10,20 +10,13 @@ npm install
 
 That script installs the MCP server (`mcp` and the `dep-intel-mcp` command) and PyDriller into `server/.venv`.
 
-Start the API:
+Start the dashboard and the API together:
 
 ```bash
-server/.venv/bin/uvicorn dep_intel.api:app --app-dir server --port 8010
+./scripts/nami-trace.sh
 ```
 
-Start the Carbon app:
-
-```bash
-cd web
-npm run dev
-```
-
-Open http://127.0.0.1:3002 and use **Run analysis**.
+Open http://127.0.0.1:3002 and use **Run analysis**. That one process serves the Carbon app and the analysis API.
 
 ## Repositories
 

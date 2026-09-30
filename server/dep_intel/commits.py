@@ -1,8 +1,8 @@
 """File churn and co-change from git history.
 
 Local checkouts use git log. GitHub URLs use the commits API, capped so a
-scan stays bounded. Pairs that also appear in the import graph are marked
-structural.
+scan stays bounded. Structural relationships come from the code-review-graph
+MCP results, not from this report.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import httpx
 
 from dep_intel.config import Settings
 from dep_intel.sources import Workspace
-from dep_intel.store import now, read_json, write_json
+from dep_intel.store import now, write_json
 
 
 def analyze_commits(
@@ -26,11 +26,10 @@ def analyze_commits(
 ) -> dict:
     index = []
     for workspace in workspaces:
-        structural = _structural_pairs(settings, workspace.ref.slug)
         if workspace.ref.kind == "local" and workspace.ref.path:
-            report = _from_git(workspace, since_days, structural)
+            report = _from_git(workspace, since_days)
         elif workspace.ref.kind == "github":
-            report = _from_github(workspace, settings, client, since_days, structural)
+            report = _from_github(workspace, settings, client, since_days)
         else:
             report = _empty(workspace, "No checkout to mine.")
         slug_dir = settings.output_dir / "graphs" / workspace.ref.slug
@@ -50,16 +49,7 @@ def analyze_commits(
     return {"success": True, "message": f"Commit history: {commits} commits across {len(index)} repositories."}
 
 
-def _structural_pairs(settings: Settings, slug: str) -> set[tuple[str, str]]:
-    graph = read_json(settings.output_dir / "graphs" / slug, "graph.json") or {}
-    pairs = set()
-    for edge in graph.get("edges") or []:
-        pair = tuple(sorted((edge["from"], edge["to"])))
-        pairs.add(pair)
-    return pairs
-
-
-def _from_git(workspace: Workspace, since_days: int, structural: set[tuple[str, str]]) -> dict:
+def _from_git(workspace: Workspace, since_days: int) -> dict:
     root = workspace.ref.path
     since = ""
     if since_days > 0:
@@ -73,10 +63,10 @@ def _from_git(workspace: Workspace, since_days: int, structural: set[tuple[str, 
         return _empty(workspace, "git log failed.")
     if completed.returncode != 0:
         return _empty(workspace, "Not a git repository.")
-    return _summarize(workspace, completed.stdout, since_days, structural)
+    return _summarize(workspace, completed.stdout, since_days)
 
 
-def _from_github(workspace: Workspace, settings: Settings, client: httpx.Client, since_days: int, structural: set[tuple[str, str]]) -> dict:
+def _from_github(workspace: Workspace, settings: Settings, client: httpx.Client, since_days: int) -> dict:
     ref = workspace.ref
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "dep-intel"}
     token = settings.github_token if ref.host == "github.com" else (settings.ghe_token or settings.github_token)
@@ -110,10 +100,10 @@ def _from_github(workspace: Workspace, settings: Settings, client: httpx.Client,
         for file in body.get("files") or []:
             filename = file.get("filename") or ""
             chunks.append(f"{file.get('additions') or 0}\t{file.get('deletions') or 0}\t{filename}")
-    return _summarize(workspace, "\n".join(chunks), since_days, structural)
+    return _summarize(workspace, "\n".join(chunks), since_days)
 
 
-def _summarize(workspace: Workspace, text: str, since_days: int, structural: set[tuple[str, str]]) -> dict:
+def _summarize(workspace: Workspace, text: str, since_days: int) -> dict:
     churn: dict[str, dict] = {}
     pair_counts: dict[tuple[str, str], int] = defaultdict(int)
     authors: set[str] = set()
@@ -173,7 +163,6 @@ def _summarize(workspace: Workspace, text: str, since_days: int, structural: set
                 "file_b": right,
                 "commits": count,
                 "coupling": coupling,
-                "is_structural": tuple(sorted((left, right))) in structural,
             }
         )
     cochange.sort(key=lambda item: item["coupling"], reverse=True)
