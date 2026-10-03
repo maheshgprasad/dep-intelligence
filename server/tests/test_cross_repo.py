@@ -12,7 +12,7 @@ import pytest
 
 from dep_intel.api import resolve_ui_file
 from dep_intel.changes import diff_snapshots
-from dep_intel.cluster_manifest import ImpactSettings, load_manifest
+from dep_intel.cluster_manifest import ImpactSettings, applicable_manifest, load_manifest
 from dep_intel.commits import _summarize
 from dep_intel.config import PROJECT_ROOT, Settings
 from dep_intel.contract_extractors.javascript import extract_javascript, resolve_routes
@@ -198,6 +198,21 @@ def test_manifest_rejects_unknown_version_duplicates_and_escape(tmp_path: Path) 
     assert any("missing service" in error for error in errors)
     good, errors = load_manifest(ROOT / "cluster-manifest.json", repos, ROOT)
     assert errors == [] and good is not None
+
+
+def test_fixture_manifest_does_not_replace_the_allowlist(tmp_path: Path) -> None:
+    repos_file = tmp_path / "repos.txt"
+    repos_file.write_text("https://github.com/example/api\n", encoding="utf-8")
+    settings = Settings(root=ROOT, repos_file=repos_file, output_dir=tmp_path, github_token="", ghe_token="")
+    from dep_intel.sources import load_repos
+
+    repos = load_repos(settings)
+    strict, errors = load_manifest(ROOT / "cluster-manifest.json", repos, ROOT)
+    assert strict is None and any("not an entry in repos.txt" in error for error in errors)
+    manifest, applied_errors, notices = applicable_manifest(ROOT / "cluster-manifest.json", repos, ROOT)
+    assert applied_errors == [] and manifest is not None
+    assert [service.id for service in manifest.services] == ["example_api"]
+    assert notices and "repos.txt" in notices[0] and "fixtures" in notices[0]
 
 
 def test_path_containment_rejects_sibling_prefix(tmp_path: Path) -> None:

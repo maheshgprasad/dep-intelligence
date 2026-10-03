@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from dep_intel.changes import diff_snapshots, fresh_version, union_snapshot
-from dep_intel.cluster_manifest import load_manifest, manifest_path, suggestion_for_missing_manifest
+from dep_intel.cluster_manifest import applicable_manifest, manifest_path, suggestion_for_missing_manifest
 from dep_intel.config import Settings
 from dep_intel.crg_adapter import ExtractionFailed, UnsupportedSchema, crg_package_version, extract_partition, stale_partition
 from dep_intel.cross_repo_graph import assemble, graph_slice, published_dict, repo_for, snapshot_from_published
@@ -25,7 +25,7 @@ from dep_intel.graph_models import CODE_SYMBOL, Diagnostic, Partition, Snapshot
 from dep_intel.impact import analyze
 from dep_intel.jobs import Job, JobRunner
 from dep_intel.paths import contained
-from dep_intel.sources import git_head, load_repos, read_contract_sources, slug_collisions
+from dep_intel.sources import ensure_checkout, git_head, load_repos, read_contract_sources, slug_collisions
 from dep_intel.store import read_json, write_json
 from dep_intel.watcher import WatchCoordinator
 
@@ -34,6 +34,8 @@ class ClusterEngine:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.config_errors: list[str] = []
+        self.notices: list[str] = []
+        self.allowlist: list[str] = []
         self._snapshot: Snapshot | None = None
         self._previous: Snapshot | None = None
         self._lock = threading.Lock()
@@ -41,6 +43,7 @@ class ClusterEngine:
         self._jobs = JobRunner(2, bus.publish_threadsafe)
         self._pools: ThreadPoolExecutor | None = None
         self._watcher: WatchCoordinator | None = None
+        self._classify()
         self._load_published()
 
     def close(self) -> None:
@@ -64,6 +67,8 @@ class ClusterEngine:
         snapshot = self.current()
         body: dict[str, Any] = {
             "config_errors": list(self.config_errors),
+            "notices": list(self.notices),
+            "allowlist": list(self.allowlist),
             "suggestion": None if self._manifest_file() else suggestion_for_missing_manifest(),
             "ownership": "This process keeps its own snapshot. MCP and HTTP do not share memory; both publish output/cluster/generation.json last.",
         }
@@ -106,15 +111,12 @@ class ClusterEngine:
             settings = self.settings
             repos = load_repos(settings)
             collisions = slug_collisions(repos)
-            path = self._manifest_file()
-            manifest, errors = load_manifest(path, repos, settings.root)
+            manifest, errors = self._classify()
             errors = [*collisions, *errors]
             if errors or manifest is None:
-                self.config_errors = errors or (["No cluster manifest is configured."] if path is None else [])
-                if path is None:
-                    self.config_errors = []
-                return {"status": "invalid_config" if errors else "no_manifest", "errors": self.config_errors, "version": self._version()}
-            self.config_errors = []
+                self.config_errors = errors
+                return {"status": "invalid_config", "errors": self.config_errors, "version": self._version()}
+            self._bind_checkouts(manifest)
             previous = self.current()
             dirty = set(services or [service.id for service in manifest.services])
             if "__config__" in dirty:
@@ -202,7 +204,7 @@ class ClusterEngine:
             return 409, {"detail": "The symbol selection is ambiguous.", "code": "ambiguous_symbol", "candidates": candidates}
         if error:
             return 404, {"detail": error, "code": "symbol_not_found", "candidates": candidates}
-        manifest, manifest_errors = load_manifest(self._manifest_file(), load_repos(self.settings), self.settings.root)
+        manifest, manifest_errors = self._classify()
         if manifest is None:
             return 409, {"detail": "Cluster manifest is not valid.", "errors": manifest_errors, "code": "invalid_manifest"}
         settings = manifest.impact
@@ -243,10 +245,10 @@ class ClusterEngine:
         return self._jobs.cancel(job_id)
 
     def start_watcher(self) -> None:
-        manifest, errors = load_manifest(self._manifest_file(), load_repos(self.settings), self.settings.root)
-        self.config_errors = errors
+        manifest, _errors = self._classify()
         if manifest is None or not manifest.watch.enabled:
             return
+        self._bind_existing_checkouts(manifest)
         watches = {}
         for service in manifest.services:
             repo = repo_for(manifest, service.id)
@@ -356,6 +358,34 @@ class ClusterEngine:
         snapshot = snapshot_from_published(payload)
         with self._lock:
             self._snapshot = snapshot
+
+    def _classify(self) -> tuple[Any, list[str]]:
+        repos = load_repos(self.settings)
+        self.allowlist = [repo.name for repo in repos]
+        manifest, errors, notices = applicable_manifest(self._manifest_file(), repos, self.settings.root)
+        self.config_errors = errors
+        self.notices = notices
+        return manifest, errors
+
+    def _bind_checkouts(self, manifest) -> None:
+        for service in manifest.services:
+            repo = repo_for(manifest, service.id)
+            if repo is None or repo.path is not None:
+                continue
+            try:
+                repo.path = ensure_checkout(repo, self.settings)
+            except (OSError, RuntimeError) as exc:
+                repo.path = None
+                self.notices.append(f"{repo.name}: {exc}")
+
+    def _bind_existing_checkouts(self, manifest) -> None:
+        for service in manifest.services:
+            repo = repo_for(manifest, service.id)
+            if repo is None or repo.path is not None or repo.kind != "github":
+                continue
+            checkout = self.settings.output_dir / "checkouts" / repo.slug
+            if (checkout / ".git").is_dir():
+                repo.path = checkout
 
     def _manifest_file(self) -> Path | None:
         override = os.environ.get("CLUSTER_MANIFEST", "")

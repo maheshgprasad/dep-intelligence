@@ -71,6 +71,8 @@ export type ClusterSummary = {
   unresolved_count: number;
   stale_services?: string[];
   config_errors?: string[];
+  notices?: string[];
+  allowlist?: string[];
   services?: {
     id: string;
     quality: string;

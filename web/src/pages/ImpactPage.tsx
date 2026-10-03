@@ -119,8 +119,17 @@ export function ImpactPage({ tick, resync }: { tick: number; resync: string }) {
           hideCloseButton
         />
       ) : null}
+      {summary?.notices?.map((notice) => (
+        <InlineNotification key={notice} kind="info" title="Repositories" subtitle={notice} lowContrast hideCloseButton />
+      ))}
       {summary?.config_errors?.length ? (
-        <InlineNotification kind="warning" title="Manifest" subtitle={summary.config_errors.join(" ")} lowContrast hideCloseButton />
+        <InlineNotification
+          kind="warning"
+          title="Contract map"
+          subtitle={`repos.txt decides which repositories are analyzed${summary.allowlist?.length ? `: ${summary.allowlist.join(", ")}` : ""}. cluster-manifest.json only adds cross-service links, and this copy does not match that list. ${summary.config_errors.join(" ")}`}
+          lowContrast
+          hideCloseButton
+        />
       ) : null}
       {summary?.version ? (
         <Tile>

@@ -331,6 +331,69 @@ def _match_repo(reference: str, repos: list[RepoRef], root: Path) -> list[RepoRe
     return unique
 
 
+def applicable_manifest(
+    path: Path | None, repos: list[RepoRef], root: Path
+) -> tuple[ClusterManifest | None, list[str], list[str]]:
+    """Choose the manifest that applies to the current allowlist.
+
+    ``repos.txt`` is the repository list. ``cluster-manifest.json`` only adds
+    contract bindings for repositories that are already allowed. The shipped
+    fixture file is ignored, with a notice, when none of its services are on
+    the allowlist. Structural graphs are then built from ``repos.txt`` and
+    cross-repository links are not inferred from route names.
+    """
+    if path is None or not path.is_file():
+        return manifest_from_repos(repos), [], []
+    manifest, errors = load_manifest(path, repos, root)
+    if manifest is not None:
+        return manifest, [], []
+    if _unused_example(path, repos, root):
+        names = ", ".join(repo.name for repo in repos) or "none"
+        return (
+            manifest_from_repos(repos),
+            [],
+            [
+                f"{path.name} is an optional contract map for local fixtures, and none of those "
+                f"repositories are in repos.txt. It is not the list of repositories to analyze. "
+                f"Graphs are read from repos.txt ({names}). Cross-repository links are not guessed "
+                "from route names; add a service entry for an allowlisted repository when you want those links."
+            ],
+        )
+    return None, errors, []
+
+
+def manifest_from_repos(repos: list[RepoRef]) -> ClusterManifest:
+    services: list[ServiceDecl] = []
+    resolved: dict[str, RepoRef] = {}
+    for repo in repos:
+        service_id = _service_id(repo)
+        services.append(ServiceDecl(id=service_id, repository=repo.raw))
+        resolved[service_id] = repo
+    manifest = ClusterManifest(schema_version=SUPPORTED_SCHEMA, services=services)
+    manifest.__dict__["_resolved"] = resolved
+    return manifest
+
+
+def _service_id(repo: RepoRef) -> str:
+    slug = repo.slug or "repo"
+    if slug[0].isalpha() and all(ch.isalnum() or ch in "-_" for ch in slug):
+        return slug
+    return f"repo-{slug}"
+
+
+def _unused_example(path: Path, repos: list[RepoRef], root: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        manifest = ClusterManifest.model_validate(payload)
+    except (OSError, json.JSONDecodeError, Exception):
+        return False
+    if not manifest.services:
+        return False
+    errors = _cross_check(manifest, repos, root)
+    unmatched = [error for error in errors if "is not an entry in repos.txt" in error]
+    return len(unmatched) == len(manifest.services) and len(errors) == len(unmatched)
+
+
 def suggestion_for_missing_manifest() -> dict[str, Any]:
     return {
         "code": "manifest_missing",
