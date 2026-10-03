@@ -42,6 +42,15 @@ export function Dashboard({ snapshot, error, loaded }: { snapshot: Snapshot | nu
         </div>
       </div>
       {error ? <InlineNotification kind="error" title="API" subtitle={error} lowContrast hideCloseButton /> : null}
+      {snapshot?.analysis_status && snapshot.analysis_status.status && snapshot.analysis_status.status !== "success" ? (
+        <InlineNotification
+          kind={snapshot.analysis_status.status === "failed" ? "error" : "warning"}
+          title={`Analysis ${snapshot.analysis_status.status}`}
+          subtitle={snapshot.analysis_status.message || "One or more steps failed. Successful outputs are still available."}
+          lowContrast
+          hideCloseButton
+        />
+      ) : null}
       {!error && loaded && !hasData ? (
         <InlineNotification
           kind="info"

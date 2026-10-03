@@ -57,7 +57,30 @@ export type Snapshot = {
   security_markdown: string;
   graphs: { repos: GraphRepo[] } | null;
   graph_details: Record<string, { crg: CrgBundle | null; cochange: Cochange | null }>;
+  analysis_status?: { status?: string; message?: string; results?: { tool: string; success?: boolean; message?: string }[] } | null;
+  cluster?: ClusterSummary | null;
   running: boolean;
+};
+
+export type ClusterSummary = {
+  version: string;
+  generated_at?: string;
+  node_count: number;
+  edge_count: number;
+  contract_count: number;
+  unresolved_count: number;
+  stale_services?: string[];
+  config_errors?: string[];
+  services?: {
+    id: string;
+    quality: string;
+    error?: string;
+    symbols: number;
+    index_revision?: string | null;
+    workspace_head?: string | null;
+    observed_at?: string;
+  }[];
+  diagnostics?: { code: string; message: string; severity?: string }[];
 };
 
 export type Update = { repo: string; ecosystem: string; package: string; from: string; to: string };
@@ -109,4 +132,75 @@ export async function getSnapshot(): Promise<Snapshot> {
 
 export async function startRun(path: string): Promise<void> {
   await fetch(path, { method: "POST" });
+}
+
+export type ImpactRow = {
+  key: string;
+  structural_score: number;
+  service_id: string;
+  name: string;
+  qualified_name: string;
+  file_path: string;
+  line_start: number | null;
+  category: string;
+  confidence: number | null;
+  path: {
+    relation: string;
+    direction: string;
+    weight: number;
+    reason: string;
+    evidence?: { status?: string; file?: string; line?: number; source?: string };
+  }[];
+};
+
+export type ImpactResponse = {
+  analysis_id: string;
+  graph_version: string;
+  mode: string;
+  score_kind: string;
+  score_meaning: string;
+  truncated: boolean;
+  truncation_reason: string;
+  affected: ImpactRow[];
+  contracts: { key: string; name: string; service_id: string; structural_score: number }[];
+  tests: { name: string; file_path: string; line_start: number | null; service_id: string }[];
+  diagnostics: { code: string; message: string }[];
+  limitations: string[];
+  affected_services?: string[];
+};
+
+export async function clusterGraph(): Promise<{ summary: ClusterSummary; page: { nodes: Record<string, unknown>[]; total: number } }> {
+  const response = await fetch("/api/cluster/graph?limit=50");
+  if (!response.ok) throw new Error("cluster graph failed");
+  return response.json();
+}
+
+export async function clusterContracts(): Promise<{ version: string; contracts: { key: string; name: string; service_id: string; category: string; qualified_name: string }[] }> {
+  const response = await fetch("/api/cluster/contracts");
+  if (!response.ok) throw new Error("contracts failed");
+  return response.json();
+}
+
+export async function runImpact(body: Record<string, unknown>): Promise<ImpactResponse> {
+  const response = await fetch("/api/cluster/impact", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail;
+    const message = typeof detail === "string" ? detail : detail?.detail || "Impact query failed";
+    const error = new Error(message) as Error & { status?: number; payload?: unknown };
+    error.status = response.status;
+    error.payload = detail;
+    throw error;
+  }
+  return payload;
+}
+
+export async function refreshCluster(): Promise<{ job_id: string; status: string }> {
+  const response = await fetch("/api/cluster/refresh", { method: "POST" });
+  if (!response.ok) throw new Error("refresh failed");
+  return response.json();
 }

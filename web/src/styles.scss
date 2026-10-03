@@ -99,3 +99,25 @@ body {
 .table-scroll {
   overflow-x: auto;
 }
+
+.impact-layout {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.path-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.path-list li {
+  margin: 0.25rem 0;
+}
+
+@media (max-width: 42rem) {
+  .impact-layout {
+    grid-template-columns: 1fr;
+  }
+}

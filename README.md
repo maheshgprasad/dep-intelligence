@@ -39,6 +39,8 @@ Dashboard: http://127.0.0.1:3002
 | `build_repo_graph` | `output/repo_graphs.json` and `output/graphs/<slug>/crg.json` |
 | `analyze_commit_history` | `output/graphs/<slug>/cochange.json` |
 
-Code graph pages show the code-review-graph MCP payloads. Nami Trace stores those payloads and does not recompute communities, hubs, flows, or impact.
+Code graph pages show the code-review-graph MCP payloads. Nami Trace stores those payloads and does not recompute communities, hubs, or flows.
+
+Structural change impact is a separate cluster graph. It reads each repository's CRG database, resolves manifest-declared HTTP, gRPC, and event contracts, and scores dependents. The score is not a probability of breakage. See [Docs/CROSS_REPO_IMPACT.md](Docs/CROSS_REPO_IMPACT.md). Commit history remains a separate co-change report; PyDriller is installed and is not used to train a model.
 
 Client setup: [Docs/AGENT_CLIENTS.md](Docs/AGENT_CLIENTS.md).

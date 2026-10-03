@@ -14,9 +14,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_fixtures_find_mismatch_and_api_edge(tmp_path: Path) -> None:
+    repos = tmp_path / "repos.txt"
+    repos.write_text("fixtures/auth-service\nfixtures/user-service\nfixtures/report-job\n", encoding="utf-8")
     settings = Settings(
         root=ROOT,
-        repos_file=ROOT / "repos.txt",
+        repos_file=repos,
         output_dir=tmp_path,
         github_token="",
         ghe_token="",
@@ -37,6 +39,11 @@ def test_fixtures_find_mismatch_and_api_edge(tmp_path: Path) -> None:
 
     apis = detect_api_dependencies(workspaces, settings)
     assert apis["summary"]["total_dependencies"] == 1
+    import json
+
+    written = json.loads((tmp_path / "api_dependencies.json").read_text(encoding="utf-8"))
+    routes = written["api_dependencies"]["services"]["user-service"]["exposes"]
+    assert {item["path"] for item in routes} == {"/api/users"}
 
     findings = review(workspaces, settings)
     assert findings["summary"]["dead_code"] >= 2

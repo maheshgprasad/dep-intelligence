@@ -89,6 +89,10 @@ def _one(workspace: Workspace, settings: Settings, *, rebuild: bool) -> tuple[di
         "url": workspace.ref.raw,
         "checkout": "",
         "builtAt": now(),
+        "content_revision": workspace.revision,
+        "content_source": workspace.content_source,
+        "dirty": workspace.dirty,
+        "stale": workspace.stale,
         "stats": {},
         "error": "",
     }
@@ -98,6 +102,15 @@ def _one(workspace: Workspace, settings: Settings, *, rebuild: bool) -> tuple[di
         base["error"] = str(exc)
         return base, None
     base["checkout"] = str(checkout)
+    indexed = ""
+    from dep_intel.sources import git_head
+
+    indexed = git_head(checkout)
+    base["indexed_revision"] = indexed
+    if workspace.revision and indexed and workspace.revision != indexed:
+        base["revision_status"] = "mismatch"
+    else:
+        base["revision_status"] = "matched" if indexed or workspace.revision else "unpinned"
     root = str(checkout)
     try:
         if rebuild:
