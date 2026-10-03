@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from collections.abc import Iterator
 
@@ -123,6 +124,79 @@ def run_dependency_scan(repos_file: str = "", output_dir: str = "") -> str:
     for item in result.get("results") or []:
         lines.append(f"{item.get('tool')}: {item.get('message')}")
     return "\n".join(lines)
+
+
+def _cluster(repos_file: str = "", output_dir: str = ""):
+    from dep_intel.cluster_service import ClusterEngine
+
+    return ClusterEngine(Settings.load(repos_file, output_dir))
+
+
+@mcp.tool()
+def build_cross_repo_graph(repos_file: str = "", output_dir: str = "") -> str:
+    """Build the cross-repository structural graph from CRG databases and the cluster manifest."""
+    engine = _cluster(repos_file, output_dir)
+    try:
+        result = engine.refresh()
+    finally:
+        engine.close()
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+def get_cross_repo_graph(repos_file: str = "", output_dir: str = "", service: str = "", limit: int = 50) -> str:
+    """Return a compact cluster summary and a bounded graph slice."""
+    engine = _cluster(repos_file, output_dir)
+    try:
+        payload = {"summary": engine.summary(), "page": engine.slice(service=service, limit=limit)}
+    finally:
+        engine.close()
+    return json.dumps(payload, default=str)
+
+
+@mcp.tool()
+def analyze_cross_repo_impact(
+    service: str = "",
+    symbol: str = "",
+    file: str = "",
+    line: int = 0,
+    contract_id: str = "",
+    mode: str = "code_change",
+    scenario: str = "",
+    topology: str = "current",
+    repos_file: str = "",
+    output_dir: str = "",
+) -> str:
+    """Structural impact for a symbol, file position, or contract. Scores are not probabilities."""
+    engine = _cluster(repos_file, output_dir)
+    try:
+        status, payload = engine.impact(
+            {
+                "service": service,
+                "symbol": symbol,
+                "file": file,
+                "line": line or None,
+                "contract_id": contract_id,
+                "mode": mode,
+                "scenario": scenario,
+                "topology": topology,
+            }
+        )
+        payload["http_status"] = status
+    finally:
+        engine.close()
+    return json.dumps(payload, default=str)
+
+
+@mcp.tool()
+def get_contract_dependencies(repos_file: str = "", output_dir: str = "") -> str:
+    """List HTTP, gRPC, and event contracts in the published cluster snapshot."""
+    engine = _cluster(repos_file, output_dir)
+    try:
+        payload = engine.contracts()
+    finally:
+        engine.close()
+    return json.dumps(payload, default=str)
 
 
 def main() -> None:

@@ -9,14 +9,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from dep_intel.cluster_service import get_engine, shutdown_engine
 from dep_intel.config import PROJECT_ROOT, Settings
-from dep_intel.crg import call_tool
+from dep_intel.crg import call_tool, crg_diagnostics
+from dep_intel.events import bus, format_sse
 from dep_intel.graph import checkout_for, refresh_graphs
+from dep_intel.paths import contained
 from dep_intel.pipeline import run_all, run_graphs
 from dep_intel.store import read_json
 
@@ -25,6 +28,11 @@ DIST = PROJECT_ROOT / "web" / "dist"
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    loop = asyncio.get_running_loop()
+    bus.bind(loop)
+    engine = get_engine(Settings.load())
+    tasks: set[asyncio.Task] = set()
+
     async def warm() -> None:
         try:
             await asyncio.to_thread(refresh_graphs, Settings.load())
@@ -32,11 +40,29 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             return
 
-    task = asyncio.create_task(warm())
+    def _track(task: asyncio.Task) -> None:
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+        def _log(done: asyncio.Task) -> None:
+            if done.cancelled():
+                return
+            exc = done.exception()
+            if exc is not None:
+                publish("job_failed", {"name": "startup", "error": str(exc)})
+
+        task.add_done_callback(_log)
+
+    if os.environ.get("NAMI_EAGER_GRAPH_REFRESH", "1") != "0":
+        _track(asyncio.create_task(warm()))
+    if os.environ.get("NAMI_CLUSTER_WATCH", "1") != "0":
+        _track(asyncio.create_task(asyncio.to_thread(engine.start_watcher)))
     try:
         yield
     finally:
-        task.cancel()
+        for task in list(tasks):
+            task.cancel()
+        await asyncio.to_thread(shutdown_engine)
 
 
 app = FastAPI(title="Nami Trace", lifespan=_lifespan)
@@ -47,17 +73,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_subscribers: set[asyncio.Queue[str]] = set()
 _running = False
+_background: set[asyncio.Task] = set()
 
 
 def publish(event: str, data: dict) -> None:
-    payload = f"event: {event}\ndata: {json.dumps(data)}\n\n"
-    for queue in list(_subscribers):
-        try:
-            queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            continue
+    bus.publish(event, data)
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background.add(task)
+
+    def _done(done: asyncio.Task) -> None:
+        _background.discard(done)
+        if done.cancelled():
+            return
+        exc = done.exception()
+        if exc is not None:
+            bus.publish("job_failed", {"name": "background", "error": str(exc)})
+
+    task.add_done_callback(_done)
+    return task
 
 
 def _snapshot(settings: Settings) -> dict:
@@ -84,13 +121,15 @@ def _snapshot(settings: Settings) -> dict:
         "security_markdown": report_md.read_text(encoding="utf-8") if report_md.is_file() else "",
         "graphs": graphs,
         "graph_details": details,
+        "analysis_status": read_json(output, "analysis_status.json"),
+        "cluster": get_engine(settings).summary(),
         "running": _running,
     }
 
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "crg": crg_diagnostics()}
 
 
 @app.get("/api/snapshot")
@@ -99,22 +138,28 @@ def snapshot() -> dict:
 
 
 @app.get("/api/events")
-async def events() -> StreamingResponse:
-    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=50)
-    _subscribers.add(queue)
+async def events(request: Request) -> StreamingResponse:
+    ident, queue = bus.subscribe()
+    last_header = request.headers.get("last-event-id")
+    replay, missing = bus.replay_after(int(last_header) if last_header and last_header.isdigit() else None)
 
     async def stream() -> AsyncIterator[str]:
         try:
-            yield "event: hello\ndata: {}\n\n"
+            if missing:
+                yield format_sse({"id": 0, "event": "resync", "data": {"reason": "history_unavailable"}})
+            else:
+                for record in replay:
+                    yield format_sse(record)
+            yield format_sse({"id": replay[-1]["id"] if replay else 0, "event": "hello", "data": {}})
             while True:
                 try:
                     yield await asyncio.wait_for(queue.get(), timeout=15)
                 except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
-            _subscribers.discard(queue)
+            bus.unsubscribe(ident)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/analysis/run")
@@ -136,7 +181,7 @@ async def start_analysis() -> dict:
         finally:
             _running = False
 
-    asyncio.create_task(job())
+    _spawn(job())
     return {"started": True}
 
 
@@ -159,7 +204,7 @@ async def start_graphs() -> dict:
         finally:
             _running = False
 
-    asyncio.create_task(job())
+    _spawn(job())
     return {"started": True}
 
 
@@ -186,15 +231,79 @@ async def graph_query(body: GraphQuery) -> dict:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+def resolve_ui_file(dist: Path, full_path: str) -> Path | None:
+    if not full_path:
+        return None
+    candidate = (dist / full_path).resolve()
+    if contained(candidate, dist) and candidate.is_file():
+        return candidate
+    return None
+
+
 def _ui(full_path: str) -> FileResponse:
     index = DIST / "index.html"
     if not index.is_file():
         raise HTTPException(status_code=503, detail="The dashboard build is missing. Run scripts/nami-trace.sh.")
-    if full_path:
-        candidate = (DIST / full_path).resolve()
-        if str(candidate).startswith(str(DIST.resolve())) and candidate.is_file():
-            return FileResponse(candidate)
+    candidate = resolve_ui_file(DIST, full_path)
+    if candidate is not None:
+        return FileResponse(candidate)
     return FileResponse(index)
+
+
+class ImpactBody(BaseModel):
+    service: str = ""
+    symbol: str = ""
+    file: str = ""
+    line: int | None = None
+    contract_id: str = ""
+    mode: str = "code_change"
+    scenario: str = ""
+    topology: str = "current"
+    graph_version: str = ""
+    budget: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/cluster/refresh")
+async def cluster_refresh() -> dict:
+    engine = get_engine(Settings.load())
+    return await asyncio.to_thread(engine.refresh_async)
+
+
+@app.get("/api/cluster/graph")
+async def cluster_graph(service: str = "", kind: str = "", q: str = "", limit: int = 100, offset: int = 0) -> dict:
+    engine = get_engine(Settings.load())
+    summary = await asyncio.to_thread(engine.summary)
+    page = await asyncio.to_thread(engine.slice, service=service, kind=kind, query=q, limit=limit, offset=offset)
+    return {"summary": summary, "page": page}
+
+
+@app.get("/api/cluster/contracts")
+async def cluster_contracts() -> dict:
+    return await asyncio.to_thread(get_engine(Settings.load()).contracts)
+
+
+@app.post("/api/cluster/impact")
+async def cluster_impact(body: ImpactBody) -> dict:
+    status, payload = await asyncio.to_thread(get_engine(Settings.load()).impact, body.model_dump())
+    if status != 200:
+        raise HTTPException(status_code=status, detail=payload)
+    return payload
+
+
+@app.get("/api/jobs/{job_id}")
+def cluster_job(job_id: str) -> dict:
+    job = get_engine(Settings.load()).job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return {"id": job.id, "name": job.name, "status": job.status, "progress": job.progress, "error": job.error, "result": job.result}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cluster_job_cancel(job_id: str) -> dict:
+    job = get_engine(Settings.load()).cancel_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return {"id": job.id, "status": job.status}
 
 
 @app.get("/")

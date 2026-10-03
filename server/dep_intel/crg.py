@@ -64,6 +64,28 @@ def call_tool(tool: str, repo_root: str, arguments: dict[str, Any] | None = None
     return _bridge.call(tool, args)
 
 
+def crg_diagnostics() -> dict[str, Any]:
+    """Presence and version of the external code-review-graph command."""
+    import subprocess
+
+    from dep_intel.crg_adapter import SUPPORTED_PACKAGE, SUPPORTED_SCHEMA_VERSIONS, crg_package_version
+
+    command = os.environ.get("CRG_BIN") or shutil.which("code-review-graph") or ""
+    version = crg_package_version()
+    if command and not version:
+        completed = subprocess.run([command, "--version"], capture_output=True, text=True, timeout=15, check=False)
+        version = (completed.stdout or completed.stderr or "").strip().split()[-1] if completed.returncode == 0 else ""
+    supported = version.startswith("2.3.") if version else False
+    return {
+        "available": bool(command),
+        "command": command,
+        "version": version,
+        "supported_package": SUPPORTED_PACKAGE,
+        "supported": supported,
+        "schema_versions": sorted(SUPPORTED_SCHEMA_VERSIONS),
+    }
+
+
 class _Bridge:
     def __init__(self) -> None:
         self._thread: threading.Thread | None = None

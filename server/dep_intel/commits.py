@@ -54,7 +54,7 @@ def _from_git(workspace: Workspace, since_days: int) -> dict:
     since = ""
     if since_days > 0:
         since = (datetime.now(timezone.utc) - timedelta(days=since_days)).date().isoformat()
-    command = ["git", "-C", str(root), "log", "--numstat", "--pretty=format:commit %H|%aI|%an"]
+    command = ["git", "-C", str(root), "log", "--numstat", "-M", "--pretty=format:commit %H|%aI|%an"]
     if since:
         command.append(f"--since={since}")
     try:
@@ -100,15 +100,18 @@ def _from_github(workspace: Workspace, settings: Settings, client: httpx.Client,
         for file in body.get("files") or []:
             filename = file.get("filename") or ""
             chunks.append(f"{file.get('additions') or 0}\t{file.get('deletions') or 0}\t{filename}")
-    return _summarize(workspace, "\n".join(chunks), since_days)
+    return _summarize(workspace, "\n".join(chunks), since_days, sample_limit=30, sampled=True)
 
 
-def _summarize(workspace: Workspace, text: str, since_days: int) -> dict:
+def _summarize(workspace: Workspace, text: str, since_days: int, *, sample_limit: int | None = None, sampled: bool = False) -> dict:
     churn: dict[str, dict] = {}
     pair_counts: dict[tuple[str, str], int] = defaultdict(int)
     authors: set[str] = set()
     commit_count = 0
     current_files: list[str] = []
+    current_author = ""
+    binary_omitted = 0
+    renames: list[dict[str, str]] = []
 
     def flush() -> None:
         unique = sorted(set(current_files))
@@ -122,13 +125,21 @@ def _summarize(workspace: Workspace, text: str, since_days: int) -> dict:
             current_files = []
             commit_count += 1
             parts = line.split("|")
-            if len(parts) >= 3:
-                authors.add(parts[2])
+            current_author = parts[2] if len(parts) >= 3 else ""
+            if current_author:
+                authors.add(current_author)
             continue
         columns = line.split("\t")
-        if len(columns) < 3 or columns[0] == "-":
+        if len(columns) < 3:
+            continue
+        if columns[0] == "-" or columns[1] == "-":
+            binary_omitted += 1
             continue
         added, deleted, filename = int(columns[0] or 0), int(columns[1] or 0), columns[2]
+        renamed_from = ""
+        if " => " in filename:
+            renamed_from, filename = _rename_names(filename)
+            renames.append({"from": renamed_from, "to": filename})
         current_files.append(filename)
         slot = churn.setdefault(
             filename,
@@ -137,6 +148,8 @@ def _summarize(workspace: Workspace, text: str, since_days: int) -> dict:
         slot["commits"] += 1
         slot["additions"] += added
         slot["deletions"] += deleted
+        if current_author:
+            slot["authors"].add(current_author)
     flush()
     rows = []
     for slot in churn.values():
@@ -146,7 +159,7 @@ def _summarize(workspace: Workspace, text: str, since_days: int) -> dict:
                 "commits": slot["commits"],
                 "additions": slot["additions"],
                 "deletions": slot["deletions"],
-                "authors": len(slot["authors"]) or 1,
+                "authors": len(slot["authors"]),
                 "churn_score": slot["commits"] * (slot["additions"] + slot["deletions"] + 1),
             }
         )
@@ -166,12 +179,32 @@ def _summarize(workspace: Workspace, text: str, since_days: int) -> dict:
             }
         )
     cochange.sort(key=lambda item: item["coupling"], reverse=True)
-    label = "all time" if since_days <= 0 else f"{since_days} days"
+    since = ""
+    if since_days > 0:
+        since = (datetime.now(timezone.utc) - timedelta(days=since_days)).date().isoformat()
+    truncated = bool(sampled and sample_limit and commit_count >= sample_limit)
+    if sampled:
+        label = f"sampled, at most {sample_limit} commits"
+        if since:
+            label += f" since {since}"
+    else:
+        label = "all time" if since_days <= 0 else f"{since_days} days"
     return {
         "slug": workspace.ref.slug,
         "repo_url": workspace.ref.raw,
         "analysed_at": now(),
         "window_label": label,
+        "history": {
+            "since": since or None,
+            "until": None,
+            "sample_limit": sample_limit,
+            "sampled": sampled,
+            "truncated": truncated,
+            "complete": not truncated,
+            "binary_changes_omitted": binary_omitted,
+            "renames": renames,
+            "note": "Independent repository histories are not cross-repository co-change.",
+        },
         "commit_count": commit_count,
         "author_count": len(authors),
         "hotspots": rows[:15],
@@ -191,5 +224,21 @@ def _empty(workspace: Workspace, message: str) -> dict:
         "hotspots": [],
         "churn": [],
         "cochange": [],
+        "history": {"sampled": False, "truncated": False, "complete": False, "sample_limit": None},
         "message": message,
     }
+
+
+def _rename_names(filename: str) -> tuple[str, str]:
+    # git numstat -M may wrap a rename as "old => new" or "{old => new}".
+    if " => " not in filename:
+        return "", filename
+    left, right = filename.split(" => ", 1)
+    left = left.replace("{", "")
+    right = right.replace("}", "")
+    if left.endswith("/") or "/" in left and not left.endswith(right.split("/", 1)[-1]):
+        prefix = left.rsplit("/", 1)[0] + "/" if "/" in filename.split(" => ", 1)[0] else ""
+        if "{" in filename:
+            prefix = filename.split("{", 1)[0]
+            return prefix + left, prefix + right
+    return left, right

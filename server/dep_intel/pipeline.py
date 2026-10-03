@@ -16,7 +16,8 @@ from dep_intel.languages import detect
 from dep_intel.manifests import build_matrix
 from dep_intel.review import review
 from dep_intel.security import generate_security_report
-from dep_intel.sources import load_repos, load_workspace
+from dep_intel.sources import load_repos, load_workspace, slug_collisions
+from dep_intel.store import write_json
 from dep_intel.updates import check_updates
 from dep_intel.vulns import scan_vulnerabilities
 
@@ -64,15 +65,30 @@ def run_all(
             ("build_repo_graph", lambda: build_graphs(workspaces, settings)),
             ("analyze_commit_history", lambda: analyze_commits(workspaces, settings, client, since_days)),
         ]
+        collisions = slug_collisions(load_repos(settings))
         results = []
+        if collisions:
+            results.append({"tool": "repos", "success": False, "message": " ".join(collisions)})
         for index, (name, action) in enumerate(steps):
             percent = int(index / len(steps) * 100)
             if on_progress:
                 on_progress(name, percent, f"Running {name.replace('_', ' ')}")
-            results.append({"tool": name, **action()})
+            try:
+                outcome = action()
+            except Exception as exc:
+                outcome = {"success": False, "message": str(exc)}
+            results.append({"tool": name, **outcome})
+        status = _aggregate(results)
         if on_progress:
-            on_progress("complete", 100, "Analysis complete")
-        return {"success": True, "message": "Analysis complete.", "results": results}
+            on_progress("complete", 100, f"Analysis {status}")
+        envelope = {
+            "success": status == "success",
+            "status": status,
+            "message": f"Analysis {status}.",
+            "results": results,
+        }
+        write_json(settings.output_dir, "analysis_status.json", {"meta": {"status": status}, **envelope})
+        return envelope
 
 
 def run_graphs(repos_file: str = "", output_dir: str = "", since_days: int = 365, on_progress: Progress | None = None) -> dict:
@@ -87,4 +103,19 @@ def run_graphs(repos_file: str = "", output_dir: str = "", since_days: int = 365
         commits = analyze_commits(workspaces, settings, client, since_days)
         if on_progress:
             on_progress("complete", 100, "Code graph updated")
-        return {"success": True, "message": f"{graphs['message']} {commits['message']}"}
+        status = _aggregate(
+            [
+                {"success": bool(graphs.get("success", True))},
+                {"success": bool(commits.get("success", True))},
+            ]
+        )
+        return {"success": status == "success", "status": status, "message": f"{graphs['message']} {commits['message']}"}
+
+
+def _aggregate(results: list[dict]) -> str:
+    flags = [bool(item.get("success", True)) for item in results]
+    if flags and all(flags):
+        return "success"
+    if any(flags):
+        return "partial"
+    return "failed"

@@ -17,6 +17,7 @@ import { Asleep, Light, Play } from "@carbon/icons-react";
 import { getSnapshot, startRun, type Snapshot } from "./api";
 import { Dashboard } from "./pages/Dashboard";
 import { GraphPage } from "./pages/GraphPage";
+import { ImpactPage } from "./pages/ImpactPage";
 
 type Progress = { phase: string; percent: number; message: string };
 type ThemeName = "g10" | "g100";
@@ -35,6 +36,8 @@ export function App() {
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<Progress>({ phase: "idle", percent: 0, message: "Waiting to start" });
   const [theme, setTheme] = useState<ThemeName>(storedTheme);
+  const [liveTick, setLiveTick] = useState(0);
+  const [resync, setResync] = useState("");
   const dark = theme === "g100";
 
   useEffect(() => {
@@ -69,6 +72,18 @@ export function App() {
     source.addEventListener("file_updated", () => {
       void refresh();
     });
+    const bump = () => {
+      setLiveTick((value) => value + 1);
+      void refresh();
+    };
+    source.addEventListener("graph_updated", bump);
+    source.addEventListener("job_completed", bump);
+    source.addEventListener("job_failed", bump);
+    source.addEventListener("resync", () => {
+      setResync("The live event stream missed updates. The snapshot was reloaded.");
+      bump();
+    });
+    source.onerror = () => setResync("The live event stream disconnected. Reconnect to load a fresh snapshot.");
     return () => source.close();
   }, [refresh]);
 
@@ -91,6 +106,9 @@ export function App() {
           <HeaderMenuItem href="/graph" isCurrentPage={location.pathname === "/graph"}>
             Code graph
           </HeaderMenuItem>
+          <HeaderMenuItem href="/impact" isCurrentPage={location.pathname === "/impact"}>
+            Impact
+          </HeaderMenuItem>
         </HeaderNavigation>
         <HeaderGlobalBar>
           <Button kind="primary" size="md" renderIcon={Play} onClick={() => void run("/api/analysis/run")}>
@@ -112,6 +130,7 @@ export function App() {
             path="/graph"
             element={<GraphPage snapshot={snapshot} error={error} loaded={loaded} onBuild={() => void run("/api/graphs/build")} />}
           />
+          <Route path="/impact" element={<ImpactPage tick={liveTick} resync={resync} />} />
         </Routes>
       </Content>
       <Modal

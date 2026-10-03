@@ -48,6 +48,8 @@ class Settings:
     output_dir: Path
     github_token: str
     ghe_token: str
+    cluster_manifest: Path | None = None
+    refresh_checkouts: bool = False
 
     @classmethod
     def load(cls, repos_file: str = "", output_dir: str = "") -> "Settings":
@@ -59,10 +61,17 @@ class Settings:
         if not output.is_absolute():
             output = PROJECT_ROOT / output
         output.mkdir(parents=True, exist_ok=True)
+        manifest_value = os.environ.get("CLUSTER_MANIFEST", "")
+        manifest = Path(manifest_value) if manifest_value else None
+        if manifest is not None and not manifest.is_absolute():
+            manifest = PROJECT_ROOT / manifest
+        refresh = os.environ.get("DEP_INTEL_REFRESH_CHECKOUTS", "").lower() in {"1", "true", "yes"}
         return cls(
             root=PROJECT_ROOT,
             repos_file=repos,
             output_dir=output,
             github_token=os.environ.get("GITHUB_TOKEN", ""),
             ghe_token=os.environ.get("GHE_TOKEN", ""),
+            cluster_manifest=manifest,
+            refresh_checkouts=refresh,
         )
