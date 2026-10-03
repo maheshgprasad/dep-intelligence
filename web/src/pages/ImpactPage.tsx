@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Dropdown,
@@ -41,18 +41,20 @@ export function ImpactPage({ tick, resync }: { tick: number; resync: string }) {
   const [result, setResult] = useState<ImpactResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [openKey, setOpenKey] = useState("");
+  const sawSnapshot = useRef(false);
 
   async function load() {
-    setLoading(true);
+    if (!sawSnapshot.current) setLoading(true);
     try {
       const graph = await clusterGraph();
       const listed = await clusterContracts();
-      setSummary(graph.summary);
-      setContracts(listed.contracts);
+      setSummary((current) => (sameSummary(current, graph.summary) ? current : graph.summary));
+      setContracts((current) => (sameContracts(current, listed.contracts) ? current : listed.contracts));
       setService((current) => current || graph.summary.services?.[0]?.id || "");
       setError("");
+      sawSnapshot.current = true;
     } catch {
-      setError("The cluster snapshot is not available yet. Refresh after the code graphs exist.");
+      if (!sawSnapshot.current) setError("The cluster snapshot is not available yet. Refresh after the code graphs exist.");
     } finally {
       setLoading(false);
     }
@@ -95,6 +97,11 @@ export function ImpactPage({ tick, resync }: { tick: number; resync: string }) {
 
   const services = summary?.services ?? [];
   const stale = summary?.stale_services ?? [];
+  const serviceItems = useMemo(() => services.map((item) => item.id), [services]);
+  const contractItems = useMemo(
+    () => ["", ...contracts.filter((item) => !service || item.service_id === service).map((item) => item.qualified_name)],
+    [contracts, service],
+  );
 
   return (
     <div className="stack-gap">
@@ -146,7 +153,7 @@ export function ImpactPage({ tick, resync }: { tick: number; resync: string }) {
             id="impact-service"
             titleText="Service"
             label="Choose a service"
-            items={services.map((item) => item.id)}
+            items={serviceItems}
             selectedItem={service}
             onChange={({ selectedItem }) => setService(selectedItem || "")}
           />
@@ -166,7 +173,7 @@ export function ImpactPage({ tick, resync }: { tick: number; resync: string }) {
             id="impact-contract"
             titleText="Contract"
             label="Optional contract"
-            items={["", ...contracts.filter((item) => !service || item.service_id === service).map((item) => item.qualified_name)]}
+            items={contractItems}
             selectedItem={contractId}
             onChange={({ selectedItem }) => setContractId(selectedItem || "")}
           />
@@ -237,4 +244,25 @@ export function ImpactPage({ tick, resync }: { tick: number; resync: string }) {
       </div>
     </div>
   );
+}
+
+function sameSummary(current: ClusterSummary | null, next: ClusterSummary): boolean {
+  if (!current) return false;
+  return (
+    current.version === next.version &&
+    current.node_count === next.node_count &&
+    current.edge_count === next.edge_count &&
+    current.unresolved_count === next.unresolved_count &&
+    (current.stale_services ?? []).join() === (next.stale_services ?? []).join() &&
+    (current.notices ?? []).join() === (next.notices ?? []).join() &&
+    (current.config_errors ?? []).join() === (next.config_errors ?? []).join()
+  );
+}
+
+function sameContracts(
+  current: { key: string; qualified_name: string }[],
+  next: { key: string; qualified_name: string }[],
+): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((item, index) => item.key === next[index]?.key && item.qualified_name === next[index]?.qualified_name);
 }

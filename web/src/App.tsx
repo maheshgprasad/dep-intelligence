@@ -77,7 +77,6 @@ export function App() {
       void refresh();
     };
     source.addEventListener("graph_updated", bump);
-    source.addEventListener("impact_computed", bump);
     source.addEventListener("job_completed", bump);
     source.addEventListener("job_failed", bump);
     source.addEventListener("resync", () => {
