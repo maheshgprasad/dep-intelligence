@@ -273,34 +273,103 @@ function UpdateTable({ snapshot }: { snapshot: Snapshot | null }) {
 }
 
 function ApiTable({ snapshot }: { snapshot: Snapshot | null }) {
-  const dependencies = snapshot?.apis?.api_dependencies.dependencies ?? [];
+  const bundle = snapshot?.apis?.api_dependencies;
+  const services = bundle?.services ?? {};
+  const dependencies = bundle?.dependencies ?? [];
+  const diagnostics = bundle?.diagnostics ?? [];
+  const endpoints = Object.entries(services).flatMap(([service, info]) =>
+    (info.exposes ?? []).map((route) => ({ service, ...route })),
+  );
+  const calls = Object.entries(services).flatMap(([service, info]) =>
+    (info.consumes ?? []).map((call) => ({ service, ...call })),
+  );
   return (
-    <Table size="lg" useZebraStyles>
-      <TableHead>
-        <TableRow>
-          <TableHeader>From</TableHeader>
-          <TableHeader>To</TableHeader>
-          <TableHeader>Method</TableHeader>
-          <TableHeader>Endpoint</TableHeader>
-          <TableHeader>Confidence</TableHeader>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {dependencies.map((edge) => (
-          <TableRow key={`${edge.from}-${edge.to}-${edge.endpoint}`}>
-            <TableCell>{edge.from}</TableCell>
-            <TableCell>{edge.to}</TableCell>
-            <TableCell>{edge.method}</TableCell>
-            <TableCell>{edge.endpoint}</TableCell>
-            <TableCell>
-              <Tag type="green" size="sm">
-                {edge.confidence}
-              </Tag>
-            </TableCell>
+    <>
+      <InlineNotification
+        kind="info"
+        lowContrast
+        hideCloseButton
+        title="How this tab is filled"
+        subtitle="Analysis shallow-clones each GitHub repository, reads routes and HTTP clients from that tree, saves this report, then deletes the checkout."
+      />
+      {!snapshot?.apis ? (
+        <InlineNotification kind="warning" lowContrast hideCloseButton title="No API report yet" subtitle="Run analysis to scan the repositories in repos.txt." />
+      ) : null}
+      {diagnostics.map((item) => (
+        <InlineNotification
+          key={`${item.code}-${item.service ?? ""}-${item.message}`}
+          kind="warning"
+          lowContrast
+          hideCloseButton
+          title={item.service || item.code}
+          subtitle={item.message}
+        />
+      ))}
+      <Table size="lg" useZebraStyles>
+        <TableHead>
+          <TableRow>
+            <TableHeader>Repository</TableHeader>
+            <TableHeader>Role</TableHeader>
+            <TableHeader>Method</TableHeader>
+            <TableHeader>Path</TableHeader>
+            <TableHeader>File</TableHeader>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHead>
+        <TableBody>
+          {endpoints.map((route) => (
+            <TableRow key={`serve-${route.service}-${route.method}-${route.path}-${route.file ?? ""}`}>
+              <TableCell>{route.service}</TableCell>
+              <TableCell>Serves</TableCell>
+              <TableCell>{route.method}</TableCell>
+              <TableCell>{route.path}</TableCell>
+              <TableCell>{route.file || "—"}</TableCell>
+            </TableRow>
+          ))}
+          {calls.map((call) => (
+            <TableRow key={`call-${call.service}-${call.method}-${call.url}-${call.file ?? ""}`}>
+              <TableCell>{call.service}</TableCell>
+              <TableCell>Calls</TableCell>
+              <TableCell>{call.method}</TableCell>
+              <TableCell>{call.url}</TableCell>
+              <TableCell>{call.file || "—"}</TableCell>
+            </TableRow>
+          ))}
+          {endpoints.length === 0 && calls.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5}>No routes or HTTP clients were found in the scanned source.</TableCell>
+            </TableRow>
+          ) : null}
+        </TableBody>
+      </Table>
+      {dependencies.length > 0 ? (
+        <Table size="lg" useZebraStyles>
+          <TableHead>
+            <TableRow>
+              <TableHeader>From</TableHeader>
+              <TableHeader>To</TableHeader>
+              <TableHeader>Method</TableHeader>
+              <TableHeader>Endpoint</TableHeader>
+              <TableHeader>Confidence</TableHeader>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {dependencies.map((edge) => (
+              <TableRow key={`${edge.from}-${edge.to}-${edge.endpoint}`}>
+                <TableCell>{edge.from}</TableCell>
+                <TableCell>{edge.to}</TableCell>
+                <TableCell>{edge.method}</TableCell>
+                <TableCell>{edge.endpoint}</TableCell>
+                <TableCell>
+                  <Tag type="green" size="sm">
+                    {edge.confidence}
+                  </Tag>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : null}
+    </>
   );
 }
 
@@ -342,7 +411,18 @@ function ReviewTable({ snapshot }: { snapshot: Snapshot | null }) {
 function CoverageTable({ snapshot }: { snapshot: Snapshot | null }) {
   const rows = Object.entries(snapshot?.coverage?.repositories ?? {});
   return (
-    <Table size="lg" useZebraStyles>
+    <>
+      <InlineNotification
+        kind="info"
+        lowContrast
+        hideCloseButton
+        title="How this tab is filled"
+        subtitle="Python and Go tests run inside a shallow checkout of each GitHub repository. The checkout is deleted after this report is saved. JavaScript coverage is not run."
+      />
+      {!snapshot?.coverage ? (
+        <InlineNotification kind="warning" lowContrast hideCloseButton title="No coverage report yet" subtitle="Run analysis to execute pytest or go test where those languages are present." />
+      ) : null}
+      <Table size="lg" useZebraStyles>
       <TableHead>
         <TableRow>
           <TableHeader>Repository</TableHeader>
@@ -366,8 +446,14 @@ function CoverageTable({ snapshot }: { snapshot: Snapshot | null }) {
             <TableCell>{info.message}</TableCell>
           </TableRow>
         ))}
+        {snapshot?.coverage && rows.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={5}>The coverage report has no repositories.</TableCell>
+          </TableRow>
+        ) : null}
       </TableBody>
     </Table>
+    </>
   );
 }
 

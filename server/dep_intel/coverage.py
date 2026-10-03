@@ -40,10 +40,15 @@ def run_coverage(workspaces: list[Workspace], settings: Settings) -> dict:
 
 def _one(workspace: Workspace, language: str) -> dict:
     base = {"language": language, "percent": None, "files": []}
-    if language == "python" and workspace.ref.kind == "local" and workspace.ref.path:
-        return {**base, **_pytest(workspace.ref.path)}
-    if language == "go" and workspace.ref.kind == "local" and workspace.ref.path:
-        return {**base, **_go(workspace.ref.path)}
+    root = workspace.ref.path
+    if root and root.is_dir() and language == "python":
+        result = _pytest(root)
+        return {**base, **_note_cleanup(result, workspace)}
+    if root and root.is_dir() and language == "go":
+        result = _go(root)
+        return {**base, **_note_cleanup(result, workspace)}
+    if workspace.note:
+        return {**base, "status": "unavailable", "message": workspace.note}
     if language in MOCK_ONLY:
         return {
             **base,
@@ -61,6 +66,16 @@ def _one(workspace: Workspace, language: str) -> dict:
         "status": "unavailable",
         "message": "Real coverage runs against a local checkout. Clone the repository or list a local path in repos.txt.",
     }
+
+
+def _note_cleanup(result: dict, workspace: Workspace) -> dict:
+    if workspace.content_source != "shallow_clone":
+        return result
+    message = result.get("message") or ""
+    suffix = " The shallow checkout is deleted after this report is saved."
+    if suffix.strip() not in message:
+        result = {**result, "message": f"{message}{suffix}"}
+    return result
 
 
 def _pytest(root: Path) -> dict:
@@ -86,8 +101,9 @@ def _pytest(root: Path) -> dict:
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"status": "unavailable", "message": f"pytest did not run: {exc}"}
     if not report.is_file():
-        detail = (completed.stderr or completed.stdout or "pytest did not write coverage").strip().splitlines()
-        return {"status": "unavailable", "message": detail[-1] if detail else "pytest did not write coverage"}
+        detail = (completed.stdout or completed.stderr or "pytest did not write coverage").strip().splitlines()
+        tail = detail[-1] if detail else "pytest did not write coverage"
+        return {"status": "unavailable", "message": f"pytest did not produce a coverage report. {tail}"}
     data = json.loads(report.read_text(encoding="utf-8"))
     report.unlink(missing_ok=True)
     files = []

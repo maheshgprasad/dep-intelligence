@@ -29,6 +29,8 @@ Copy `.env.example` to `.env` when you add GitHub URLs.
 
 The API and the MCP server both read `.env` from the repository root. Existing environment variables win over the file.
 
+Analysis shallow-clones each GitHub URL with `git clone --depth 1` into `output/work`, reads that tree for language, dependencies, APIs, review, and coverage, writes the JSON reports under `output/`, and deletes the checkout when the pass finishes. A local path in `repos.txt` is read in place and is not deleted. Code-graph checkouts under `output/checkouts` stay so later graph queries can reopen them.
+
 ## Tests
 
 ```bash
