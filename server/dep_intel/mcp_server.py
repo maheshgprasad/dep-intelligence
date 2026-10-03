@@ -20,7 +20,7 @@ from dep_intel.manifests import build_matrix
 from dep_intel.pipeline import run_all
 from dep_intel.review import review
 from dep_intel.security import generate_security_report
-from dep_intel.sources import Workspace, load_repos, load_workspace
+from dep_intel.sources import Workspace, analysis_sources
 from dep_intel.updates import check_updates
 from dep_intel.vulns import scan_vulnerabilities
 
@@ -31,8 +31,8 @@ mcp = FastMCP("dep-intel")
 def _open(repos_file: str = "", output_dir: str = "") -> Iterator[tuple[Settings, httpx.Client, list[Workspace]]]:
     settings = Settings.load(repos_file, output_dir)
     with httpx.Client(follow_redirects=True) as client:
-        workspaces = [load_workspace(repo, client, settings) for repo in load_repos(settings)]
-        yield settings, client, workspaces
+        with analysis_sources(settings) as workspaces:
+            yield settings, client, workspaces
 
 
 def _message(result: dict) -> str:

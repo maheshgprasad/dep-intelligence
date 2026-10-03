@@ -16,7 +16,7 @@ from dep_intel.languages import detect
 from dep_intel.manifests import build_matrix
 from dep_intel.review import review
 from dep_intel.security import generate_security_report
-from dep_intel.sources import load_repos, load_workspace, slug_collisions
+from dep_intel.sources import analysis_sources, load_repos, slug_collisions
 from dep_intel.store import write_json
 from dep_intel.updates import check_updates
 from dep_intel.vulns import scan_vulnerabilities
@@ -46,70 +46,74 @@ def run_all(
 ) -> dict:
     settings = Settings.load(repos_file, output_dir)
     with httpx.Client(follow_redirects=True) as client:
-        workspaces = [load_workspace(repo, client, settings) for repo in load_repos(settings)]
-        if not workspaces:
-            return {
-                "success": False,
-                "message": f"No repositories in {settings.repos_file}. Add local paths or GitHub URLs.",
-            }
-        steps: list[tuple[str, Callable[[], dict]]] = [
-            ("detect_language", lambda: detect(workspaces, settings)),
-            ("analyze_dependencies", lambda: build_matrix(workspaces, settings)),
-            ("check_package_updates", lambda: check_updates(workspaces, settings, client)),
-            ("detect_api_dependencies", lambda: detect_api_dependencies(workspaces, settings)),
-            ("review_code", lambda: review(workspaces, settings)),
-            ("run_coverage", lambda: run_coverage(workspaces, settings)),
-            ("scan_vulnerabilities", lambda: scan_vulnerabilities(workspaces, settings, client)),
-            ("scan_cve_from_github_issues", lambda: scan_cve_issues(workspaces, settings, client)),
-            ("generate_security_release_report", lambda: generate_security_report(settings)),
-            ("build_repo_graph", lambda: build_graphs(workspaces, settings)),
-            ("analyze_commit_history", lambda: analyze_commits(workspaces, settings, client, since_days)),
-        ]
-        collisions = slug_collisions(load_repos(settings))
-        results = []
-        if collisions:
-            results.append({"tool": "repos", "success": False, "message": " ".join(collisions)})
-        for index, (name, action) in enumerate(steps):
-            percent = int(index / len(steps) * 100)
-            if on_progress:
-                on_progress(name, percent, f"Running {name.replace('_', ' ')}")
-            try:
-                outcome = action()
-            except Exception as exc:
-                outcome = {"success": False, "message": str(exc)}
-            results.append({"tool": name, **outcome})
-        status = _aggregate(results)
-        if on_progress:
-            on_progress("complete", 100, f"Analysis {status}")
-        envelope = {
-            "success": status == "success",
-            "status": status,
-            "message": f"Analysis {status}.",
-            "results": results,
+        with analysis_sources(settings) as workspaces:
+            return _run_steps(settings, client, workspaces, on_progress, since_days)
+
+
+def _run_steps(settings: Settings, client: httpx.Client, workspaces: list, on_progress: Progress | None, since_days: int) -> dict:
+    if not workspaces:
+        return {
+            "success": False,
+            "message": f"No repositories in {settings.repos_file}. Add local paths or GitHub URLs.",
         }
-        write_json(settings.output_dir, "analysis_status.json", {"meta": {"status": status}, **envelope})
-        return envelope
+    steps: list[tuple[str, Callable[[], dict]]] = [
+        ("detect_language", lambda: detect(workspaces, settings)),
+        ("analyze_dependencies", lambda: build_matrix(workspaces, settings)),
+        ("check_package_updates", lambda: check_updates(workspaces, settings, client)),
+        ("detect_api_dependencies", lambda: detect_api_dependencies(workspaces, settings)),
+        ("review_code", lambda: review(workspaces, settings)),
+        ("run_coverage", lambda: run_coverage(workspaces, settings)),
+        ("scan_vulnerabilities", lambda: scan_vulnerabilities(workspaces, settings, client)),
+        ("scan_cve_from_github_issues", lambda: scan_cve_issues(workspaces, settings, client)),
+        ("generate_security_release_report", lambda: generate_security_report(settings)),
+        ("build_repo_graph", lambda: build_graphs(workspaces, settings)),
+        ("analyze_commit_history", lambda: analyze_commits(workspaces, settings, client, since_days)),
+    ]
+    collisions = slug_collisions(load_repos(settings))
+    results = []
+    if collisions:
+        results.append({"tool": "repos", "success": False, "message": " ".join(collisions)})
+    for index, (name, action) in enumerate(steps):
+        percent = int(index / len(steps) * 100)
+        if on_progress:
+            on_progress(name, percent, f"Running {name.replace('_', ' ')}")
+        try:
+            outcome = action()
+        except Exception as exc:
+            outcome = {"success": False, "message": str(exc)}
+        results.append({"tool": name, **outcome})
+    status = _aggregate(results)
+    if on_progress:
+        on_progress("complete", 100, f"Analysis {status}")
+    envelope = {
+        "success": status == "success",
+        "status": status,
+        "message": f"Analysis {status}.",
+        "results": results,
+    }
+    write_json(settings.output_dir, "analysis_status.json", {"meta": {"status": status}, **envelope})
+    return envelope
 
 
 def run_graphs(repos_file: str = "", output_dir: str = "", since_days: int = 365, on_progress: Progress | None = None) -> dict:
     settings = Settings.load(repos_file, output_dir)
     with httpx.Client(follow_redirects=True) as client:
-        workspaces = [load_workspace(repo, client, settings) for repo in load_repos(settings)]
-        if on_progress:
-            on_progress("build_repo_graph", 20, "Updating code graphs")
-        graphs = build_graphs(workspaces, settings)
-        if on_progress:
-            on_progress("analyze_commit_history", 70, "Mining commit history")
-        commits = analyze_commits(workspaces, settings, client, since_days)
-        if on_progress:
-            on_progress("complete", 100, "Code graph updated")
-        status = _aggregate(
-            [
-                {"success": bool(graphs.get("success", True))},
-                {"success": bool(commits.get("success", True))},
-            ]
-        )
-        return {"success": status == "success", "status": status, "message": f"{graphs['message']} {commits['message']}"}
+        with analysis_sources(settings) as workspaces:
+            if on_progress:
+                on_progress("build_repo_graph", 20, "Updating code graphs")
+            graphs = build_graphs(workspaces, settings)
+            if on_progress:
+                on_progress("analyze_commit_history", 70, "Mining commit history")
+            commits = analyze_commits(workspaces, settings, client, since_days)
+            if on_progress:
+                on_progress("complete", 100, "Code graph updated")
+            status = _aggregate(
+                [
+                    {"success": bool(graphs.get("success", True))},
+                    {"success": bool(commits.get("success", True))},
+                ]
+            )
+            return {"success": status == "success", "status": status, "message": f"{graphs['message']} {commits['message']}"}
 
 
 def _aggregate(results: list[dict]) -> str:

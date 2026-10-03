@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from dep_intel.cluster_manifest import load_manifest, manifest_path, suggestion_for_missing_manifest
+from dep_intel.cluster_manifest import applicable_manifest, manifest_path, suggestion_for_missing_manifest
 from dep_intel.config import Settings
 from dep_intel.contract_extractors.javascript import extract_javascript, resolve_routes
 from dep_intel.contract_extractors.openapi import parse_openapi
@@ -19,6 +19,14 @@ from dep_intel.store import now, write_json
 
 _GO_HANDLE = re.compile(r'HandleFunc\(\s*"([^"]+)"')
 _GO_CLIENT = re.compile(r'http\.(Get|Post|Put|Delete)\(\s*"([^"]+)"')
+_PY_DECORATOR = re.compile(
+    r"@(?:\w+)\.(get|post|put|patch|delete|options|head)\(\s*['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+_PY_ROUTE = re.compile(
+    r"@(?:\w+)\.route\(\s*['\"]([^'\"]+)['\"](?:[^)\n]*methods\s*=\s*\[([^\]]*)\])?",
+    re.IGNORECASE,
+)
 _OPENAPI_NAMES = {"openapi.yaml", "openapi.yml", "openapi.json", "swagger.json", "swagger.yaml", "swagger.yml"}
 
 
@@ -31,6 +39,8 @@ def detect_api_dependencies(workspaces: list[Workspace], settings: Settings) -> 
         files_by_name[workspace.ref.name] = texts
         provided, exposed, consumed = _scan_workspace(workspace, texts, diagnostics)
         services[workspace.ref.name] = {"provides": provided, "consumes": consumed, "exposes": exposed}
+        if workspace.note:
+            diagnostics.append({"code": "checkout", "message": workspace.note, "service": workspace.ref.name})
         if workspace.truncated:
             diagnostics.append(
                 {
@@ -41,7 +51,7 @@ def detect_api_dependencies(workspaces: list[Workspace], settings: Settings) -> 
             )
 
     dependencies = []
-    manifest, errors = load_manifest(manifest_path(settings.root), [workspace.ref for workspace in workspaces], settings.root)
+    manifest, errors, _notices = applicable_manifest(manifest_path(settings.root), [workspace.ref for workspace in workspaces], settings.root)
     if errors:
         diagnostics.extend({"code": "manifest", "message": error} for error in errors)
     elif manifest is None:
@@ -89,7 +99,7 @@ def detect_api_dependencies(workspaces: list[Workspace], settings: Settings) -> 
 
 
 def _contract_texts(workspace: Workspace) -> dict[str, str]:
-    if workspace.ref.kind == "local" and workspace.ref.path and workspace.ref.path.is_dir():
+    if workspace.ref.path and workspace.ref.path.is_dir():
         files, _truncated = read_contract_sources(workspace.ref.path)
         return files
     return workspace.files
@@ -125,9 +135,23 @@ def _scan_workspace(workspace: Workspace, texts: dict[str, str], diagnostics: li
             provided.append({"api": filename, "path": path, "operations": len(document.operations)})
             for operation in document.operations:
                 exposed.append({"path": operation.path, "method": operation.method, "framework": "openapi", "file": path, "handler": operation.handler})
+        if path.endswith(".py") and not _is_test_path(path):
+            for method, route in _PY_DECORATOR.findall(text):
+                exposed.append({"path": route, "method": method.upper(), "framework": "python", "file": path})
+            for route, methods in _PY_ROUTE.findall(text):
+                found = re.findall(r"['\"](GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)['\"]", methods or "", re.IGNORECASE)
+                for method in found or ["GET"]:
+                    exposed.append({"path": route, "method": method.upper(), "framework": "python", "file": path})
         if path.endswith(".go"):
             for route in _GO_HANDLE.findall(text):
                 exposed.append({"path": route, "method": "GET", "framework": "net/http", "file": path})
             for method, url in _GO_CLIENT.findall(text):
                 consumed.append({"url": url, "method": method.upper(), "type": "net/http", "file": path})
     return provided, exposed, consumed
+
+
+def _is_test_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    if name.startswith("test_") or name.endswith("_test.py"):
+        return True
+    return any(part in {"tests", "test"} for part in path.split("/"))

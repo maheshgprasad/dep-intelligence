@@ -34,8 +34,9 @@ export type Snapshot = {
   apis: {
     summary: { total_services: number; total_dependencies: number };
     api_dependencies: {
-      services: Record<string, { exposes: Route[]; consumes: { url: string; method: string; type: string }[] }>;
+      services: Record<string, { exposes: Route[]; consumes: { url: string; method: string; type: string; file?: string }[] }>;
       dependencies: { from: string; to: string; endpoint: string; method: string; confidence: string }[];
+      diagnostics?: { code: string; message: string; service?: string }[];
     };
   } | null;
   vulnerabilities: {
@@ -87,7 +88,7 @@ export type ClusterSummary = {
 
 export type Update = { repo: string; ecosystem: string; package: string; from: string; to: string };
 export type Finding = { repo: string; file: string; name: string; line: number; message: string };
-export type Route = { path: string; method: string; framework: string };
+export type Route = { path: string; method: string; framework: string; file?: string };
 export type GraphRepo = {
   slug: string;
   name: string;

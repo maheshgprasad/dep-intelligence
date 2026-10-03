@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -94,6 +97,7 @@ class Workspace:
     truncated: bool = False
     dirty: bool = False
     stale: bool = False
+    note: str = ""
 
     def read(self, relative: str) -> str:
         return self.files.get(relative, "")
@@ -227,6 +231,74 @@ def ensure_checkout_info(ref: RepoRef, settings: Settings, *, refresh: bool | No
     return Checkout(path=dest, revision=git_head(dest), owned=True)
 
 
+@contextmanager
+def analysis_sources(settings: Settings) -> Iterator[list[Workspace]]:
+    """Shallow-clone GitHub allowlist entries for one analysis pass.
+
+    Local paths are read in place and are never deleted. A GitHub URL is
+    cloned with ``--depth 1`` under ``output/work``. Reports are written by
+    the caller; this removes the temporary checkout when the pass finishes.
+    """
+    workspaces: list[Workspace] = []
+    disposable: list[Path] = []
+    originals: list[tuple[RepoRef, Path | None]] = []
+    try:
+        for ref in load_repos(settings):
+            originals.append((ref, ref.path))
+            if ref.kind == "local" and ref.path and ref.path.is_dir():
+                checkout = Checkout(path=ref.path, revision=git_head(ref.path), dirty=_dirty(ref.path), owned=False)
+                note = ""
+            else:
+                try:
+                    checkout = _shallow_clone(ref, settings)
+                    disposable.append(checkout.path)
+                    note = ""
+                except RuntimeError as exc:
+                    checkout = None
+                    note = str(exc)
+            if checkout is None:
+                workspaces.append(Workspace(ref=ref, content_source="shallow_clone", note=note))
+                continue
+            ref.path = checkout.path
+            files, truncated = _read_local(checkout.path, 5000)
+            workspaces.append(
+                Workspace(
+                    ref=ref,
+                    files=files,
+                    revision=checkout.revision or git_head(checkout.path),
+                    content_source="local" if not checkout.owned else "shallow_clone",
+                    truncated=truncated,
+                    dirty=checkout.dirty,
+                    stale=checkout.stale,
+                    note=note,
+                )
+            )
+        yield workspaces
+    finally:
+        for ref, path in originals:
+            ref.path = path
+        for path in disposable:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _shallow_clone(ref: RepoRef, settings: Settings) -> Checkout:
+    dest = settings.output_dir / "work" / ref.slug
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    token = _token_for(ref, settings)
+    completed = _run_git(
+        ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", ref.raw, str(dest)],
+        token=token,
+        timeout=180,
+    )
+    if completed.returncode != 0 or not (dest / ".git").is_dir():
+        shutil.rmtree(dest, ignore_errors=True)
+        detail = redact((completed.stderr or completed.stdout or "shallow clone failed").strip(), [token])
+        raise RuntimeError(detail.splitlines()[-1][:300] if detail else "shallow clone failed")
+    return Checkout(path=dest, revision=git_head(dest), owned=True, note="shallow")
+
+
 def load_workspace(ref: RepoRef, client: httpx.Client, settings: Settings, file_limit: int = 80) -> Workspace:
     if ref.kind == "local":
         files, truncated = _read_local(ref.path or Path("."), file_limit)
@@ -261,7 +333,7 @@ def read_contract_sources(root: Path, file_limit: int = 5000) -> tuple[dict[str,
     return files, truncated
 
 
-_CONTRACT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json", ".yml", ".yaml"}
+_CONTRACT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".go", ".json", ".yml", ".yaml"}
 
 
 def _read_local(
