@@ -18,12 +18,21 @@ from typing import Any
 from dep_intel.changes import diff_snapshots, fresh_version, union_snapshot
 from dep_intel.cluster_manifest import applicable_manifest, manifest_path, suggestion_for_missing_manifest
 from dep_intel.config import Settings
-from dep_intel.crg_adapter import ExtractionFailed, UnsupportedSchema, crg_package_version, extract_partition, stale_partition
+from dep_intel.crg_adapter import (
+    ExtractionFailed,
+    UnsupportedSchema,
+    crg_package_version,
+    extract_partition,
+    resolve_graph_db,
+    stale_partition,
+)
 from dep_intel.cross_repo_graph import assemble, graph_slice, published_dict, repo_for, snapshot_from_published
 from dep_intel.events import bus
 from dep_intel.graph_models import CODE_SYMBOL, Diagnostic, Partition, Snapshot
+from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
 from dep_intel.impact import analyze
 from dep_intel.jobs import Job, JobRunner
+from dep_intel.temporal_providers import provider_for
 from dep_intel.paths import contained
 from dep_intel.sources import ensure_checkout, git_head, load_repos, read_contract_sources, slug_collisions
 from dep_intel.store import read_json, write_json
@@ -146,7 +155,7 @@ class ClusterEngine:
                     continue
                 texts, truncated = read_contract_sources(repo.path)
                 files[service.id] = texts
-                if truncated:
+                if truncated and not any(item.code == "source_scan_truncated" for item in partitions[service.id].diagnostics):
                     partitions[service.id].diagnostics.append(
                         Diagnostic(
                             code="source_scan_truncated",
@@ -155,6 +164,14 @@ class ClusterEngine:
                             severity="warning",
                         )
                     )
+            if previous is not None and _same_structural_index(previous, partitions):
+                return {
+                    "status": "ok",
+                    "version": previous.version,
+                    "summary": previous.summary(),
+                    "services": [part.service_id for part in previous.partitions.values()],
+                    "unchanged": True,
+                }
             version = fresh_version()
             snapshot = assemble(partitions, manifest, files, version=version)
             self._publish(snapshot, previous)
@@ -166,6 +183,76 @@ class ClusterEngine:
             }
 
     def impact(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        status, context = self._impact_context(body)
+        if status != 200:
+            return status, context
+        result = analyze(
+            context["snapshot"],
+            context["roots"],
+            mode=context["mode"],
+            settings=context["settings"],
+            scenario=body.get("scenario") or "",
+            topology=context["topology"],
+            previous_version=context["previous_version"],
+        )
+        payload = result.to_dict()
+        payload["affected_services"] = sorted({item.service_id for item in result.affected})
+        bus.publish_threadsafe(
+            "impact_computed",
+            {
+                "analysis_id": result.analysis_id,
+                "graph_version": result.graph_version,
+                "mode": context["mode"],
+                "services": payload["affected_services"],
+                "truncated": result.truncated,
+                "truncation_reason": result.truncation_reason,
+            },
+        )
+        return 200, payload
+
+    def hybrid_impact(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        status, context = self._impact_context(body)
+        if status != 200:
+            return status, context
+        result = analyze(
+            context["snapshot"],
+            context["roots"],
+            mode=context["mode"],
+            settings=context["settings"],
+            scenario=body.get("scenario") or "",
+            topology=context["topology"],
+            previous_version=context["previous_version"],
+        )
+        weights = body.get("weights") or {}
+        limit = int(body.get("temporal_candidate_limit") if body.get("temporal_candidate_limit") is not None else 25)
+        provider_name = body.get("temporal_provider") or "commit_history"
+        try:
+            provider = provider_for(
+                provider_name,
+                output_dir=self.settings.output_dir,
+                service_to_slug=self._service_slugs(context["manifest"]),
+                phase1_path=self.settings.output_dir / "phase1_predictions.json",
+            )
+        except ValueError as exc:
+            return 400, {"detail": str(exc), "code": "unknown_temporal_provider"}
+        payload = analyze_hybrid(
+            context["snapshot"],
+            result,
+            provider,
+            settings=HybridSettings(
+                alpha_structural=float(weights.get("structural", 0.70)),
+                beta_temporal=float(weights.get("temporal", 0.30)),
+                cross_repo_window_days=int(body.get("cross_repo_window_days") or 7),
+                temporal_candidate_limit=max(0, limit),
+                expand_temporal=bool(body.get("expand_temporal", True)) and limit > 0,
+                experiment=body.get("experiment") or "hybrid",
+            ),
+            as_of=body.get("as_of") or None,
+            provider_name=provider.name,
+        )
+        return 200, payload
+
+    def _impact_context(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         snapshot = self.current()
         if snapshot is None:
             return 409, {"detail": "No cluster snapshot is published. Refresh the graph first.", "code": "snapshot_missing"}
@@ -211,29 +298,22 @@ class ClusterEngine:
         for name in ("threshold", "epsilon", "max_hops", "max_nodes", "max_edges_examined", "timeout_ms"):
             if name in (body.get("budget") or {}):
                 settings = settings.model_copy(update={name: body["budget"][name]})
-        result = analyze(
-            target_snapshot,
-            roots,
-            mode=mode,
-            settings=settings,
-            scenario=body.get("scenario") or "",
-            topology=topology,
-            previous_version=previous_version,
-        )
-        payload = result.to_dict()
-        payload["affected_services"] = sorted({item.service_id for item in result.affected})
-        bus.publish_threadsafe(
-            "impact_computed",
-            {
-                "analysis_id": result.analysis_id,
-                "graph_version": result.graph_version,
-                "mode": mode,
-                "services": payload["affected_services"],
-                "truncated": result.truncated,
-                "truncation_reason": result.truncation_reason,
-            },
-        )
-        return 200, payload
+        return 200, {
+            "snapshot": target_snapshot,
+            "roots": roots,
+            "settings": settings,
+            "mode": mode,
+            "topology": topology,
+            "previous_version": previous_version,
+            "manifest": manifest,
+        }
+
+    def _service_slugs(self, manifest) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for service in manifest.services:
+            repo = repo_for(manifest, service.id)
+            mapping[service.id] = repo.slug if repo is not None else service.id
+        return mapping
 
     def diff(self) -> dict[str, Any]:
         return diff_snapshots(self.previous(), self.current()).to_dict() if self.current() else {}
@@ -254,10 +334,13 @@ class ClusterEngine:
             repo = repo_for(manifest, service.id)
             if repo is None or repo.path is None:
                 continue
-            directory = repo.path / service.graph_db
-            if not contained(directory, repo.path):
+            db_path = resolve_graph_db(
+                repo.path, service.graph_db, output_dir=self.settings.output_dir, slug=repo.slug
+            )
+            parent = db_path.parent
+            if not (contained(parent, repo.path) or contained(parent, self.settings.output_dir)):
                 continue
-            watches[service.id] = directory.parent
+            watches[service.id] = parent
         coordinator = WatchCoordinator(
             self._on_dirty,
             debounce_ms=manifest.watch.debounce_ms,
@@ -286,7 +369,9 @@ class ClusterEngine:
             if previous_part is not None:
                 return service_id, stale_partition(previous_part, error)
             return service_id, Partition(service_id=service_id, repository=service.repository, quality="failed", error=error)
-        db_path = (repo.path / service.graph_db).resolve()
+        db_path = resolve_graph_db(
+            repo.path, service.graph_db, output_dir=self.settings.output_dir, slug=repo.slug
+        )
         head = git_head(repo.path)
         try:
             partition = extract_partition(
@@ -296,6 +381,7 @@ class ClusterEngine:
                 repo_root=repo.path,
                 package_version=crg_package_version(),
                 workspace_head=head,
+                extra_roots=[self.settings.output_dir],
             )
         except (ExtractionFailed, UnsupportedSchema, OSError) as exc:
             if previous_part is not None:
@@ -409,6 +495,34 @@ class ClusterEngine:
                 path.unlink(missing_ok=True)
 
 
+def _same_structural_index(previous: Snapshot, partitions: dict[str, Partition]) -> bool:
+    if set(previous.partitions) != set(partitions):
+        return False
+    for service_id, part in partitions.items():
+        old = previous.partitions[service_id]
+        if (
+            old.quality,
+            old.error,
+            old.index_revision,
+            old.workspace_head,
+            old.db_identity,
+            old.schema_version,
+        ) != (
+            part.quality,
+            part.error,
+            part.index_revision,
+            part.workspace_head,
+            part.db_identity,
+            part.schema_version,
+        ):
+            return False
+        if set(old.nodes) != set(part.nodes) or len(old.edges) != len(part.edges):
+            return False
+        if len(old.diagnostics) != len(part.diagnostics):
+            return False
+    return True
+
+
 def resolve_roots(snapshot: Snapshot, *, service: str, symbol: str, file: str, line: int | None, contract_id: str) -> tuple[list[str], list[dict], str]:
     if contract_id:
         matches = [
@@ -451,7 +565,21 @@ def resolve_roots(snapshot: Snapshot, *, service: str, symbol: str, file: str, l
             return [], [_candidate(node) for node in exact], "ambiguous"
         suggestions = [node for node in pool if symbol.lower() in node.name.lower() or symbol.lower() in node.qualified_name.lower()]
         return [], [_candidate(node) for node in suggestions[:10]], f"Symbol {symbol} was not found"
-    return [], [], "Provide a symbol, file and line, or contract_id"
+    if file:
+        file_nodes = [node for node in pool if node.file_path == file and node.kind == "File"]
+        if len(file_nodes) == 1:
+            return [file_nodes[0].key], [], ""
+        in_file = [node for node in pool if node.file_path == file and node.category == CODE_SYMBOL]
+        if in_file:
+            return [node.key for node in in_file], [], ""
+        return [], [], f"File {file} is not in this snapshot"
+    files = [node for node in pool if node.kind == "File"]
+    if not files:
+        files = [node for node in pool if node.category == CODE_SYMBOL]
+    files.sort(key=lambda node: (node.service_id, node.file_path or "", node.key))
+    if not files:
+        return [], [], "No symbols in this snapshot to rank"
+    return [node.key for node in files], [], ""
 
 
 def _file_allowed(snapshot: Snapshot, service: str, file: str) -> bool:

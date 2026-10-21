@@ -21,6 +21,8 @@ One process serves the dashboard and the API:
 
 Dashboard: http://127.0.0.1:3002
 
+Startup loads the last files under `output/`. It does not rebuild graphs or watch `graph.db`. Use **Run analysis** or **Refresh graph** when you want a new snapshot. `NAMI_EAGER_GRAPH_REFRESH=1` and `NAMI_CLUSTER_WATCH=1` restore those boot-time jobs.
+
 `repos.txt` already points at three local fixtures, so **Run analysis** works without a GitHub token. Add GitHub URLs to that file when you want remote repositories. Put `GITHUB_TOKEN` or `GHE_TOKEN` in `.env` (see `.env.example`).
 
 ## What the scan writes
@@ -37,10 +39,10 @@ Dashboard: http://127.0.0.1:3002
 | `scan_cve_from_github_issues` | `output/cve_analysis.json` |
 | `generate_security_release_report` | `output/security_release_report.json` |
 | `build_repo_graph` | `output/repo_graphs.json` and `output/graphs/<slug>/crg.json` |
-| `analyze_commit_history` | `output/graphs/<slug>/cochange.json` |
+| `analyze_commit_history` | `output/graphs/<slug>/cochange.json` and `output/graphs/<slug>/temporal_evidence.json` |
 
 Code graph pages show the code-review-graph MCP payloads. Nami Trace stores those payloads and does not recompute communities, hubs, or flows.
 
-Structural change impact is a separate cluster graph. It reads each repository's CRG database, resolves manifest-declared HTTP, gRPC, and event contracts, and scores dependents. The score is not a probability of breakage. See [Docs/CROSS_REPO_IMPACT.md](Docs/CROSS_REPO_IMPACT.md). Commit history remains a separate co-change report; PyDriller is installed and is not used to train a model.
+Structural change impact is a separate cluster graph. It reads each repository's CRG database, resolves manifest-declared HTTP, gRPC, and event contracts, and scores dependents. The score is not a probability of breakage. See [Docs/CROSS_REPO_IMPACT.md](Docs/CROSS_REPO_IMPACT.md). **Nami Rank Module (NRM)** combines that structural evidence with temporal/evolutionary evidence to rank downstream change-impact candidates. It is on the Nami Rank page and is documented in [Docs/NAMI_RANK_MODULE.md](Docs/NAMI_RANK_MODULE.md). Those ranking scores are not probabilities. PyDriller is installed and is not used to train a model.
 
 Client setup: [Docs/AGENT_CLIENTS.md](Docs/AGENT_CLIENTS.md).

@@ -110,10 +110,10 @@ def build_repo_graph(repos_file: str = "", output_dir: str = "") -> str:
 
 
 @mcp.tool()
-def analyze_commit_history(repos_file: str = "", output_dir: str = "", since_days: int = 365) -> str:
-    """Mine git history for churn and co-change. Writes cochange.json per repository."""
+def analyze_commit_history(repos_file: str = "", output_dir: str = "", since_days: int = 365, until: str = "") -> str:
+    """Mine git history for churn, co-change, and directional temporal_evidence.json."""
     with _open(repos_file, output_dir) as (settings, client, workspaces):
-        return _message(analyze_commits(workspaces, settings, client, since_days))
+        return _message(analyze_commits(workspaces, settings, client, since_days, until or None))
 
 
 @mcp.tool()
@@ -180,6 +180,49 @@ def analyze_cross_repo_impact(
                 "mode": mode,
                 "scenario": scenario,
                 "topology": topology,
+            }
+        )
+        payload["http_status"] = status
+    finally:
+        engine.close()
+    return json.dumps(payload, default=str)
+
+
+@mcp.tool()
+def analyze_hybrid_impact(
+    service: str = "",
+    symbol: str = "",
+    file: str = "",
+    line: int = 0,
+    contract_id: str = "",
+    mode: str = "code_change",
+    as_of: str = "",
+    structural_weight: float = 0.7,
+    temporal_weight: float = 0.3,
+    cross_repo_window_days: int = 7,
+    temporal_candidate_limit: int = 25,
+    temporal_provider: str = "commit_history",
+    experiment: str = "hybrid",
+    repos_file: str = "",
+    output_dir: str = "",
+) -> str:
+    """Nami Rank Module (NRM): rank change-impact candidates from structural and temporal evidence. Scores are not probabilities."""
+    engine = _cluster(repos_file, output_dir)
+    try:
+        status, payload = engine.hybrid_impact(
+            {
+                "service": service,
+                "symbol": symbol,
+                "file": file,
+                "line": line or None,
+                "contract_id": contract_id,
+                "mode": mode,
+                "as_of": as_of or None,
+                "temporal_provider": temporal_provider,
+                "weights": {"structural": structural_weight, "temporal": temporal_weight},
+                "cross_repo_window_days": cross_repo_window_days,
+                "temporal_candidate_limit": temporal_candidate_limit,
+                "experiment": experiment or "hybrid",
             }
         )
         payload["http_status"] = status

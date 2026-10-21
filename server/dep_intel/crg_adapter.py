@@ -82,6 +82,34 @@ def database_identity(path: Path) -> str:
     return f"{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}"
 
 
+def schema_supported(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            schema, _metadata, _stabilization = _inspect(connection)
+        finally:
+            connection.close()
+        return not schema or int(schema) in SUPPORTED_SCHEMA_VERSIONS
+    except (OSError, ValueError, sqlite3.Error, UnsupportedSchema):
+        return False
+
+
+def resolve_graph_db(repo_path: Path, relative: str, *, output_dir: Path, slug: str) -> Path:
+    """Prefer a schema-13 database, including CRG ``data_dir`` under output/graphs."""
+    primary = (repo_path / relative).resolve()
+    fallback = (output_dir / "graphs" / slug / "graph.db").resolve()
+    ordered: list[Path] = []
+    for path in (primary, fallback):
+        if path.is_file() and path not in ordered:
+            ordered.append(path)
+    for path in ordered:
+        if schema_supported(path):
+            return path
+    return ordered[0] if ordered else primary
+
+
 def extract_partition(
     db_path: Path,
     *,
@@ -92,11 +120,13 @@ def extract_partition(
     workspace_head: str | None = None,
     after_begin: Callable[[], None] | None = None,
     retries: int = 3,
+    extra_roots: list[Path] | None = None,
 ) -> Partition:
     """Read one repository partition. ``after_begin`` is a test hook."""
     observed = now()
     version = package_version or crg_package_version()
-    if not contained(db_path, repo_root):
+    roots = [repo_root, *(extra_roots or [])]
+    if not any(contained(db_path, root) for root in roots):
         raise ExtractionFailed(f"{db_path} is outside repository {repo_root}")
     if not db_path.is_file():
         raise ExtractionFailed(f"CRG database is absent: {db_path}")
@@ -439,7 +469,10 @@ def stale_partition(previous: Partition, error: str) -> Partition:
     copy = Partition.from_dict(previous.to_dict())
     copy.quality = "stale"
     copy.error = error
-    copy.diagnostics = list(copy.diagnostics) + [
-        Diagnostic(code="extraction_failed", message=error, service_id=previous.service_id, severity="error")
+    copy.diagnostics = [
+        item
+        for item in copy.diagnostics
+        if not (item.code == "extraction_failed" and item.message == error)
     ]
+    copy.diagnostics.append(Diagnostic(code="extraction_failed", message=error, service_id=previous.service_id, severity="error"))
     return copy

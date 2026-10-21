@@ -100,6 +100,19 @@ body {
   overflow-x: auto;
 }
 
+.nrm-table-meta {
+  margin: 0 0 0.75rem;
+  color: var(--cds-text-secondary);
+}
+
+.nrm-row-selected td {
+  background: var(--cds-layer-hover-01);
+}
+
+.nrm-filters .cds--number {
+  width: 100%;
+}
+
 .impact-layout {
   display: grid;
   grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);

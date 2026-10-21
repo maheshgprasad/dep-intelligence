@@ -1,6 +1,6 @@
 # Cursor, Claude, and IBM Bob
 
-One stdio MCP server, `scripts/dep-intel-mcp.sh`, registers the analysis tools. Install the Python virtualenv first (`Docs/SETUP_GUIDE.md`). The script runs `server/.venv/bin/python -m dep_intel.mcp_server`.
+One stdio MCP server, `scripts/dep-intel-mcp.sh`, registers the analysis tools. Install the Python virtualenv first (`Docs/SETUP_GUIDE.md`). The script runs `server/.venv/bin/python -m dep_intel.mcp_server`. **Nami Rank Module (NRM)** is exposed as `analyze_hybrid_impact`. It returns ranked impact candidates and an evidence bundle for Cursor and IBM Bob.
 
 Skills are written once under `skills/` and linked into each client. `install-mcp-pydriller` is the install step: it installs the MCP server and PyDriller.
 

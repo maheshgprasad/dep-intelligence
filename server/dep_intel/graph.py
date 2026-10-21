@@ -11,6 +11,7 @@ from typing import Any
 
 from dep_intel.config import Settings
 from dep_intel.crg import call_tool
+from dep_intel.crg_adapter import resolve_graph_db, schema_supported
 from dep_intel.sources import Workspace, ensure_checkout
 from dep_intel.store import now, read_json, write_json
 
@@ -115,7 +116,10 @@ def _one(workspace: Workspace, settings: Settings, *, rebuild: bool) -> tuple[di
     try:
         if rebuild:
             stats = call_tool("list_graph_stats_tool", root, {}, allow_build=True)
-            full = not stats.get("total_nodes")
+            db = resolve_graph_db(
+                checkout, ".code-review-graph/graph.db", output_dir=settings.output_dir, slug=workspace.ref.slug
+            )
+            full = not stats.get("total_nodes") or not schema_supported(db)
             call_tool(
                 "build_or_update_graph_tool",
                 root,

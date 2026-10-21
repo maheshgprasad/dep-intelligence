@@ -1,0 +1,39 @@
+{
+  "note": "Synthetic demonstration only. Not a research dataset.",
+  "service_to_slug": {
+    "auth": "auth",
+    "user": "user"
+  },
+  "nodes": [
+    {"service": "auth", "name": "validate", "file": "src/server.js"},
+    {"service": "auth", "name": "POST /api/auth/validate", "file": "", "category": "http_contract", "kind": "http_contract", "qualified": "http::POST:/api/auth/validate"},
+    {"service": "user", "name": "listUsers", "file": "src/users.js"},
+    {"service": "auth", "name": "hiddenHelper", "file": "src/hidden.js"}
+  ],
+  "edges": [
+    {"source_service": "auth", "source": "POST /api/auth/validate", "target_service": "auth", "target": "validate", "relation": "HANDLED_BY"},
+    {"source_service": "user", "source": "listUsers", "target_service": "auth", "target": "POST /api/auth/validate", "relation": "CONSUMES_HTTP"}
+  ],
+  "temporal_events": {
+    "auth": [
+      {"committed_at": "2026-01-01T00:00:00+00:00", "files": ["src/server.js", "src/hidden.js"]},
+      {"committed_at": "2026-01-08T00:00:00+00:00", "files": ["src/server.js"]},
+      {"committed_at": "2026-01-15T00:00:00+00:00", "files": ["src/server.js", "src/hidden.js"]}
+    ],
+    "user": [
+      {"committed_at": "2026-01-03T00:00:00+00:00", "files": ["src/users.js"]}
+    ]
+  },
+  "queries": [
+    {
+      "id": "validate-change",
+      "root": {"service": "auth", "name": "validate", "file": "src/server.js"},
+      "mode": "code_change",
+      "as_of": "2026-01-20T00:00:00+00:00",
+      "relevant": [
+        {"service": "user", "file": "src/users.js", "name": "listUsers"},
+        {"service": "auth", "file": "src/hidden.js", "name": "hiddenHelper"}
+      ]
+    }
+  ]
+}

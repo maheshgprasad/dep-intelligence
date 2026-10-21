@@ -2,7 +2,7 @@
 
 Nami Trace keeps per-repository code-review-graph reports for the existing code-graph page. Structural impact is a separate read of each repository's `.code-review-graph/graph.db`, plus contract bridges from source and from `cluster-manifest.json`.
 
-The published number is a structural impact score: the strongest path's product of relation weights. It is not a calibrated probability that a change will break a caller. Historical co-change stays in `cochange.json`. Commit history is mined with `git log` or the GitHub commits API. PyDriller is installed for the project environment and is not used to train an attention or temporal graph model.
+The published number is a structural impact score: the strongest path's product of relation weights. It is not a calibrated probability that a change will break a caller. Historical co-change stays in `cochange.json`. Directional history used by **Nami Rank Module (NRM)** is a separate file, `temporal_evidence.json`. Commit history is mined with `git log` or the GitHub commits API. PyDriller is installed for the project environment and is not used to train an attention or temporal graph model. NRM is documented in [NAMI_RANK_MODULE.md](NAMI_RANK_MODULE.md).
 
 ## Supported CRG release
 
@@ -121,7 +121,11 @@ The dashboard Impact page lists readiness, staleness, and diagnostics, runs a qu
 
 ## Process model
 
-FastAPI handlers do not read SQLite on the event loop. Repository reads use a bounded thread pool. The existing CRG MCP client keeps one locked session. Cluster extraction reads SQLite directly and does not remove that lock. The watcher follows `graph.db` and WAL changes, ignores shm-only noise, debounces per service, and schedules another pass when an event arrives during extraction. Quiet-period stabilization is labeled as a heuristic. Only CRG database changes refresh structural topology; the watcher does not run the security or coverage pipeline.
+Startup loads the last published cluster snapshot from `output/cluster/generation.json`. It does not rebuild code-review-graph databases and it does not start the filesystem watcher. The dashboard then reads that snapshot once over `/api/snapshot` and `/api/cluster/graph`. Further extracts happen when the user clicks **Refresh graph** or **Run analysis**, or when MCP calls `build_cross_repo_graph`.
+
+`NAMI_EAGER_GRAPH_REFRESH=1` restores the old boot-time CRG reread. `NAMI_CLUSTER_WATCH=1` starts the live `graph.db` watcher. Neither is required to serve the last analysis.
+
+FastAPI handlers do not read SQLite on the event loop. Repository reads use a bounded thread pool. The existing CRG MCP client keeps one locked session. Cluster extraction reads SQLite directly and does not remove that lock. When enabled, the watcher follows `graph.db` and WAL changes, ignores shm-only noise, debounces per service, and schedules another pass when an event arrives during extraction. It does not create empty `.code-review-graph` directories. Quiet-period stabilization is labeled as a heuristic. Only CRG database changes refresh structural topology; the watcher does not run the security or coverage pipeline.
 
 ## Measured performance
 
