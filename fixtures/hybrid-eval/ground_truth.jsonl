@@ -1,0 +1,1 @@
+{"id": "validate-change", "root": {"service": "auth", "name": "validate", "file": "src/server.js"}, "mode": "code_change", "as_of": "2026-01-20T00:00:00+00:00", "relevant": [{"service": "user", "file": "src/users.js", "name": "listUsers"}, {"service": "auth", "file": "src/hidden.js", "name": "hiddenHelper"}]}

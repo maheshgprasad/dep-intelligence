@@ -172,8 +172,31 @@ export type ImpactResponse = {
   affected_services?: string[];
 };
 
-export async function clusterGraph(): Promise<{ summary: ClusterSummary; page: { nodes: Record<string, unknown>[]; total: number } }> {
-  const response = await fetch("/api/cluster/graph?limit=50");
+export type ClusterNode = {
+  key: string;
+  service_id: string;
+  name: string;
+  qualified_name: string;
+  file_path: string;
+  line_start: number | null;
+  category: string;
+  kind: string;
+};
+
+export async function clusterGraph(params?: {
+  service?: string;
+  kind?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ summary: ClusterSummary; page: { nodes: ClusterNode[]; total: number; truncated: boolean } }> {
+  const query = new URLSearchParams();
+  if (params?.service) query.set("service", params.service);
+  if (params?.kind) query.set("kind", params.kind);
+  if (params?.q) query.set("q", params.q);
+  query.set("limit", String(params?.limit ?? 5000));
+  if (params?.offset) query.set("offset", String(params.offset));
+  const response = await fetch(`/api/cluster/graph?${query.toString()}`);
   if (!response.ok) throw new Error("cluster graph failed");
   return response.json();
 }
@@ -185,7 +208,82 @@ export async function clusterContracts(): Promise<{ version: string; contracts: 
 }
 
 export async function runImpact(body: Record<string, unknown>): Promise<ImpactResponse> {
-  const response = await fetch("/api/cluster/impact", {
+  return postCluster("/api/cluster/impact", body);
+}
+
+export type HybridPathEvidence = {
+  available: boolean;
+  score: number;
+  support: number;
+  source_opportunities: number;
+  directional_rate: number;
+  recency: number;
+  evidence_kind: string;
+  observation: string;
+  source: string;
+  target: string;
+};
+
+export type HybridCandidate = {
+  key: string;
+  service_id: string;
+  name: string;
+  qualified_name: string;
+  file_path: string;
+  line_start: number | null;
+  category: string;
+  kind: string;
+  hybrid_score: number;
+  evidence_origin: string;
+  why_ranked: string[];
+  structural: {
+    available: boolean;
+    score: number;
+    hops: number;
+    path: ImpactRow["path"];
+  };
+  temporal: {
+    available: boolean;
+    score: number;
+    support: number;
+    directional_rate: number;
+    recency: number;
+    evidence_kind: string;
+    observation: string;
+    last_supported_at: string | null;
+    path_temporal_coverage: number;
+    available_segments: number;
+    total_segments: number;
+    temporal_path_evidence: HybridPathEvidence[];
+  };
+};
+
+export type HybridImpactResponse = {
+  analysis_id: string;
+  graph_version: string;
+  mode: string;
+  module?: string;
+  module_abbrev?: string;
+  module_description?: string;
+  experiment: string;
+  score_kind: string;
+  score_meaning: string;
+  truncated: boolean;
+  truncation_reason: string;
+  temporal_provider: string;
+  temporal_cutoff: string | null;
+  weights: { structural: number; temporal: number; note?: string };
+  candidates: HybridCandidate[];
+  diagnostics: { code: string; message: string }[];
+  limitations: string[];
+};
+
+export async function runHybridImpact(body: Record<string, unknown>): Promise<HybridImpactResponse> {
+  return postCluster("/api/cluster/hybrid-impact", body);
+}
+
+async function postCluster<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -199,7 +297,7 @@ export async function runImpact(body: Record<string, unknown>): Promise<ImpactRe
     error.payload = detail;
     throw error;
   }
-  return payload;
+  return payload as T;
 }
 
 export async function refreshCluster(): Promise<{ job_id: string; status: string }> {

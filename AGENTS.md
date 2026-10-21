@@ -1,6 +1,6 @@
 # Agents
 
-Nami Trace is a React + Carbon dashboard and a Python analysis service, started together with `scripts/nami-trace.sh`. Cursor, Claude, and IBM Bob share one MCP server: `scripts/dep-intel-mcp.sh`.
+Nami Trace is a React + Carbon dashboard and a Python analysis service, started together with `scripts/nami-trace.sh`. Cursor, Claude, and IBM Bob share one MCP server: `scripts/dep-intel-mcp.sh`. **Nami Rank Module (NRM)** combines structural dependency evidence with temporal/evolutionary evidence to rank downstream software change-impact candidates. MCP tool `analyze_hybrid_impact` is the NRM entry point.
 
 ## Approved without another confirmation
 

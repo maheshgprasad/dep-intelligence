@@ -64,13 +64,28 @@ def call_tool(tool: str, repo_root: str, arguments: dict[str, Any] | None = None
     return _bridge.call(tool, args)
 
 
+def crg_bin() -> str:
+    """Prefer CRG_BIN, then the project venv, then PATH.
+
+    A newer ``code-review-graph`` on PATH can still emit schema 9. Nami Rank
+    reads schema 13 from the pinned 2.3.x in ``server/.venv``.
+    """
+    env = os.environ.get("CRG_BIN", "").strip()
+    if env:
+        return env
+    bundled = PROJECT_ROOT / "server" / ".venv" / "bin" / "code-review-graph"
+    if os.access(bundled, os.X_OK):
+        return str(bundled)
+    return shutil.which("code-review-graph") or ""
+
+
 def crg_diagnostics() -> dict[str, Any]:
     """Presence and version of the external code-review-graph command."""
     import subprocess
 
     from dep_intel.crg_adapter import SUPPORTED_PACKAGE, SUPPORTED_SCHEMA_VERSIONS, crg_package_version
 
-    command = os.environ.get("CRG_BIN") or shutil.which("code-review-graph") or ""
+    command = crg_bin()
     version = crg_package_version()
     if command and not version:
         completed = subprocess.run([command, "--version"], capture_output=True, text=True, timeout=15, check=False)
@@ -151,7 +166,7 @@ class _Session:
         async with self._lock:
             if self._session is not None:
                 return self._session
-            command = os.environ.get("CRG_BIN") or shutil.which("code-review-graph")
+            command = crg_bin()
             if not command:
                 raise RuntimeError("code-review-graph is not on PATH. Install it, or set CRG_BIN.")
             stack = AsyncExitStack()

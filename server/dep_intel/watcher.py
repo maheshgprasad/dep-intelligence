@@ -35,7 +35,8 @@ class WatchCoordinator:
         self._paths = dict(watches)
         observer = Observer()
         for service_id, directory in watches.items():
-            directory.mkdir(parents=True, exist_ok=True)
+            if not directory.is_dir():
+                continue
             observer.schedule(_DbHandler(self, service_id), str(directory), recursive=False)
             db = directory / "graph.db"
             self._identities[service_id] = database_identity(db) if db.is_file() else ""

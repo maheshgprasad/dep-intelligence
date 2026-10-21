@@ -13,12 +13,19 @@ import pytest
 from dep_intel.api import resolve_ui_file
 from dep_intel.changes import diff_snapshots
 from dep_intel.cluster_manifest import ImpactSettings, applicable_manifest, load_manifest
+from dep_intel.cluster_service import resolve_roots
 from dep_intel.commits import _summarize
 from dep_intel.config import PROJECT_ROOT, Settings
 from dep_intel.contract_extractors.javascript import extract_javascript, resolve_routes
 from dep_intel.contract_extractors.openapi import compare_operations, parse_openapi
 from dep_intel.contracts import build_contract_model, match_template
-from dep_intel.crg_adapter import ExtractionFailed, UnsupportedSchema, extract_partition, stale_partition
+from dep_intel.crg_adapter import (
+    ExtractionFailed,
+    UnsupportedSchema,
+    extract_partition,
+    resolve_graph_db,
+    stale_partition,
+)
 from dep_intel.cross_repo_graph import assemble, index_snapshot
 from dep_intel.events import EventBus
 from dep_intel.graph_models import (
@@ -215,6 +222,44 @@ def test_fixture_manifest_does_not_replace_the_allowlist(tmp_path: Path) -> None
     assert notices and "repos.txt" in notices[0] and "fixtures" in notices[0]
 
 
+def test_resolve_graph_db_prefers_schema13_under_output_graphs(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    stale = checkout / ".code-review-graph" / "graph.db"
+    source = str(checkout / "app.py")
+    _db(stale, [("Function", "old", f"{source}::old", source, 1, 2, "{}")], [], schema="9")
+    current = tmp_path / "graphs" / "svc" / "graph.db"
+    _db(current, [("Function", "ping", f"{source}::ping", source, 1, 2, "{}")], [], schema="13")
+    found = resolve_graph_db(checkout, ".code-review-graph/graph.db", output_dir=tmp_path, slug="svc")
+    assert found == current.resolve()
+    with pytest.raises(ExtractionFailed, match="outside repository"):
+        extract_partition(found, service_id="svc", repository="svc", repo_root=checkout)
+    part = extract_partition(
+        found,
+        service_id="svc",
+        repository="svc",
+        repo_root=checkout,
+        extra_roots=[tmp_path],
+    )
+    assert any(node.name == "ping" for node in part.nodes.values())
+
+
+def test_resolve_roots_ranks_file_nodes_without_a_typed_symbol() -> None:
+    file_a = _node("auth-service", "users.js", kind="File", category=FILE_ANCHOR, file="src/users.js")
+    fn = _node("auth-service", "listUsers", file="src/users.js")
+    other = _node("user-service", "auth.js", kind="File", category=FILE_ANCHOR, file="src/auth.js")
+    snapshot = _snapshot([file_a, fn, other], [])
+    keys, _candidates, error = resolve_roots(snapshot, service="", symbol="", file="", line=None, contract_id="")
+    assert error == ""
+    assert set(keys) == {file_a.key, other.key}
+    scoped, _candidates, error = resolve_roots(snapshot, service="auth-service", symbol="", file="", line=None, contract_id="")
+    assert error == "" and scoped == [file_a.key]
+    one_file, _candidates, error = resolve_roots(
+        snapshot, service="auth-service", symbol="", file="src/users.js", line=None, contract_id=""
+    )
+    assert error == "" and one_file == [file_a.key]
+
+
 def test_path_containment_rejects_sibling_prefix(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -321,6 +366,9 @@ def test_read_transaction_wal_replacement_and_stale_retention(tmp_path: Path) ->
     kept = stale_partition(third, "database replaced with garbage")
     assert kept.quality == "stale"
     assert any(node.name == "renamed" for node in kept.nodes.values())
+    again = stale_partition(kept, "database replaced with garbage")
+    failed = [item for item in again.diagnostics if item.code == "extraction_failed"]
+    assert len(failed) == 1
 
 
 def test_express_axios_fetch_prefixes_and_ambiguous_hosts() -> None:
@@ -688,6 +736,11 @@ def test_sse_jobs_and_watcher(tmp_path: Path) -> None:
     time.sleep(0.08)
     coordinator.stop()
     assert seen.count("auth-service") >= 2
+    missing = tmp_path / "absent-graph"
+    idle = WatchCoordinator(lambda *_args: None, debounce_ms=20, reconcile_seconds=3600)
+    idle.start({"auth-service": missing}, None, None)
+    assert not missing.exists()
+    idle.stop()
 
 
 def test_fixture_manifest_links_list_users() -> None:

@@ -137,7 +137,7 @@ def published_dict(snapshot: Snapshot) -> dict[str, Any]:
 
 
 def graph_slice(snapshot: Snapshot, *, service: str = "", kind: str = "", query: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
-    limit = max(1, min(int(limit), 500))
+    limit = max(1, min(int(limit), 10000))
     offset = max(0, int(offset))
     needle = query.lower()
     selected = []

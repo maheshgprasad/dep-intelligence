@@ -63,6 +63,10 @@ export function App() {
 
   useEffect(() => {
     const source = new EventSource("/api/events");
+    let opened = false;
+    source.addEventListener("hello", () => {
+      opened = true;
+    });
     source.addEventListener("progress", (event) => {
       const data = JSON.parse((event as MessageEvent).data) as Progress;
       setProgress(data);
@@ -83,7 +87,9 @@ export function App() {
       setResync("The live event stream missed updates. The snapshot was reloaded.");
       bump();
     });
-    source.onerror = () => setResync("The live event stream disconnected. Reconnect to load a fresh snapshot.");
+    source.onerror = () => {
+      if (opened) setResync("The live event stream disconnected. Reconnect to load a fresh snapshot.");
+    };
     return () => source.close();
   }, [refresh]);
 
@@ -107,7 +113,7 @@ export function App() {
             Code graph
           </HeaderMenuItem>
           <HeaderMenuItem href="/impact" isCurrentPage={location.pathname === "/impact"}>
-            Impact
+            Nami Rank
           </HeaderMenuItem>
         </HeaderNavigation>
         <HeaderGlobalBar>

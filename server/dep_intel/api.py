@@ -7,6 +7,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -53,9 +54,11 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         task.add_done_callback(_log)
 
-    if os.environ.get("NAMI_EAGER_GRAPH_REFRESH", "1") != "0":
+    # Startup serves the last published snapshot. Rebuilding CRG graphs or
+    # watching graph.db is on-demand (Refresh graph / Run analysis), not boot.
+    if os.environ.get("NAMI_EAGER_GRAPH_REFRESH", "0") == "1":
         _track(asyncio.create_task(warm()))
-    if os.environ.get("NAMI_CLUSTER_WATCH", "1") != "0":
+    if os.environ.get("NAMI_CLUSTER_WATCH", "0") == "1":
         _track(asyncio.create_task(asyncio.to_thread(engine.start_watcher)))
     try:
         yield
@@ -263,6 +266,16 @@ class ImpactBody(BaseModel):
     budget: dict[str, Any] = Field(default_factory=dict)
 
 
+class HybridImpactBody(ImpactBody):
+    as_of: str | None = None
+    temporal_provider: str = "commit_history"
+    weights: dict[str, float] = Field(default_factory=dict)
+    cross_repo_window_days: int = 7
+    temporal_candidate_limit: int = 25
+    expand_temporal: bool = True
+    experiment: str = "hybrid"
+
+
 @app.post("/api/cluster/refresh")
 async def cluster_refresh() -> dict:
     engine = get_engine(Settings.load())
@@ -285,6 +298,14 @@ async def cluster_contracts() -> dict:
 @app.post("/api/cluster/impact")
 async def cluster_impact(body: ImpactBody) -> dict:
     status, payload = await asyncio.to_thread(get_engine(Settings.load()).impact, body.model_dump())
+    if status != 200:
+        raise HTTPException(status_code=status, detail=payload)
+    return payload
+
+
+@app.post("/api/cluster/hybrid-impact")
+async def cluster_hybrid_impact(body: HybridImpactBody) -> dict:
+    status, payload = await asyncio.to_thread(get_engine(Settings.load()).hybrid_impact, body.model_dump())
     if status != 200:
         raise HTTPException(status_code=status, detail=payload)
     return payload

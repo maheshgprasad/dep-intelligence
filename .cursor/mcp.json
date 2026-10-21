@@ -2,7 +2,16 @@
   "mcpServers": {
     "dep-intel": {
       "command": "bash",
-      "args": ["scripts/dep-intel-mcp.sh"]
+      "args": [
+        "scripts/dep-intel-mcp.sh"
+      ]
+    },
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ]
     }
   }
 }
