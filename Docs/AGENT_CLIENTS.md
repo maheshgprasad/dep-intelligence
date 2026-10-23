@@ -1,6 +1,6 @@
 # Cursor, Claude, and IBM Bob
 
-One stdio MCP server, `scripts/dep-intel-mcp.sh`, registers the analysis tools. Install the Python virtualenv first (`Docs/SETUP_GUIDE.md`). The script runs `server/.venv/bin/python -m dep_intel.mcp_server`. **Nami Rank Module (NRM)** is exposed as `analyze_hybrid_impact`. It returns ranked impact candidates and an evidence bundle for Cursor and IBM Bob.
+One stdio MCP server, `scripts/dep-intel-mcp.sh`, registers the analysis tools. Install the Python virtualenv first (`Docs/SETUP_GUIDE.md`). The script runs `server/.venv/bin/python -m dep_intel.mcp_server`. **Nami Rank Module (NRM)** is exposed as `analyze_hybrid_impact`. It returns ranked impact candidates and an evidence bundle for Cursor and IBM Bob. **Nami Boundary Gate** uses the same server: `build_change_view`, `review_change`, `get_review`, `explain_review_finding`, and `record_review_feedback`. Those tools call the same review engine as the REST API. Feedback does not change NRM scores.
 
 Skills are written once under `skills/` and linked into each client. `install-mcp-pydriller` is the install step: it installs the MCP server and PyDriller.
 

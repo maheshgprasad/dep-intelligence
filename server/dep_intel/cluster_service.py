@@ -321,6 +321,9 @@ class ClusterEngine:
     def diff(self) -> dict[str, Any]:
         return diff_snapshots(self.previous(), self.current()).to_dict() if self.current() else {}
 
+    def submit(self, name: str, fn) -> Job:
+        return self._jobs.submit(name, fn)
+
     def job(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 

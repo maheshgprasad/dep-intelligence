@@ -242,6 +242,152 @@ def get_contract_dependencies(repos_file: str = "", output_dir: str = "") -> str
     return json.dumps(payload, default=str)
 
 
+def _review_engine(repos_file: str = "", output_dir: str = ""):
+    from dep_intel.cluster_service import ClusterEngine
+    from dep_intel.review_engine import ReviewEngine
+
+    settings = Settings.load(repos_file, output_dir)
+    cluster = ClusterEngine(settings)
+    return ReviewEngine(settings, cluster=cluster), cluster
+
+
+@mcp.tool()
+def build_change_view(
+    repository: str = "",
+    service: str = "",
+    source_kind: str = "working_tree",
+    base_ref: str = "",
+    head_ref: str = "",
+    commit: str = "",
+    pr_url: str = "",
+    repos_file: str = "",
+    output_dir: str = "",
+) -> str:
+    """Build a normalized Nami Change View for a local, commit, range, or pull request change."""
+    engine, cluster = _review_engine(repos_file, output_dir)
+    try:
+        report = engine.run(
+            {
+                "source": {"kind": source_kind, "repository": repository, "base_ref": base_ref, "head_ref": head_ref, "commit": commit, "pr_url": pr_url, "service_id": service},
+                "service": service,
+                "mode": "fast",
+                "verify": False,
+                "model": {"enabled": False},
+            }
+        )
+    finally:
+        cluster.close()
+    return json.dumps(
+        {
+            "review_id": report.get("review_id"),
+            "change": report.get("change"),
+            "changed_files": report.get("changed_files"),
+            "changed_symbols": report.get("changed_symbols"),
+            "contract_changes": report.get("contract_changes"),
+            "diagnostics": report.get("diagnostics"),
+            "gate": report.get("gate"),
+        },
+        default=str,
+    )
+
+
+@mcp.tool()
+def review_change(
+    repository: str = "",
+    service: str = "",
+    source_kind: str = "working_tree",
+    base_ref: str = "",
+    head_ref: str = "",
+    commit: str = "",
+    pr_url: str = "",
+    mode: str = "fast",
+    verify: bool = True,
+    model_enabled: bool = False,
+    repos_file: str = "",
+    output_dir: str = "",
+) -> str:
+    """Run Nami Boundary Gate. The decision is pass, warn, block, or incomplete. Scores are not probabilities."""
+    engine, cluster = _review_engine(repos_file, output_dir)
+    try:
+        report = engine.run(
+            {
+                "source": {"kind": source_kind, "repository": repository, "base_ref": base_ref, "head_ref": head_ref, "commit": commit, "pr_url": pr_url, "service_id": service},
+                "service": service,
+                "mode": mode,
+                "verify": verify,
+                "model": {"enabled": model_enabled},
+            }
+        )
+    finally:
+        cluster.close()
+    gate = report.get("gate") or {}
+    findings = report.get("findings") or []
+    blocking = [item for item in findings if item.get("finding_id") in set(gate.get("blocking_findings") or [])]
+    warnings = [item for item in findings if item.get("finding_id") in set(gate.get("warning_findings") or [])]
+    targets = [item for item in findings if item.get("finding_id") in set(gate.get("review_targets") or [])]
+    return json.dumps(
+        {
+            "decision": gate.get("decision"),
+            "reason_codes": gate.get("reason_codes"),
+            "change": report.get("summary"),
+            "repository": (report.get("change") or {}).get("repository"),
+            "affected_repositories": (report.get("impact") or {}).get("affected_services") or [],
+            "top_review_targets": targets[:8],
+            "blocking_findings": blocking,
+            "warnings": warnings[:12],
+            "verification": report.get("verification"),
+            "evidence_identifiers": [item.get("fingerprint") for item in findings],
+            "report_path": str(Settings.load(repos_file, output_dir).output_dir / "reviews" / str(report.get("review_id")) / "report.md"),
+            "review_id": report.get("review_id"),
+            "score_note": report.get("score_note"),
+            "limitations": report.get("limitations"),
+        },
+        default=str,
+    )
+
+
+@mcp.tool()
+def get_review(review_id: str, repos_file: str = "", output_dir: str = "") -> str:
+    """Read a stored Nami Boundary Gate review."""
+    from dep_intel.review_store import read_review
+
+    settings = Settings.load(repos_file, output_dir)
+    report = read_review(settings.output_dir, review_id)
+    if report is None:
+        return json.dumps({"code": "review_not_found", "review_id": review_id})
+    return json.dumps(report, default=str)
+
+
+@mcp.tool()
+def explain_review_finding(review_id: str, finding_id: str, repos_file: str = "", output_dir: str = "") -> str:
+    """Return the evidence for one Boundary Gate finding."""
+    engine, cluster = _review_engine(repos_file, output_dir)
+    try:
+        payload = engine.explain(review_id, finding_id)
+    finally:
+        cluster.close()
+    return json.dumps(payload, default=str)
+
+
+@mcp.tool()
+def record_review_feedback(
+    review_id: str,
+    finding_fingerprint: str,
+    status: str,
+    comment: str = "",
+    repos_file: str = "",
+    output_dir: str = "",
+) -> str:
+    """Store explicit review feedback. This does not modify Nami Rank scores or weights."""
+    engine, cluster = _review_engine(repos_file, output_dir)
+    try:
+        status_code, payload = engine.feedback(review_id, {"finding_fingerprint": finding_fingerprint, "status": status, "comment": comment})
+    finally:
+        cluster.close()
+    payload["http_status"] = status_code
+    return json.dumps(payload, default=str)
+
+
 def main() -> None:
     mcp.run()
 

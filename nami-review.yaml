@@ -1,0 +1,58 @@
+schema_version: 1
+
+review:
+  exact_graph_for_prs: true
+  max_findings: 20
+  max_inline_findings: 12
+  include_temporal_only_candidates: true
+
+context:
+  instruction_files:
+    - AGENTS.md
+    - CLAUDE.md
+    - README.md
+  documentation:
+    - Docs/**/*.md
+  exclude:
+    - "**/node_modules/**"
+    - "**/.venv/**"
+    - "**/dist/**"
+    - "**/build/**"
+
+gate:
+  incomplete_on_required_verification_failure: true
+  block_on_verified_critical: true
+  block_on_verified_high_blocker_policy: true
+  block_on_breaking_contract_with_known_consumers: true
+  strict_graph: false
+  minimum_evidence: weak
+
+verification:
+  enabled: true
+  timeout_seconds: 300
+  allow_network: false
+  commands: []
+
+policies:
+  - id: no-placeholder-secret
+    description: Do not add the configured placeholder credential marker.
+    severity: critical
+    blocking: true
+    scope:
+      paths:
+        - "**"
+    check:
+      type: forbidden_pattern
+      patterns:
+        - "PLACEHOLDER_SECRET_VALUE"
+
+  - id: server-change-tests
+    description: Python changes under server/ require a test change or a TESTED_BY link.
+    severity: high
+    scope:
+      paths:
+        - "server/**/*.py"
+      exclude_paths:
+        - "server/tests/**"
+    check:
+      type: required_related_test
