@@ -225,7 +225,9 @@ export type HybridPathEvidence = {
 };
 
 export type HybridCandidate = {
-  key: string;
+  key: string | { service_id: string; repository: string; file_path: string };
+  rank?: number;
+  sort_key?: string;
   service_id: string;
   name: string;
   qualified_name: string;
@@ -240,11 +242,19 @@ export type HybridCandidate = {
     available: boolean;
     score: number;
     hops: number;
+    aggregation?: string;
+    strongest_symbol?: { name: string; qualified_name: string; line_start: number | null } | null;
+    impacted_symbols?: { name: string; kind?: string; line_start: number | null; structural_score: number }[];
     path: ImpactRow["path"];
   };
   temporal: {
     available: boolean;
     score: number;
+    status?: string;
+    raw_score?: number;
+    coverage?: number | null;
+    coverage_adjusted_score?: number | null;
+    evidence_quality?: string;
     support: number;
     directional_rate: number;
     recency: number;
@@ -264,7 +274,12 @@ export type HybridImpactResponse = {
   mode: string;
   module?: string;
   module_abbrev?: string;
+  module_version?: string;
   module_description?: string;
+  ranking_unit?: string;
+  root?: { service_id: string; repository: string; file_path: string; symbols: string[] };
+  causal_validity?: { temporal: boolean; structural: boolean; overall: boolean };
+  fusion?: { method: string; weights?: { structural: number; temporal: number } };
   experiment: string;
   score_kind: string;
   score_meaning: string;
@@ -277,6 +292,16 @@ export type HybridImpactResponse = {
   diagnostics: { code: string; message: string }[];
   limitations: string[];
 };
+
+export async function nrmCapabilities(): Promise<{
+  module_version: string;
+  temporal_providers: { id: string; available: boolean; reason?: string }[];
+  defaults: { structural_weight: number; temporal_weight: number; cross_repo_window_days: number };
+}> {
+  const response = await fetch("/api/cluster/nrm/capabilities");
+  if (!response.ok) throw new Error("NRM capabilities failed");
+  return response.json();
+}
 
 export async function runHybridImpact(body: Record<string, unknown>): Promise<HybridImpactResponse> {
   return postCluster("/api/cluster/hybrid-impact", body);

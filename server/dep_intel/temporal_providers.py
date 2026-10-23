@@ -230,10 +230,21 @@ class Phase1TemporalProvider:
             except (TypeError, ValueError):
                 continue
 
-    def pair_evidence(self, source: CanonicalFileRef, target: CanonicalFileRef, as_of: str | None) -> PairEvidence:
+    def causal_issue(self, as_of: str | None) -> str:
         cutoff = parse_cutoff(as_of)
-        artifact_cutoff = parse_cutoff(self._payload.get("cutoff"))
-        if cutoff is not None and artifact_cutoff is not None and artifact_cutoff > cutoff:
+        if cutoff is None:
+            return ""
+        artifact_cutoff = parse_cutoff(
+            self._payload.get("prediction_cutoff") or self._payload.get("history_cutoff") or self._payload.get("cutoff")
+        )
+        if artifact_cutoff is None:
+            return "phase1_cutoff_unknown"
+        if artifact_cutoff > cutoff:
+            return "phase1_after_requested_cutoff"
+        return ""
+
+    def pair_evidence(self, source: CanonicalFileRef, target: CanonicalFileRef, as_of: str | None) -> PairEvidence:
+        if self.causal_issue(as_of):
             return _unavailable(source, target, "phase1_precomputed")
         score = self._index.get(
             (source.service_id, source.relative_file_path, target.service_id, target.relative_file_path)
@@ -314,11 +325,12 @@ def structure_conditioned_lag(
     as_of: str | None,
     window_days: int,
     half_life_days: float,
+    matching: str = "one_to_one",
 ) -> PairEvidence:
     window = timedelta(days=max(0, window_days))
     source_times = provider.file_events(source, as_of)
     target_times = provider.file_events(target, as_of)
-    stats = lagged_support(source_times, target_times, window)
+    stats = lagged_support(source_times, target_times, window, matching=matching)
     if not stats["source_events"] or not stats["supported_events"]:
         empty = _unavailable(source, target, "structure_conditioned_lagged_history")
         empty.source_opportunities = stats["source_events"]

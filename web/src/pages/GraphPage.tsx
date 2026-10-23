@@ -7,17 +7,12 @@ import {
   TabList,
   TabPanel,
   TabPanels,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TextInput,
 } from "@carbon/react";
 import { Renew, Search } from "@carbon/icons-react";
 import { queryGraph, type CrgPayload, type GraphRepo, type Snapshot } from "../api";
+import { CarbonTable, type CarbonRow } from "../components/CarbonTable";
 
 const KINDS = ["Any", "File", "Class", "Function", "Type", "Test"];
 const PATTERNS = [
@@ -61,7 +56,7 @@ const GLOSSARY = [
   ["Bridge role", "Whether a symbol sits between groups. Chokepoint, link, or local."],
   ["Connections", "How many calls and imports touch a symbol."],
 ].map(([term, meaning]) => `${term}: ${meaning}`).join(" ");
-const PATH_COLUMNS = new Set(["qualified_name", "source_qualified", "target_qualified", "file_path", "relative_path"]);
+const HIDDEN_COLUMNS = new Set(["qualified_name", "source_qualified", "target_qualified", "path_files", "entry_point_id", "created_at", "updated_at"]);
 
 export function GraphPage({
   snapshot,
@@ -169,9 +164,9 @@ export function GraphPage({
             <Hint>
               A snapshot of this repository: how many files and symbols the graph contains, how risky the latest changes look, and review questions worth asking.
             </Hint>
-            <PayloadView payload={tools?.stats ?? null} names={names} />
-            <PayloadView payload={tools?.minimal ?? null} names={names} />
-            <PayloadView payload={tools?.questions ?? null} names={names} />
+            <PayloadView payload={tools?.stats ?? null} names={names} root={selected?.checkout} />
+            <PayloadView payload={tools?.minimal ?? null} names={names} root={selected?.checkout} />
+            <PayloadView payload={tools?.questions ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
@@ -236,30 +231,30 @@ export function GraphPage({
                 </Button>
               </div>
             </div>
-            <LiveResult tab="search" liveTab={liveTab} payload={live} error={liveError} names={names} />
+            <LiveResult tab="search" liveTab={liveTab} payload={live} error={liveError} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               A flow is one path the program takes from an entry point, such as an HTTP handler or a test, through the functions it calls. Higher criticality means more of the system depends on it.
             </Hint>
-            <PayloadView payload={tools?.flows ?? null} names={names} />
+            <PayloadView payload={tools?.flows ?? null} names={names} root={selected?.checkout} />
             <FlowLookup slug={selected?.slug} busy={busy} onAsk={(tool, args) => void ask("flows", tool, args)} />
-            <LiveResult tab="flows" liveTab={liveTab} payload={live} error={liveError} names={names} />
+            <LiveResult tab="flows" liveTab={liveTab} payload={live} error={liveError} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               A community is a cluster of symbols that call each other more than they call the rest of the code. It usually lines up with a feature or a folder.
             </Hint>
-            <PayloadView payload={tools?.communities ?? null} names={names} />
+            <PayloadView payload={tools?.communities ?? null} names={names} root={selected?.checkout} />
             <CommunityLookup slug={selected?.slug} busy={busy} onAsk={(tool, args) => void ask("communities", tool, args)} />
-            <LiveResult tab="communities" liveTab={liveTab} payload={live} error={liveError} names={names} />
+            <LiveResult tab="communities" liveTab={liveTab} payload={live} error={liveError} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               A hub has many connections, so a change there spreads widely. A bridge sits between communities. If it breaks, those areas lose their link to each other.
             </Hint>
-            <PayloadView payload={tools?.hubs ?? null} names={names} />
-            <PayloadView payload={tools?.bridges ?? null} names={names} />
+            <PayloadView payload={tools?.hubs ?? null} names={names} root={selected?.checkout} />
+            <PayloadView payload={tools?.bridges ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
@@ -294,39 +289,39 @@ export function GraphPage({
                 Affected flows
               </Button>
             </div>
-            <LiveResult tab="impact" liveTab={liveTab} payload={live} error={liveError} names={names} />
+            <LiveResult tab="impact" liveTab={liveTab} payload={live} error={liveError} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               Architecture is the map of communities and the links between them. A warning means two areas are coupled more tightly than their boundary suggests.
             </Hint>
-            <PayloadView payload={tools?.architecture ?? null} names={names} />
+            <PayloadView payload={tools?.architecture ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               Quality lists oversized files, symbols with no connections, and busy symbols that have no test. These are structural weak spots, not style nits.
             </Hint>
-            <PayloadView payload={tools?.large_functions ?? null} names={names} />
-            <PayloadView payload={tools?.knowledge_gaps ?? null} names={names} />
-            <PayloadView payload={tools?.dead_code ?? null} names={names} />
+            <PayloadView payload={tools?.large_functions ?? null} names={names} root={selected?.checkout} />
+            <PayloadView payload={tools?.knowledge_gaps ?? null} names={names} root={selected?.checkout} />
+            <PayloadView payload={tools?.dead_code ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               Refactor suggestions say which symbols look unused or misplaced in their community. The dashboard only reports them. It does not edit the repository.
             </Hint>
-            <PayloadView payload={tools?.refactor ?? null} names={names} />
+            <PayloadView payload={tools?.refactor ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               Coupling lists symbol pairs whose connection is unexpected, for example across communities, languages, or the boundary between production code and tests.
             </Hint>
-            <PayloadView payload={tools?.surprises ?? null} names={names} />
+            <PayloadView payload={tools?.surprises ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
               Changes scores the latest git diff: which functions moved, which flows those functions sit on, and which of them have no test.
             </Hint>
-            <PayloadView payload={tools?.changes ?? null} names={names} />
+            <PayloadView payload={tools?.changes ?? null} names={names} root={selected?.checkout} />
           </TabPanel>
           <TabPanel>
             <Hint>
@@ -342,8 +337,8 @@ export function GraphPage({
                   Coupling here is from commit history. Graph coupling is on the Coupling tab.
                 </p>
               )}
-              <RecordTable rows={cochange?.hotspots ?? []} names={names} />
-              <RecordTable rows={cochange?.cochange ?? []} names={names} />
+              <RecordTable title="Hotspots" rows={cochange?.hotspots ?? []} names={names} root={selected?.checkout} />
+              <RecordTable title="Files edited together" rows={cochange?.cochange ?? []} names={names} root={selected?.checkout} />
             </div>
           </TabPanel>
         </TabPanels>
@@ -428,18 +423,20 @@ function LiveResult({
   payload,
   error,
   names,
+  root,
 }: {
   tab: string;
   liveTab: string;
   payload: CrgPayload | null;
   error: string;
   names: Record<string, string>;
+  root?: string;
 }) {
   if (tab !== liveTab) return null;
   return (
     <>
       {error ? <InlineNotification kind="error" title="Graph query" subtitle={error} lowContrast hideCloseButton /> : null}
-      <PayloadView payload={payload} names={names} />
+      <PayloadView payload={payload} names={names} root={root} />
     </>
   );
 }
@@ -452,7 +449,7 @@ function repoCount(stats: GraphRepo["stats"]): string {
   return "no stats";
 }
 
-function PayloadView({ payload, names }: { payload: CrgPayload | null; names: Record<string, string> }) {
+function PayloadView({ payload, names, root }: { payload: CrgPayload | null; names: Record<string, string>; root?: string }) {
   if (!payload) return null;
   const summary = payload.summary;
   const warnings = Array.isArray(payload.warnings) ? payload.warnings.filter((item): item is string => typeof item === "string") : [];
@@ -467,27 +464,19 @@ function PayloadView({ payload, names }: { payload: CrgPayload | null; names: Re
   return (
     <div className="stack-gap payload-block">
       {typeof summary === "string" && summary ? <p className="stat-label">{symbolText(summary)}</p> : null}
-      {isRecord(summary) ? <RecordTable rows={[summary]} names={names} /> : null}
+      {isRecord(summary) ? <RecordTable title="Summary" rows={[summary]} names={names} root={root} /> : null}
       {warnings.map((warning) => (
         <InlineNotification key={warning} kind="warning" title="Graph" subtitle={warning} lowContrast hideCloseButton />
       ))}
-      {facts.length ? <RecordTable rows={[Object.fromEntries(facts)]} names={names} /> : null}
+      {facts.length ? <RecordTable title="Details" rows={[Object.fromEntries(facts)]} names={names} root={root} /> : null}
       {tables.map(([key, value]) => (
-        <section key={key}>
-          <p className="stat-label">{label(key)}</p>
-          <RecordTable rows={(value as unknown[]).filter(isRecord)} names={names} />
-        </section>
+        <RecordTable key={key} title={label(key)} rows={(value as unknown[]).filter(isRecord)} names={names} root={root} />
       ))}
       {nested.map(([key, value]) => (
         <section key={key}>
           {Object.entries(value).map(([child, rows]) =>
             Array.isArray(rows) ? (
-              <div key={child} className="stack-gap">
-                <p className="stat-label">
-                  {label(key)} / {label(child)}
-                </p>
-                <RecordTable rows={rows.filter(isRecord)} names={names} />
-              </div>
+              <RecordTable key={child} title={`${label(key)} / ${label(child)}`} rows={rows.filter(isRecord)} names={names} root={root} />
             ) : null,
           )}
         </section>
@@ -496,7 +485,17 @@ function PayloadView({ payload, names }: { payload: CrgPayload | null; names: Re
   );
 }
 
-function RecordTable({ rows, names = {} }: { rows: Record<string, unknown>[]; names?: Record<string, string> }) {
+function RecordTable({
+  title,
+  rows,
+  names = {},
+  root,
+}: {
+  title: string;
+  rows: Record<string, unknown>[];
+  names?: Record<string, string>;
+  root?: string;
+}) {
   if (!rows.length) return <p className="stat-label">None</p>;
   const keys: string[] = [];
   for (const row of rows) {
@@ -507,30 +506,21 @@ function RecordTable({ rows, names = {} }: { rows: Record<string, unknown>[]; na
   }
   const hasSymbol = rows.some((row) => "name" in row || "source" in row);
   const visible = keys
-    .filter((key) => !PATH_COLUMNS.has(key) && !(key === "file" && hasSymbol))
+    .filter((key) => !HIDDEN_COLUMNS.has(key) && !(key === "file" && hasSymbol && !rows.some((item) => "path" in item)))
     .filter((key) => rows.some((row) => !isRecord(row[key]) || Array.isArray(row[key])))
     .slice(0, 8);
+  const tableRows: CarbonRow[] = rows.map((row, index) => {
+    const entry: CarbonRow = { id: `${String(row.id ?? row.name ?? row.file ?? "row")}-${index}` };
+    for (const key of visible) entry[key] = cell(key, row[key], names, row, root);
+    return entry;
+  });
   return (
-    <div className="table-scroll">
-      <Table size="lg" useZebraStyles>
-        <TableHead>
-          <TableRow>
-            {visible.map((key) => (
-              <TableHeader key={key}>{label(key)}</TableHeader>
-            ))}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map((row, index) => (
-            <TableRow key={String(row.id ?? row.name ?? row.file ?? index)}>
-              {visible.map((key) => (
-                <TableCell key={key}>{cell(key, row[key], names)}</TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+    <CarbonTable
+      title={title}
+      headers={visible.map((key) => ({ key, header: label(key) }))}
+      rows={tableRows}
+      searchPlaceholder={`Search ${title.toLowerCase()}`}
+    />
   );
 }
 
@@ -538,17 +528,63 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function cell(key: string, value: unknown, names: Record<string, string>): string {
+function cell(key: string, value: unknown, names: Record<string, string>, row: Record<string, unknown> = {}, root?: string): string {
+  if (key === "path") {
+    const labeled = pathFiles(row, root);
+    if (labeled) return labeled;
+  }
+  if (key === "steps" && Array.isArray(value)) return stepPath(value, root);
   if (value == null || value === "") return "—";
   if (key === "community_id" || key.endsWith("_community")) {
     const named = names[String(value)];
     if (named) return named;
   }
+  if (isFileKey(key)) return fileList(value, root);
   if (typeof value === "number") return namedNumber(key, value);
   if (typeof value === "string") return symbolText(value);
   if (typeof value === "boolean") return value ? "yes" : "no";
-  if (Array.isArray(value)) return value.map((item) => cell(key, item, names)).filter(Boolean).join(", ");
+  if (Array.isArray(value)) return value.map((item) => cell(key, item, names, row, root)).filter(Boolean).join(", ");
   return symbolText(JSON.stringify(value));
+}
+
+function pathFiles(row: Record<string, unknown>, root?: string): string {
+  const labeled = row.path_files;
+  if (Array.isArray(labeled) && labeled.length) return labeled.map((item) => relativePath(String(item), root)).join(" → ");
+  if (Array.isArray(row.steps)) return stepPath(row.steps, root);
+  const files = row.files;
+  if (Array.isArray(files) && files.length) return files.map((item) => relativePath(String(item), root)).join(" → ");
+  return "";
+}
+
+function stepPath(steps: unknown[], root?: string): string {
+  return steps
+    .map((step) => {
+      if (!isRecord(step)) return "";
+      const file = relativePath(String(step.file || step.file_path || ""), root);
+      const name = String(step.name || "");
+      const line = typeof step.line_start === "number" ? `:${step.line_start}` : "";
+      if (file && name) return `${file}${line} (${name})`;
+      return file || name;
+    })
+    .filter(Boolean)
+    .join(" → ");
+}
+
+function isFileKey(key: string): boolean {
+  return key === "file" || key === "files" || key === "file_path" || key === "relative_path" || key.endsWith("_file");
+}
+
+function fileList(value: unknown, root?: string): string {
+  if (typeof value === "string") return relativePath(value, root) || "—";
+  if (Array.isArray(value)) return value.map((item) => (typeof item === "string" ? relativePath(item, root) : "")).filter(Boolean).join(", ") || "—";
+  return "—";
+}
+
+function relativePath(value: string, root?: string): string {
+  const text = value.replaceAll("\\", "/");
+  const base = (root || "").replaceAll("\\", "/").replace(/\/$/, "");
+  if (base && (text === base || text.startsWith(`${base}/`))) return text.slice(base.length).replace(/^\//, "");
+  return text;
 }
 
 function namedNumber(key: string, value: number): string {

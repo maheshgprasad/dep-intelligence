@@ -18,8 +18,10 @@ from pydantic import BaseModel, Field
 from dep_intel.cluster_service import get_engine, shutdown_engine
 from dep_intel.config import PROJECT_ROOT, Settings
 from dep_intel.crg import call_tool, crg_diagnostics
+from dep_intel.crg_adapter import resolve_graph_db
 from dep_intel.events import bus, format_sse
 from dep_intel.graph import checkout_for, refresh_graphs
+from dep_intel.graph_labels import annotate_flow_paths, load_node_labels
 from dep_intel.paths import contained
 from dep_intel.pipeline import run_all, run_graphs
 from dep_intel.store import read_json
@@ -106,8 +108,10 @@ def _snapshot(settings: Settings) -> dict:
     details = {}
     for repo in graphs.get("repos") or []:
         slug = repo["slug"]
+        crg = read_json(output / "graphs" / slug, "crg.json")
+        _label_graph_paths(crg, repo)
         details[slug] = {
-            "crg": read_json(output / "graphs" / slug, "crg.json"),
+            "crg": crg,
             "cochange": read_json(output / "graphs" / slug, "cochange.json"),
         }
     report_md = output / "security_release_report.md"
@@ -227,11 +231,31 @@ async def graph_query(body: GraphQuery) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        return await asyncio.to_thread(call_tool, body.tool, root, body.arguments)
+        payload = await asyncio.to_thread(call_tool, body.tool, root, body.arguments)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _label_graph_paths(payload, {"slug": body.slug, "checkout": root})
+    return payload
+
+
+def _label_graph_paths(payload: dict | None, repo: dict) -> None:
+    checkout = str(repo.get("checkout") or "")
+    if not payload or not checkout:
+        return
+    try:
+        database = resolve_graph_db(
+            Path(checkout),
+            ".code-review-graph/graph.db",
+            output_dir=Settings.load().output_dir,
+            slug=str(repo.get("slug") or ""),
+        )
+        labels = load_node_labels(database, checkout)
+    except Exception:
+        return
+    if labels:
+        annotate_flow_paths(payload, labels, checkout)
 
 
 def resolve_ui_file(dist: Path, full_path: str) -> Path | None:
@@ -274,6 +298,10 @@ class HybridImpactBody(ImpactBody):
     temporal_candidate_limit: int = 25
     expand_temporal: bool = True
     experiment: str = "hybrid"
+    fusion_method: str = "raw_weighted"
+    path_scoring: str = "coverage_adjusted"
+    lag_matching: str = "one_to_one"
+    temporal: dict[str, Any] = Field(default_factory=dict)
 
 
 @app.post("/api/cluster/refresh")
@@ -301,6 +329,31 @@ async def cluster_impact(body: ImpactBody) -> dict:
     if status != 200:
         raise HTTPException(status_code=status, detail=payload)
     return payload
+
+
+@app.get("/api/cluster/nrm/capabilities")
+def nrm_capabilities() -> dict:
+    from dep_intel.hybrid_impact import NRM_VERSION
+    from pathlib import Path
+
+    phase1 = Path("output/phase1_predictions.json")
+    settings = Settings.load()
+    artifact = settings.output_dir / "phase1_predictions.json"
+    return {
+        "module_version": NRM_VERSION,
+        "ranking_unit": "file",
+        "fusion_methods": ["raw_weighted", "rank_normalized"],
+        "temporal_providers": [
+            {"id": "commit_history", "available": True, "quality": "complete"},
+            {
+                "id": "phase1",
+                "available": artifact.is_file() or phase1.is_file(),
+                "reason": "" if artifact.is_file() else "output/phase1_predictions.json not found",
+            },
+        ],
+        "lag_matching": ["one_to_one", "reusable_target"],
+        "defaults": {"structural_weight": 0.7, "temporal_weight": 0.3, "cross_repo_window_days": 7},
+    }
 
 
 @app.post("/api/cluster/hybrid-impact")

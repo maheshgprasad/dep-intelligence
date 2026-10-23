@@ -18,6 +18,14 @@ Temporal Evidence ────┘          │
 
 NRM is the Phase-2 research bridge in Nami Trace. It does not replace the structural engine or commit-history analysis. It does not train a model. HTTP path `/api/cluster/hybrid-impact` and MCP tool `analyze_hybrid_impact` are the NRM entry points.
 
+## NRM v2
+
+`module_version` is `2.0`. The ranking unit is a canonical file. Symbol-level CRG paths stay under `structural.impacted_symbols` and `structural.path`. The changed root file is returned in `root` and is not a downstream candidate.
+
+Responses include `causal_validity`. A historical `as_of` can bound temporal evidence, but the published cluster snapshot is the current topology unless a frozen snapshot is supplied. That case is `structural: false` and is not described as fully causal.
+
+Temporal path scores default to the mean of available segments multiplied by path coverage. Cross-repository lag matching defaults to one-to-one. Fusion `raw_weighted` keeps `0.70 S + 0.30 T`. Fusion `rank_normalized` combines within-query percentiles. History windows anchor to `until` when a cutoff exists. Phase-1 artifacts without a cutoff are rejected for historical queries. Evaluation notes are in [NRM_EVALUATION.md](NRM_EVALUATION.md).
+
 Ranking values are not probabilities:
 
 - `structural_score` is the strongest-path product of relation weights.

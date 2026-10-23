@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -13,7 +13,7 @@ import pytest
 from dep_intel.api import cluster_hybrid_impact, cluster_impact
 from dep_intel.cluster_manifest import ImpactSettings
 from dep_intel.cluster_service import ClusterEngine
-from dep_intel.commits import _history_reports, analyze_commits, temporal_rank_score
+from dep_intel.commits import _history_reports, analyze_commits, history_window_start, lagged_support, temporal_rank_score
 from dep_intel.config import PROJECT_ROOT, Settings
 from dep_intel.evidence_bridge import CanonicalFileRef, canonical_file_ref, file_backed_chain, lookup_file_nodes, normalize_relative_path
 from dep_intel.graph_models import (
@@ -405,7 +405,7 @@ def test_deterministic_tie_break() -> None:
         provider_name="memory",
     )
     assert keys == [row["key"] for row in again["candidates"]]
-    scores = [(row["hybrid_score"], row["structural"]["score"], row["temporal"]["score"], row["service_id"], row["file_path"], row["key"]) for row in hybrid["candidates"]]
+    scores = [(row["hybrid_score"], row["structural"]["score"], row["temporal"]["score"], row["service_id"], row["file_path"], row["sort_key"]) for row in hybrid["candidates"]]
     assert scores == sorted(scores, key=lambda item: (-item[0], -item[1], -item[2], item[3], item[4], item[5]))
 
 
@@ -440,6 +440,33 @@ def test_future_history_does_not_leak_into_as_of_hybrid() -> None:
     )
     assert all(row["name"] != "helper" for row in hybrid["candidates"])
     assert hybrid["temporal_cutoff"] == "2026-01-01T00:00:00+00:00"
+    assert hybrid["module_version"] == "2.0"
+    assert hybrid["ranking_unit"] == "file"
+    assert hybrid["causal_validity"]["structural"] is False
+    assert hybrid["root"]["file_path"] == "src/server.js"
+    assert all(row["file_path"] != "src/server.js" for row in hybrid["candidates"])
+
+
+def test_history_window_anchors_to_cutoff() -> None:
+    cutoff = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert history_window_start(365, cutoff) == "2024-01-02"
+    assert history_window_start(0, cutoff) == ""
+    naive = datetime(2025, 1, 1)
+    assert history_window_start(365, naive) == "2024-01-02"
+    date_only = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert history_window_start(1, date_only) == "2024-12-31"
+    start = history_window_start(365, None, now_at=datetime(2026, 10, 23, tzinfo=timezone.utc))
+    assert start == "2025-10-23"
+
+
+def test_one_to_one_lag_does_not_reuse_target() -> None:
+    day = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    sources = [day, day + timedelta(days=1), day + timedelta(days=2)]
+    targets = [day + timedelta(days=3)]
+    stats = lagged_support(sources, targets, timedelta(days=7), matching="one_to_one")
+    reusable = lagged_support(sources, targets, timedelta(days=7), matching="reusable_target")
+    assert stats["support"] == 1
+    assert reusable["support"] == 3
 
 
 def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> None:

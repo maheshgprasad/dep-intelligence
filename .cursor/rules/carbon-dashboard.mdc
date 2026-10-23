@@ -1,0 +1,27 @@
+---
+description: Carbon dashboard design used by Nami Trace
+globs: web/**/*.{tsx,scss}
+alwaysApply: false
+---
+
+# Dashboard design
+
+Use `@carbon/react` and IBM Plex. Do not add another UI library, and do not restyle Carbon buttons, dropdowns, tags, or tables.
+
+Every table goes through `web/src/components/CarbonTable.tsx`:
+
+- `DataTable`, size `lg`, zebra rows, sortable headers
+- `TableContainer` title and a short description
+- persistent toolbar search
+- pagination after 10 rows, page sizes 10, 25, 50, 100
+- Carbon `Tag` for language, ecosystem, update level, evidence, and status
+
+Scores stay three decimals. They are ranking evidence, not probabilities, and they do not use `%`.
+
+Notifications are `InlineNotification` with `lowContrast` and `hideCloseButton`.
+
+Custom SCSS is only layout: page stack, toolbars, table overflow, and path lists. Keep the existing g10/g100 theme.
+
+Nami Rank starts with service and file dropdowns, then Run Nami Rank. Result filters live in the table toolbar and must update the evidence panel as well as the rows.
+
+Code-graph paths show a repository-relative file and symbol, such as `app/main.py (chat)`, not a node id.
