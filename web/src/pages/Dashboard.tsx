@@ -1,22 +1,19 @@
+import { useMemo, useState } from "react";
 import {
   Column,
+  Dropdown,
   Grid,
   InlineNotification,
   Tab,
   TabList,
   TabPanel,
   TabPanels,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   Tag,
   Tile,
 } from "@carbon/react";
 import type { Finding, Snapshot, Update } from "../api";
+import { CarbonTable, type CarbonRow } from "../components/CarbonTable";
 
 const LANGUAGE_TAG: Record<string, "blue" | "cyan" | "teal" | "purple" | "green" | "magenta" | "gray"> = {
   python: "blue",
@@ -125,32 +122,37 @@ export function Dashboard({ snapshot, error, loaded }: { snapshot: Snapshot | nu
 }
 
 function RepoTable({ snapshot }: { snapshot: Snapshot | null }) {
-  const rows = Object.entries(snapshot?.languages?.repositories ?? {});
+  const rows = Object.entries(snapshot?.languages?.repositories ?? {}).map(([name, info]) => ({
+    id: name,
+    repository: name,
+    language: info.primary_language,
+    language_key: info.language_key,
+    files: info.total_files,
+    confidence: info.confidence,
+  }));
   return (
-    <Table size="lg" useZebraStyles>
-      <TableHead>
-        <TableRow>
-          <TableHeader>Repository</TableHeader>
-          <TableHeader>Language</TableHeader>
-          <TableHeader>Files read</TableHeader>
-          <TableHeader>Confidence</TableHeader>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map(([name, info]) => (
-          <TableRow key={name}>
-            <TableCell>{name}</TableCell>
-            <TableCell>
-              <Tag type={LANGUAGE_TAG[info.language_key] ?? "gray"} size="sm">
-                {info.primary_language}
-              </Tag>
-            </TableCell>
-            <TableCell>{info.total_files}</TableCell>
-            <TableCell>{info.confidence}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <CarbonTable
+      title="Repositories"
+      description="Languages detected for the repositories in repos.txt."
+      headers={[
+        { key: "repository", header: "Repository" },
+        { key: "language", header: "Language" },
+        { key: "files", header: "Files read" },
+        { key: "confidence", header: "Confidence" },
+      ]}
+      rows={rows}
+      searchPlaceholder="Search repositories"
+      empty="No repositories have been scanned."
+      renderCell={(key, value, row) =>
+        key === "language" ? (
+          <Tag type={LANGUAGE_TAG[String(row.language_key)] ?? "gray"} size="sm">
+            {value}
+          </Tag>
+        ) : (
+          value
+        )
+      }
+    />
   );
 }
 
@@ -158,80 +160,88 @@ function DependencyTable({ snapshot }: { snapshot: Snapshot | null }) {
   const mismatches = snapshot?.matrix?.version_mismatches ?? [];
   const repos = Object.keys(snapshot?.matrix?.repositories ?? {});
   const unique = snapshot?.matrix?.unique_packages ?? [];
+  const headers = [
+    { key: "package", header: "Package" },
+    { key: "ecosystem", header: "Ecosystem" },
+    ...repos.map((repo, index) => ({ key: `v${index}`, header: repo })),
+  ];
+  const mismatchRows: CarbonRow[] = mismatches.map((item) => {
+    const row: CarbonRow = {
+      id: `${item.ecosystem}-${item.name}`,
+      package: item.name,
+      ecosystem: item.ecosystem,
+    };
+    repos.forEach((repo, index) => {
+      row[`v${index}`] = item.versions[repo] || "—";
+    });
+    return row;
+  });
   return (
     <div className="stack-gap">
-      <Table size="lg" useZebraStyles>
-        <TableHead>
-          <TableRow>
-            <TableHeader>Package</TableHeader>
-            {repos.map((repo) => (
-              <TableHeader key={repo}>{repo}</TableHeader>
-            ))}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {mismatches.map((item) => (
-            <TableRow key={`${item.ecosystem}-${item.name}`}>
-              <TableCell>
-                {item.name} <Tag size="sm">{item.ecosystem}</Tag>
-              </TableCell>
-              {repos.map((repo) => (
-                <TableCell key={repo}>
-                  {item.versions[repo] ? (
-                    <Tag type="red" size="sm">
-                      {item.versions[repo]}
-                    </Tag>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      <p className="stat-label">
-        {(snapshot?.matrix?.common_packages.length ?? 0)} shared packages, {unique.length} unique.
-        The table above lists version mismatches.
-      </p>
-      {repos.map((repo) => {
-        const rows = unique.filter((item) => item.repo === repo);
-        return (
-          <section key={repo} className="stack-gap">
-            <h2 className="section-title">{repo}</h2>
-            <p className="stat-label">{rows.length} unique {rows.length === 1 ? "package" : "packages"}</p>
-            <Table size="lg" useZebraStyles>
-              <TableHead>
-                <TableRow>
-                  <TableHeader>Package</TableHeader>
-                  <TableHeader>Ecosystem</TableHeader>
-                  <TableHeader>Version</TableHeader>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.length ? (
-                  rows.map((item) => (
-                    <TableRow key={`${item.ecosystem}-${item.name}`}>
-                      <TableCell>{item.name}</TableCell>
-                      <TableCell>
-                        <Tag size="sm">{item.ecosystem}</Tag>
-                      </TableCell>
-                      <TableCell>{item.version || "—"}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell>None</TableCell>
-                    <TableCell>—</TableCell>
-                    <TableCell>—</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </section>
-        );
-      })}
+      <CarbonTable
+        title="Version mismatches"
+        description={`${snapshot?.matrix?.common_packages.length ?? 0} shared packages, ${unique.length} unique.`}
+        headers={headers}
+        rows={mismatchRows}
+        searchPlaceholder="Search packages"
+        empty="No version mismatches."
+        renderCell={(key, value) => {
+          if (key === "ecosystem") return <Tag size="sm">{value}</Tag>;
+          if (key.startsWith("v") && value !== "—") return <Tag type="red" size="sm">{value}</Tag>;
+          return value;
+        }}
+      />
+      <UniquePackageTable rows={unique} repositories={repos} />
     </div>
+  );
+}
+
+const PACKAGE_HEADERS = [
+  { key: "package", header: "Package" },
+  { key: "ecosystem", header: "Ecosystem" },
+  { key: "version", header: "Version" },
+  { key: "repository", header: "Repository" },
+];
+
+function UniquePackageTable({
+  rows,
+  repositories,
+}: {
+  rows: { name: string; ecosystem: string; repo: string; version: string }[];
+  repositories: string[];
+}) {
+  const [repository, setRepository] = useState("*");
+  const repoItems = useMemo(() => ["*", ...repositories], [repositories]);
+  const filtered = rows.filter((item) => repository === "*" || item.repo === repository);
+  return (
+    <CarbonTable
+      title="Unique packages"
+      description="Packages that appear in only one repository. Choose a repository or search to narrow the list."
+      headers={PACKAGE_HEADERS}
+      rows={filtered.map((item) => ({
+        id: `${item.repo}-${item.ecosystem}-${item.name}`,
+        package: item.name,
+        ecosystem: item.ecosystem,
+        version: item.version || "—",
+        repository: item.repo,
+      }))}
+      searchPlaceholder="Search packages"
+      empty="No unique packages match this repository or search."
+      toolbar={
+        <div className="carbon-table-filter">
+          <Dropdown
+            id="unique-package-repo"
+            titleText="Repository"
+            label="All repositories"
+            items={repoItems}
+            itemToString={(item) => (item === "*" ? "All repositories" : item || "")}
+            selectedItem={repository}
+            onChange={({ selectedItem }) => setRepository(selectedItem || "*")}
+          />
+        </div>
+      }
+      renderCell={(key, value) => (key === "ecosystem" ? <Tag size="sm">{value}</Tag> : value)}
+    />
   );
 }
 
@@ -243,32 +253,36 @@ function UpdateTable({ snapshot }: { snapshot: Snapshot | null }) {
   ];
   const rows = groups.flatMap((group) => group.rows.map((row) => ({ ...row, kind: group.label, type: group.type })));
   return (
-    <Table size="lg" useZebraStyles>
-      <TableHead>
-        <TableRow>
-          <TableHeader>Level</TableHeader>
-          <TableHeader>Package</TableHeader>
-          <TableHeader>Repository</TableHeader>
-          <TableHeader>From</TableHeader>
-          <TableHeader>To</TableHeader>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={`${row.repo}-${row.package}-${row.kind}`}>
-            <TableCell>
-              <Tag type={row.type} size="sm">
-                {row.kind}
-              </Tag>
-            </TableCell>
-            <TableCell>{row.package}</TableCell>
-            <TableCell>{row.repo}</TableCell>
-            <TableCell>{row.from}</TableCell>
-            <TableCell>{row.to}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <CarbonTable
+      title="Package updates"
+      description="Major, minor, and patch updates found for packages in repos.txt."
+      headers={[
+        { key: "level", header: "Level" },
+        { key: "package", header: "Package" },
+        { key: "repository", header: "Repository" },
+        { key: "from", header: "From" },
+        { key: "to", header: "To" },
+      ]}
+      rows={rows.map((row) => ({
+        id: `${row.repo}-${row.package}-${row.kind}`,
+        level: row.kind,
+        package: row.package,
+        repository: row.repo,
+        from: row.from,
+        to: row.to,
+      }))}
+      searchPlaceholder="Search updates"
+      empty="No package updates."
+      renderCell={(key, value) =>
+        key === "level" ? (
+          <Tag type={value === "Major" ? "red" : value === "Minor" ? "magenta" : "cyan"} size="sm">
+            {value}
+          </Tag>
+        ) : (
+          value
+        )
+      }
+    />
   );
 }
 
@@ -305,70 +319,59 @@ function ApiTable({ snapshot }: { snapshot: Snapshot | null }) {
           subtitle={item.message}
         />
       ))}
-      <Table size="lg" useZebraStyles>
-        <TableHead>
-          <TableRow>
-            <TableHeader>Repository</TableHeader>
-            <TableHeader>Role</TableHeader>
-            <TableHeader>Method</TableHeader>
-            <TableHeader>Path</TableHeader>
-            <TableHeader>File</TableHeader>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {endpoints.map((route) => (
-            <TableRow key={`serve-${route.service}-${route.method}-${route.path}-${route.file ?? ""}`}>
-              <TableCell>{route.service}</TableCell>
-              <TableCell>Serves</TableCell>
-              <TableCell>{route.method}</TableCell>
-              <TableCell>{route.path}</TableCell>
-              <TableCell>{route.file || "—"}</TableCell>
-            </TableRow>
-          ))}
-          {calls.map((call) => (
-            <TableRow key={`call-${call.service}-${call.method}-${call.url}-${call.file ?? ""}`}>
-              <TableCell>{call.service}</TableCell>
-              <TableCell>Calls</TableCell>
-              <TableCell>{call.method}</TableCell>
-              <TableCell>{call.url}</TableCell>
-              <TableCell>{call.file || "—"}</TableCell>
-            </TableRow>
-          ))}
-          {endpoints.length === 0 && calls.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={5}>No routes or HTTP clients were found in the scanned source.</TableCell>
-            </TableRow>
-          ) : null}
-        </TableBody>
-      </Table>
-      {dependencies.length > 0 ? (
-        <Table size="lg" useZebraStyles>
-          <TableHead>
-            <TableRow>
-              <TableHeader>From</TableHeader>
-              <TableHeader>To</TableHeader>
-              <TableHeader>Method</TableHeader>
-              <TableHeader>Endpoint</TableHeader>
-              <TableHeader>Confidence</TableHeader>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {dependencies.map((edge) => (
-              <TableRow key={`${edge.from}-${edge.to}-${edge.endpoint}`}>
-                <TableCell>{edge.from}</TableCell>
-                <TableCell>{edge.to}</TableCell>
-                <TableCell>{edge.method}</TableCell>
-                <TableCell>{edge.endpoint}</TableCell>
-                <TableCell>
-                  <Tag type="green" size="sm">
-                    {edge.confidence}
-                  </Tag>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      ) : null}
+      <CarbonTable
+        title="Routes and clients"
+        description="HTTP routes this repository serves, and HTTP calls it makes."
+        headers={[
+          { key: "repository", header: "Repository" },
+          { key: "role", header: "Role" },
+          { key: "method", header: "Method" },
+          { key: "path", header: "Path" },
+          { key: "file", header: "File" },
+        ]}
+        rows={[
+          ...endpoints.map((route) => ({
+            id: `serve-${route.service}-${route.method}-${route.path}-${route.file ?? ""}`,
+            repository: route.service,
+            role: "Serves",
+            method: route.method,
+            path: route.path,
+            file: route.file || "—",
+          })),
+          ...calls.map((call) => ({
+            id: `call-${call.service}-${call.method}-${call.url}-${call.file ?? ""}`,
+            repository: call.service,
+            role: "Calls",
+            method: call.method,
+            path: call.url,
+            file: call.file || "—",
+          })),
+        ]}
+        searchPlaceholder="Search routes"
+        empty="No routes or HTTP clients were found in the scanned source."
+      />
+      <CarbonTable
+        title="Cross-service calls"
+        description="Calls matched to a route served by another repository."
+        headers={[
+          { key: "from", header: "From" },
+          { key: "to", header: "To" },
+          { key: "method", header: "Method" },
+          { key: "endpoint", header: "Endpoint" },
+          { key: "confidence", header: "Confidence" },
+        ]}
+        rows={dependencies.map((edge) => ({
+          id: `${edge.from}-${edge.to}-${edge.endpoint}`,
+          from: edge.from,
+          to: edge.to,
+          method: edge.method,
+          endpoint: edge.endpoint,
+          confidence: edge.confidence,
+        }))}
+        searchPlaceholder="Search calls"
+        empty="No cross-service calls were matched."
+        renderCell={(key, value) => (key === "confidence" ? <Tag type="green" size="sm">{value}</Tag> : value)}
+      />
     </>
   );
 }
@@ -379,32 +382,36 @@ function ReviewTable({ snapshot }: { snapshot: Snapshot | null }) {
     ...(snapshot?.review?.findings.undefined_variables ?? []).map((item) => ({ ...item, kind: "Undefined" })),
   ];
   return (
-    <Table size="lg" useZebraStyles>
-      <TableHead>
-        <TableRow>
-          <TableHeader>Kind</TableHeader>
-          <TableHeader>Repository</TableHeader>
-          <TableHeader>File</TableHeader>
-          <TableHeader>Line</TableHeader>
-          <TableHeader>Detail</TableHeader>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={`${row.kind}-${row.repo}-${row.file}-${row.line}-${row.name}`}>
-            <TableCell>
-              <Tag type={row.kind === "Dead code" ? "gray" : "red"} size="sm">
-                {row.kind}
-              </Tag>
-            </TableCell>
-            <TableCell>{row.repo}</TableCell>
-            <TableCell>{row.file}</TableCell>
-            <TableCell>{row.line}</TableCell>
-            <TableCell>{row.message}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <CarbonTable
+      title="Review findings"
+      description="Dead code and undefined names found in the scanned repositories."
+      headers={[
+        { key: "kind", header: "Kind" },
+        { key: "repository", header: "Repository" },
+        { key: "file", header: "File" },
+        { key: "line", header: "Line" },
+        { key: "detail", header: "Detail" },
+      ]}
+      rows={rows.map((row) => ({
+        id: `${row.kind}-${row.repo}-${row.file}-${row.line}-${row.name}`,
+        kind: row.kind,
+        repository: row.repo,
+        file: row.file,
+        line: row.line,
+        detail: row.message,
+      }))}
+      searchPlaceholder="Search findings"
+      empty="No review findings."
+      renderCell={(key, value) =>
+        key === "kind" ? (
+          <Tag type={value === "Dead code" ? "gray" : "red"} size="sm">
+            {value}
+          </Tag>
+        ) : (
+          value
+        )
+      }
+    />
   );
 }
 
@@ -422,37 +429,36 @@ function CoverageTable({ snapshot }: { snapshot: Snapshot | null }) {
       {!snapshot?.coverage ? (
         <InlineNotification kind="warning" lowContrast hideCloseButton title="No coverage report yet" subtitle="Run analysis to execute pytest or go test where those languages are present." />
       ) : null}
-      <Table size="lg" useZebraStyles>
-      <TableHead>
-        <TableRow>
-          <TableHeader>Repository</TableHeader>
-          <TableHeader>Language</TableHeader>
-          <TableHeader>Status</TableHeader>
-          <TableHeader>Coverage</TableHeader>
-          <TableHeader>Detail</TableHeader>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map(([name, info]) => (
-          <TableRow key={name}>
-            <TableCell>{name}</TableCell>
-            <TableCell>{info.language}</TableCell>
-            <TableCell>
-              <Tag type={info.status === "real" ? "green" : "gray"} size="sm">
-                {info.status}
-              </Tag>
-            </TableCell>
-            <TableCell>{info.percent == null ? "—" : `${Math.round(info.percent)}%`}</TableCell>
-            <TableCell>{info.message}</TableCell>
-          </TableRow>
-        ))}
-        {snapshot?.coverage && rows.length === 0 ? (
-          <TableRow>
-            <TableCell colSpan={5}>The coverage report has no repositories.</TableCell>
-          </TableRow>
-        ) : null}
-      </TableBody>
-    </Table>
+      <CarbonTable
+        title="Coverage"
+        description="Pytest or go test results from each repository checkout."
+        headers={[
+          { key: "repository", header: "Repository" },
+          { key: "language", header: "Language" },
+          { key: "status", header: "Status" },
+          { key: "coverage", header: "Coverage" },
+          { key: "detail", header: "Detail" },
+        ]}
+        rows={rows.map(([name, info]) => ({
+          id: name,
+          repository: name,
+          language: info.language,
+          status: info.status,
+          coverage: info.percent == null ? "—" : `${Math.round(info.percent)}%`,
+          detail: info.message,
+        }))}
+        searchPlaceholder="Search coverage"
+        empty="The coverage report has no repositories."
+        renderCell={(key, value) =>
+          key === "status" ? (
+            <Tag type={value === "real" ? "green" : "gray"} size="sm">
+              {value}
+            </Tag>
+          ) : (
+            value
+          )
+        }
+      />
     </>
   );
 }
@@ -471,28 +477,25 @@ function SecurityPanel({ snapshot }: { snapshot: Snapshot | null }) {
         lowContrast
         hideCloseButton
       />
-      <Table size="lg" useZebraStyles>
-        <TableHead>
-          <TableRow>
-            <TableHeader>Repository</TableHeader>
-            <TableHeader>Package</TableHeader>
-            <TableHeader>Advisory</TableHeader>
-            <TableHeader>Suggestion</TableHeader>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {suggestions.map((item) => (
-            <TableRow key={`${item.repo}-${item.id}-${item.package}-${item.version}`}>
-              <TableCell>{item.repo}</TableCell>
-              <TableCell>
-                {item.package}@{item.version}
-              </TableCell>
-              <TableCell>{item.id || "—"}</TableCell>
-              <TableCell>{item.suggestion}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <CarbonTable
+        title="Advisories"
+        description="Suggestions returned for the packages queried against OSV."
+        headers={[
+          { key: "repository", header: "Repository" },
+          { key: "package", header: "Package" },
+          { key: "advisory", header: "Advisory" },
+          { key: "suggestion", header: "Suggestion" },
+        ]}
+        rows={suggestions.map((item) => ({
+          id: `${item.repo}-${item.id}-${item.package}-${item.version}`,
+          repository: item.repo,
+          package: `${item.package}@${item.version}`,
+          advisory: item.id || "—",
+          suggestion: item.suggestion || "—",
+        }))}
+        searchPlaceholder="Search advisories"
+        empty="No advisory suggestions."
+      />
       {snapshot?.security_markdown ? <pre className="report">{snapshot.security_markdown}</pre> : null}
     </div>
   );

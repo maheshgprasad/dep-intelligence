@@ -58,19 +58,39 @@ def main() -> None:
         "A_temporal_only": "temporal_only",
         "B_structural_only": "structural_only",
         "C_hybrid": "hybrid",
+        "C2_rank_normalized": "hybrid",
     }
-    report = {"dataset": str(Path(args.dataset)), "k": k, "experiments": {}, "coverage": []}
+    report = {
+        "dataset": str(Path(args.dataset)),
+        "note": "Synthetic demonstration unless a labeled research dataset is passed.",
+        "k": k,
+        "experiments": {},
+        "coverage": [],
+        "queries": [],
+        "confidence_intervals": {},
+        "reproducibility": _reproducibility(args.dataset),
+    }
+    per_experiment: dict[str, list[dict]] = {}
     for label, experiment in experiments.items():
         metrics = []
         for query in dataset.get("queries") or []:
-            metrics.append(_evaluate_query(snapshot, provider, query, experiment, k))
+            fusion = "rank_normalized" if label.startswith("C2") else "raw_weighted"
+            metrics.append(_evaluate_query(snapshot, provider, query, experiment, k, fusion))
+        per_experiment[label] = metrics
         report["experiments"][label] = _mean_metrics(metrics)
+        report["queries"].append({"experiment": label, "results": metrics})
+        report["confidence_intervals"][label] = {
+            "ndcg_at_k": _bootstrap([row.get("ndcg_at_k", 0.0) for row in metrics])
+        }
+    report["pairwise"] = {
+        "hybrid_vs_structural": _wins(per_experiment.get("C_hybrid") or [], per_experiment.get("B_structural_only") or [])
+    }
     for query in dataset.get("queries") or []:
         report["coverage"].append(_coverage(snapshot, provider, query))
     print(json.dumps(report, indent=2))
 
 
-def _evaluate_query(snapshot, provider, query: dict, experiment: str, k: int) -> dict:
+def _evaluate_query(snapshot, provider, query: dict, experiment: str, k: int, fusion: str = "raw_weighted") -> dict:
     structural = analyze(snapshot, [_root_key(snapshot, query)], mode=query.get("mode") or "code_change", settings=ImpactSettings())
     payload = analyze_hybrid(
         snapshot,
@@ -79,6 +99,7 @@ def _evaluate_query(snapshot, provider, query: dict, experiment: str, k: int) ->
         settings=HybridSettings(
             expand_temporal=True,
             experiment=experiment,
+            fusion_method=fusion,
             alpha_structural=float((query.get("weights") or {}).get("structural", 0.7)),
             beta_temporal=float((query.get("weights") or {}).get("temporal", 0.3)),
         ),
@@ -220,6 +241,58 @@ def _ndcg(hits: list[float], k: int, relevant_count: int) -> float:
     ideal_hits = [1.0] * min(k, relevant_count)
     idcg = sum(hit / math.log2(index + 1) for index, hit in enumerate(ideal_hits, start=1))
     return (dcg / idcg) if idcg else 0.0
+
+
+def _wins(left: list[dict], right: list[dict]) -> dict:
+    wins = ties = losses = 0
+    for first, second in zip(left, right):
+        a = first.get("ndcg_at_k", 0.0)
+        b = second.get("ndcg_at_k", 0.0)
+        if a > b:
+            wins += 1
+        elif a < b:
+            losses += 1
+        else:
+            ties += 1
+    return {"wins": wins, "ties": ties, "losses": losses}
+
+
+def _bootstrap(values: list[float], samples: int = 2000, seed: int = 42) -> dict:
+    if not values:
+        return {"mean": 0.0, "lower_95": 0.0, "upper_95": 0.0}
+    import random
+
+    rng = random.Random(seed)
+    means = []
+    for _ in range(samples):
+        draw = [values[rng.randrange(len(values))] for _ in values]
+        means.append(sum(draw) / len(draw))
+    means.sort()
+    lower = means[int(0.025 * (len(means) - 1))]
+    upper = means[int(0.975 * (len(means) - 1))]
+    return {"mean": round(sum(values) / len(values), 4), "lower_95": round(lower, 4), "upper_95": round(upper, 4)}
+
+
+def _reproducibility(dataset: str) -> dict:
+    import hashlib
+    import platform
+
+    digest = hashlib.sha256(Path(dataset).read_bytes()).hexdigest()
+    revision = ""
+    try:
+        import subprocess
+
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    except Exception:
+        revision = ""
+    return {
+        "nrm_version": "2.0",
+        "git_revision": revision,
+        "dataset_sha256": digest,
+        "random_seed": 42,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+    }
 
 
 def _mean_metrics(rows: list[dict]) -> dict:

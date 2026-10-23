@@ -94,7 +94,7 @@ def parse_iso(value: str | None) -> datetime | None:
 def _from_git(workspace: Workspace, since_days: int, until: datetime | None) -> tuple[dict, dict]:
     root = workspace.ref.path
     command = ["git", "-C", str(root), "log", "--numstat", "-M", "--pretty=format:commit %H|%aI|%an"]
-    since = _since_date(since_days)
+    since = _since_date(since_days, until)
     if since:
         command.append(f"--since={since}")
     if until is not None:
@@ -121,7 +121,7 @@ def _from_github(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     base = "https://api.github.com" if ref.host == "github.com" else f"https://{ref.host}/api/v3"
-    since = _since_date(since_days)
+    since = _since_date(since_days, until)
     params: dict[str, str | int] = {"per_page": 30}
     if since:
         params["since"] = f"{since}T00:00:00Z"
@@ -379,12 +379,7 @@ def _temporal_report(
         "schema_version": TEMPORAL_SCHEMA_VERSION,
         "slug": workspace.ref.slug,
         "generated_at": now(),
-        "history": {
-            "since": _since_date(since_days) or None,
-            "until": until.isoformat() if until else None,
-            "complete": not truncated,
-            "sampled": sampled,
-        },
+        "history": _history_meta(since_days, until, complete=not truncated, sampled=sampled),
         "files": files,
         "pairs": pairs,
         "events": events,
@@ -413,12 +408,7 @@ def _empty_temporal(workspace: Workspace, since_days: int, until: datetime | Non
         "schema_version": TEMPORAL_SCHEMA_VERSION,
         "slug": workspace.ref.slug,
         "generated_at": now(),
-        "history": {
-            "since": _since_date(since_days) or None,
-            "until": until.isoformat() if until else None,
-            "complete": False,
-            "sampled": False,
-        },
+        "history": _history_meta(since_days, until, complete=False, sampled=False),
         "files": {},
         "pairs": [],
         "events": [],
@@ -427,10 +417,32 @@ def _empty_temporal(workspace: Workspace, since_days: int, until: datetime | Non
     }
 
 
-def _since_date(since_days: int) -> str:
+def history_window_start(
+    since_days: int,
+    until: datetime | None = None,
+    now_at: datetime | None = None,
+) -> str:
+    """Start of the mined window. A cutoff anchors the window; otherwise the clock does.
+
+    ``until=2025-01-01`` and ``since_days=365`` covers 2024-01-02 through 2025-01-01,
+    not "today minus 365 days" through that old cutoff.
+    """
     if since_days <= 0:
         return ""
-    return (datetime.now(timezone.utc) - timedelta(days=since_days)).date().isoformat()
+    anchor = until or now_at or datetime.now(timezone.utc)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    else:
+        anchor = anchor.astimezone(timezone.utc)
+    return (anchor - timedelta(days=since_days)).date().isoformat()
+
+
+def history_anchor(until: datetime | None) -> str:
+    return "cutoff" if until is not None else "current_time"
+
+
+def _since_date(since_days: int, until: datetime | None = None, now_at: datetime | None = None) -> str:
+    return history_window_start(since_days, until, now_at)
 
 
 def _rename_names(filename: str) -> tuple[str, str]:
@@ -484,17 +496,34 @@ def lagged_support(
     source_times: list[datetime],
     target_times: list[datetime],
     window: timedelta,
+    *,
+    matching: str = "one_to_one",
 ) -> dict[str, Any]:
-    """Structure-conditioned lagged history. Observational, not causal, not co-change."""
+    """Structure-conditioned lagged history. Observational, not causal, not co-change.
+
+    ``one_to_one`` consumes each target event once. ``reusable_target`` may match
+    the same target event to several source events (ablation only).
+    """
     source_sorted = sorted(source_times)
     target_sorted = sorted(target_times)
+    used: set[int] = set()
     supported = 0
     lags: list[float] = []
     last: datetime | None = None
     for source in source_sorted:
-        match = next((target for target in target_sorted if source <= target <= source + window), None)
-        if match is None:
+        match_index = next(
+            (
+                index
+                for index, target in enumerate(target_sorted)
+                if index not in used and source <= target <= source + window
+            ),
+            None,
+        )
+        if match_index is None:
             continue
+        match = target_sorted[match_index]
+        if matching != "reusable_target":
+            used.add(match_index)
         supported += 1
         lags.append((match - source).total_seconds())
         if last is None or match > last:
@@ -512,4 +541,16 @@ def lagged_support(
         "last_supported_at": last.isoformat() if last else None,
         "evidence_kind": "structure_conditioned_lagged_history",
         "relation": "lagged_follow",
+        "matching_strategy": "reusable_target" if matching == "reusable_target" else "one_to_one",
+    }
+
+
+def _history_meta(since_days: int, until: datetime | None, *, complete: bool, sampled: bool) -> dict[str, Any]:
+    return {
+        "since": history_window_start(since_days, until) or None,
+        "until": until.isoformat() if until else None,
+        "anchor": history_anchor(until),
+        "complete": complete,
+        "sampled": sampled,
+        "include_merges": False,
     }
