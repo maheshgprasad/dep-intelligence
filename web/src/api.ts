@@ -133,10 +133,6 @@ export async function getSnapshot(): Promise<Snapshot> {
   return response.json();
 }
 
-export async function startRun(path: string): Promise<void> {
-  await fetch(path, { method: "POST" });
-}
-
 export type ImpactRow = {
   key: string;
   structural_score: number;
@@ -152,24 +148,12 @@ export type ImpactRow = {
     direction: string;
     weight: number;
     reason: string;
+    source?: string;
+    target?: string;
+    source_name?: string;
+    target_name?: string;
     evidence?: { status?: string; file?: string; line?: number; source?: string };
   }[];
-};
-
-export type ImpactResponse = {
-  analysis_id: string;
-  graph_version: string;
-  mode: string;
-  score_kind: string;
-  score_meaning: string;
-  truncated: boolean;
-  truncation_reason: string;
-  affected: ImpactRow[];
-  contracts: { key: string; name: string; service_id: string; structural_score: number }[];
-  tests: { name: string; file_path: string; line_start: number | null; service_id: string }[];
-  diagnostics: { code: string; message: string }[];
-  limitations: string[];
-  affected_services?: string[];
 };
 
 export type ClusterNode = {
@@ -189,7 +173,7 @@ export async function clusterGraph(params?: {
   q?: string;
   limit?: number;
   offset?: number;
-}): Promise<{ summary: ClusterSummary; page: { nodes: ClusterNode[]; total: number; truncated: boolean } }> {
+}): Promise<{ summary: ClusterSummary; page: { nodes: ClusterNode[]; edges?: { source: string; target: string; relation: string }[]; total: number; truncated: boolean } }> {
   const query = new URLSearchParams();
   if (params?.service) query.set("service", params.service);
   if (params?.kind) query.set("kind", params.kind);
@@ -205,10 +189,6 @@ export async function clusterContracts(): Promise<{ version: string; contracts: 
   const response = await fetch("/api/cluster/contracts");
   if (!response.ok) throw new Error("contracts failed");
   return response.json();
-}
-
-export async function runImpact(body: Record<string, unknown>): Promise<ImpactResponse> {
-  return postCluster("/api/cluster/impact", body);
 }
 
 export type HybridPathEvidence = {
@@ -323,6 +303,109 @@ async function postCluster<T>(path: string, body: Record<string, unknown>): Prom
     throw error;
   }
   return payload as T;
+}
+
+export type ReviewFinding = {
+  finding_id: string;
+  fingerprint?: string;
+  category: string;
+  severity: string;
+  title: string;
+  claim: string;
+  file_path?: string | null;
+  line_start?: number | null;
+  evidence_strength: string;
+  verification_status?: string;
+  policy_id?: string | null;
+  evidence?: { summary: string; source: string; structured_data?: Record<string, unknown> }[];
+};
+
+export type ReviewReport = {
+  review_id: string;
+  gate: { decision: string; reason_codes: string[]; blocking_findings: string[]; warning_findings: string[]; review_targets: string[]; evidence_complete: boolean };
+  change: { repository?: string; service_id?: string; base_sha?: string | null; head_sha?: string | null; graph_alignment?: string; graph_version?: string; temporal_cutoff?: string | null };
+  summary: { text: string };
+  changed_files: { new_path?: string | null; old_path?: string | null; change_type: string; additions: number | null; deletions: number | null; classifications: string[] }[];
+  changed_symbols: { qualified_name: string; file_path: string; kind: string; name?: string }[];
+  contract_changes: { kind: string; method: string; path: string; breaking: boolean; message: string; file_path?: string }[];
+  impact: {
+    affected_services: string[];
+    ranked_candidates: {
+      service_id: string;
+      file_path: string;
+      name?: string;
+      evidence_origin: string;
+      structural_score?: number;
+      temporal_score?: number;
+      hybrid_score?: number;
+      statement?: string;
+      affected_by_roots?: { qualified_name?: string; service_id?: string }[];
+      structural?: { path?: { relation?: string; source?: string; target?: string; source_name?: string; target_name?: string }[] };
+    }[];
+  };
+  findings: ReviewFinding[];
+  verification: { id: string; command: string[]; status: string; duration_ms: number; exit_code: number | null; output: string }[];
+  policies: { policy_id: string; applied: boolean; result: string; severity: string; evidence: string }[];
+  diagnostics: { code: string; message: string }[];
+  limitations: string[];
+  performance?: { total_ms?: number };
+  score_note?: string;
+};
+
+export async function reviewConfig(repository = ""): Promise<{ model_configured: boolean; policies: { id: string; severity: string; check: string }[]; diagnostics: { message: string }[]; score_note: string }> {
+  const response = await fetch(`/api/review/config?repository=${encodeURIComponent(repository)}`);
+  if (!response.ok) throw new Error("Review configuration failed");
+  return response.json();
+}
+
+export async function runReview(body: Record<string, unknown>): Promise<ReviewReport & { job_id?: string; status?: string }> {
+  const response = await fetch("/api/review/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail && typeof detail === "object" && "message" in detail
+          ? String((detail as { message?: string }).message)
+          : response.status === 409
+            ? "The published graph is older than this change. Refresh intelligence, or review in Exact mode."
+            : "The review could not be started.";
+    throw new Error(message);
+  }
+  return payload;
+}
+
+export async function getReview(reviewId: string): Promise<ReviewReport> {
+  const response = await fetch(`/api/review/${reviewId}`);
+  if (response.status === 404) throw new Error("This review is not stored.");
+  if (!response.ok) throw new Error("The review could not be loaded.");
+  return response.json();
+}
+
+export async function reviewJob(jobId: string): Promise<{ status: string; result?: ReviewReport; error?: string }> {
+  const response = await fetch(`/api/jobs/${jobId}`);
+  if (!response.ok) throw new Error("Review job was not found");
+  return response.json();
+}
+
+export async function sendReviewFeedback(reviewId: string, findingFingerprint: string, status: string): Promise<void> {
+  const response = await fetch(`/api/review/${reviewId}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ finding_fingerprint: findingFingerprint, status }),
+  });
+  if (!response.ok) throw new Error("Feedback was not stored");
+}
+
+export async function refreshIntelligence(): Promise<{ started: boolean; message?: string }> {
+  const response = await fetch("/api/intelligence/refresh", { method: "POST" });
+  if (!response.ok) throw new Error("Intelligence could not be refreshed.");
+  return response.json();
 }
 
 export async function refreshCluster(): Promise<{ job_id: string; status: string }> {

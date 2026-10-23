@@ -215,6 +215,37 @@ async def start_graphs() -> dict:
     return {"started": True}
 
 
+@app.post("/api/intelligence/refresh")
+async def refresh_intelligence() -> dict:
+    """Refresh graphs, commit history, and the cluster contract model.
+
+    Package updates, OSV, coverage, Mend issues, and the legacy static review stay out of this path.
+    """
+    global _running
+    if _running:
+        return {"started": False, "message": "A refresh is already running."}
+    _running = True
+    loop = asyncio.get_running_loop()
+
+    def on_progress(phase: str, percent: int, message: str) -> None:
+        loop.call_soon_threadsafe(publish, "progress", {"phase": phase, "percent": percent, "message": message})
+
+    async def job() -> None:
+        global _running
+        try:
+            on_progress("repository_graph", 15, "Refreshing intelligence")
+            await asyncio.to_thread(run_graphs, "", "", 365, on_progress)
+            on_progress("cluster_graph", 90, "Refreshing contracts")
+            await asyncio.to_thread(get_engine(Settings.load()).refresh)
+            publish("file_updated", {"filename": "snapshot"})
+            on_progress("complete", 100, "Intelligence refresh finished")
+        finally:
+            _running = False
+
+    _spawn(job())
+    return {"started": True}
+
+
 class GraphQuery(BaseModel):
     slug: str
     tool: str
@@ -359,6 +390,107 @@ def nrm_capabilities() -> dict:
 @app.post("/api/cluster/hybrid-impact")
 async def cluster_hybrid_impact(body: HybridImpactBody) -> dict:
     status, payload = await asyncio.to_thread(get_engine(Settings.load()).hybrid_impact, body.model_dump())
+    if status != 200:
+        raise HTTPException(status_code=status, detail=payload)
+    return payload
+
+
+class ReviewSourceBody(BaseModel):
+    kind: str = "working_tree"
+    repository: str = ""
+    service_id: str | None = None
+    base_ref: str | None = None
+    head_ref: str | None = None
+    commit: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    requested_by: str | None = None
+    files: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ReviewRunBody(BaseModel):
+    source: ReviewSourceBody
+    mode: str = "fast"
+    verify: bool = True
+    model: dict[str, Any] = Field(default_factory=dict)
+    service: str = ""
+
+
+class ReviewFeedbackBody(BaseModel):
+    finding_fingerprint: str
+    status: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+    comment: str = ""
+
+
+def _review_engine():
+    from dep_intel.review_engine import ReviewEngine
+
+    settings = Settings.load()
+    return ReviewEngine(settings, cluster=get_engine(settings), publish=publish)
+
+
+@app.post("/api/review/change-view")
+async def review_change_view(body: ReviewRunBody) -> dict:
+    engine = _review_engine()
+    report = await asyncio.to_thread(engine.run, {**body.model_dump(), "verify": False, "mode": "fast"})
+    return {"change": report.get("change"), "changed_files": report.get("changed_files"), "changed_symbols": report.get("changed_symbols"), "contract_changes": report.get("contract_changes"), "diagnostics": report.get("diagnostics"), "review_id": report.get("review_id")}
+
+
+@app.post("/api/review/run")
+async def review_run(body: ReviewRunBody) -> dict:
+    engine = _review_engine()
+    payload = body.model_dump()
+    if payload.get("mode") == "exact":
+        cluster = get_engine(Settings.load())
+
+        def _job(active) -> dict:
+            publish("review_started", {"job_id": active.id, "mode": "exact"})
+            return engine.run(payload, cancel=active.cancel)
+
+        job = cluster.submit("boundary_review", _job)
+        return {"job_id": job.id, "status": job.status, "name": job.name}
+    return await asyncio.to_thread(engine.run, payload)
+
+
+@app.get("/api/review/config")
+def review_config(repository: str = "") -> dict:
+    from dep_intel.review_engine import public_config
+
+    settings = Settings.load()
+    repo = (settings.root / repository) if repository else settings.root
+    return public_config(repo, settings)
+
+
+@app.get("/api/review/{review_id}")
+def review_get(review_id: str) -> dict:
+    from dep_intel.review_store import read_review
+
+    stored = read_review(Settings.load().output_dir, review_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail={"code": "review_not_found"})
+    return stored
+
+
+@app.get("/api/review/{review_id}/report")
+def review_report(review_id: str) -> FileResponse:
+    path = Settings.load().output_dir / "reviews" / review_id / "report.md"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"code": "review_not_found"})
+    return FileResponse(path, media_type="text/markdown")
+
+
+@app.get("/api/review/{review_id}/finding/{finding_id}")
+def review_finding(review_id: str, finding_id: str) -> dict:
+    payload = _review_engine().explain(review_id, finding_id)
+    if payload.get("code"):
+        raise HTTPException(status_code=404, detail=payload)
+    return payload
+
+
+@app.post("/api/review/{review_id}/feedback")
+def review_feedback(review_id: str, body: ReviewFeedbackBody) -> dict:
+    status, payload = _review_engine().feedback(review_id, body.model_dump())
     if status != 200:
         raise HTTPException(status_code=status, detail=payload)
     return payload

@@ -8,13 +8,7 @@ alwaysApply: false
 
 Use `@carbon/react` and IBM Plex. Do not add another UI library, and do not restyle Carbon buttons, dropdowns, tags, or tables.
 
-Every table goes through `web/src/components/CarbonTable.tsx`:
-
-- `DataTable`, size `lg`, zebra rows, sortable headers
-- `TableContainer` title and a short description
-- persistent toolbar search
-- pagination after 10 rows, page sizes 10, 25, 50, 100
-- Carbon `Tag` for language, ecosystem, update level, evidence, and status
+Tables go through `web/src/components/NamiDataTable.tsx`. Search and pagination are optional. Do not show either for a short list. Expand evidence in the row. Status labels go through `StatusTag`. Empty data replaces the table with `NamiEmptyState`.
 
 Scores stay three decimals. They are ranking evidence, not probabilities, and they do not use `%`.
 
@@ -22,6 +16,6 @@ Notifications are `InlineNotification` with `lowContrast` and `hideCloseButton`.
 
 Custom SCSS is only layout: page stack, toolbars, table overflow, and path lists. Keep the existing g10/g100 theme.
 
-Nami Rank starts with service and file dropdowns, then Run Nami Rank. Result filters live in the table toolbar and must update the evidence panel as well as the rows.
+Primary navigation is Overview, Review change, Impact explorer, Architecture, and More (Repository health, Research). Impact explorer starts with service and file, then Analyze impact. Review change is `/review`. Research keeps exact NRM scores. Scores stay three decimals and are not probabilities.
 
-Code-graph paths show a repository-relative file and symbol, such as `app/main.py (chat)`, not a node id.
+Never show a file path, qualified path, or checkout path. A code item is the repository and its symbol, such as `auth-service · validate`, and nothing else. Keep that pair in tables, expanded details, path diagrams, and pickers. Do not put the path back beside the symbol.

@@ -21,7 +21,7 @@ One process serves the dashboard and the API:
 
 Dashboard: http://127.0.0.1:3002
 
-Startup loads the last files under `output/`. It does not rebuild graphs or watch `graph.db`. Use **Run analysis** or **Refresh graph** when you want a new snapshot. `NAMI_EAGER_GRAPH_REFRESH=1` and `NAMI_CLUSTER_WATCH=1` restore those boot-time jobs.
+Startup loads the last files under `output/`. It does not rebuild graphs or watch `graph.db`. Use **Refresh intelligence** for repository graphs, commit history, and the cluster contract model. Package updates, advisories, coverage, and the legacy static review stay on their own tools. `NAMI_EAGER_GRAPH_REFRESH=1` and `NAMI_CLUSTER_WATCH=1` restore the boot-time graph jobs.
 
 `repos.txt` already points at three local fixtures, so **Run analysis** works without a GitHub token. Add GitHub URLs to that file when you want remote repositories. Put `GITHUB_TOKEN` or `GHE_TOKEN` in `.env` (see `.env.example`).
 
@@ -44,5 +44,12 @@ Startup loads the last files under `output/`. It does not rebuild graphs or watc
 Code graph pages show the code-review-graph MCP payloads. Nami Trace stores those payloads and does not recompute communities, hubs, or flows.
 
 Structural change impact is a separate cluster graph. It reads each repository's CRG database, resolves manifest-declared HTTP, gRPC, and event contracts, and scores dependents. The score is not a probability of breakage. See [Docs/CROSS_REPO_IMPACT.md](Docs/CROSS_REPO_IMPACT.md). **Nami Rank Module v2** ranks files rather than individual graph symbols. Structural paths remain symbol-level evidence under each file. NRM can use commit history or a precomputed Phase-1 artifact. Historical runs expose causal-validity metadata. See [Docs/NAMI_RANK_MODULE.md](Docs/NAMI_RANK_MODULE.md) and [Docs/NRM_EVALUATION.md](Docs/NRM_EVALUATION.md). Those ranking scores are not probabilities. PyDriller is installed and is not used to train a model.
+
+**Nami Boundary Gate** reviews one change. It builds a Change View, asks Nami Rank for downstream files, applies `nami-review.yaml`, and returns pass, warn, block, or incomplete. Ranking scores stay ranking evidence. Gate feedback does not change NRM. See [Docs/BOUNDARY_GATE.md](Docs/BOUNDARY_GATE.md).
+
+```bash
+server/.venv/bin/python scripts/review-change.py --repository fixtures/auth-service --working-tree
+server/.venv/bin/python scripts/demo-boundary-gate.py
+```
 
 Client setup: [Docs/AGENT_CLIENTS.md](Docs/AGENT_CLIENTS.md).
