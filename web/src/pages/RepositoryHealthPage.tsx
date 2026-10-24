@@ -1,20 +1,59 @@
-import { Button, InlineNotification, Tab, TabList, TabPanel, TabPanels, Tabs } from "@carbon/react";
-import type { Snapshot } from "../api";
+import { useEffect, useState } from "react";
+import { Button, InlineLoading, InlineNotification, Tab, TabList, TabPanel, TabPanels, Tabs } from "@carbon/react";
+import { downloadSecurityReport, healthPackages, healthSecurity, healthTests, refreshHealth, reviewJob } from "../api";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
 
-export function RepositoryHealthPage({ snapshot, loaded }: { snapshot: Snapshot | null; loaded: boolean }) {
+export function RepositoryHealthPage({ loaded }: { loaded: boolean }) {
+  const [section, setSection] = useState("packages");
+  const [packages, setPackages] = useState<Awaited<ReturnType<typeof healthPackages>> | null>(null);
+  const [security, setSecurity] = useState<Awaited<ReturnType<typeof healthSecurity>> | null>(null);
+  const [tests, setTests] = useState<Awaited<ReturnType<typeof healthTests>> | null>(null);
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (section === "packages") {
+      void healthPackages(controller.signal).then(setPackages).catch(() => undefined);
+    } else if (section === "security") {
+      void healthSecurity(controller.signal).then(setSecurity).catch(() => undefined);
+    } else {
+      void healthTests(controller.signal).then(setTests).catch(() => undefined);
+    }
+    return () => controller.abort();
+  }, [section, busy]);
+
+  async function scan() {
+    setNote("");
+    const started = await refreshHealth();
+    setBusy(started.job_id);
+    const timer = window.setInterval(() => {
+      void reviewJob(started.job_id).then((job) => {
+        if (job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+          window.clearInterval(timer);
+          setBusy("");
+          setNote(job.status === "succeeded" ? "Repository health scan finished." : job.error || "The health scan did not finish.");
+        }
+      });
+    }, 3000);
+  }
+
   if (!loaded) return <PageHeader title="Repository health" description="Packages, security advisories, and test coverage." />;
-  const matrix = snapshot?.matrix;
-  const updates = snapshot?.updates;
-  const vulns = snapshot?.vulnerabilities;
-  const coverage = snapshot?.coverage;
+  const matrix = packages?.matrix;
+  const updates = packages?.updates;
+  const coverage = tests?.coverage;
   return (
     <div className="stack-gap">
-      <PageHeader title="Repository health" description="Packages, dependency advisories, and generic test coverage. Change-specific checks stay on Review change." />
-      <Tabs>
+      <PageHeader
+        title="Repository health"
+        description="Packages, dependency advisories, and generic test coverage. Change-specific checks stay on Review change."
+        actions={busy ? <InlineLoading description="Scanning repository health" /> : <Button kind="primary" onClick={() => void scan()}>Run repository health scan</Button>}
+      />
+      {note ? <InlineNotification kind="info" title="Repository health" subtitle={note} lowContrast hideCloseButton /> : null}
+      <Tabs onChange={({ selectedIndex }) => setSection(["packages", "security", "tests"][selectedIndex] || "packages")}>
         <TabList aria-label="Repository health">
           <Tab>Packages</Tab>
           <Tab>Security</Tab>
@@ -64,23 +103,11 @@ export function RepositoryHealthPage({ snapshot, loaded }: { snapshot: Snapshot 
                   emptyTitle="No updates recorded"
                   emptyDescription="Update lookup has not been run, or every package is current."
                 />
-                <h2 className="section-title">Unique dependencies</h2>
-                <NamiDataTable
-                  searchable={matrix.unique_packages.length > 8}
-                  columns={[
-                    { key: "name", header: "Package" },
-                    { key: "version", header: "Version" },
-                    { key: "repo", header: "Repository" },
-                  ]}
-                  rows={matrix.unique_packages.map((item) => ({ id: `${item.repo}-${item.name}`, ...item }))}
-                  emptyTitle="No unique packages"
-                  emptyDescription="Every detected package is shared."
-                />
               </>
             )}
           </TabPanel>
           <TabPanel>
-            <h2 className="section-title">Dependency advisories</h2>
+            <h2 className="section-title">Security advisories</h2>
             <NamiDataTable
               columns={[
                 { key: "severity", header: "Severity", render: (row) => <StatusTag status={row.severity || "info"} /> },
@@ -88,66 +115,63 @@ export function RepositoryHealthPage({ snapshot, loaded }: { snapshot: Snapshot 
                 { key: "repo", header: "Repository" },
                 { key: "summary", header: "Advisory" },
               ]}
-              rows={(vulns?.findings ?? []).map((item, index) => ({ ...item, id: `${item.id}-${index}` }))}
+              rows={(security?.advisories ?? []).map((item, index) => ({ ...item, id: `${item.id}-${index}` }))}
               emptyTitle="No advisories"
-              emptyDescription="OSV did not report a finding for the scanned packages."
-              renderExpanded={(row) => (
-                <p>{row.suggestion || "No upgrade suggestion was recorded."} {row.fixed ? `Fixed in ${row.fixed}.` : ""}</p>
-              )}
+              emptyDescription="OSV did not report a finding, or a security scan has not been run."
+            />
+            <h2 className="section-title">Dependency hygiene</h2>
+            <NamiDataTable
+              columns={[
+                { key: "package", header: "Package" },
+                { key: "repo", header: "Repository" },
+                { key: "summary", header: "Note" },
+              ]}
+              rows={(security?.hygiene ?? []).map((item, index) => ({ ...item, id: `hygiene-${index}`, summary: item.suggestion || item.summary }))}
+              emptyTitle="No hygiene notes"
+              emptyDescription="Version and pinning notes appear here. They are not vulnerabilities."
             />
             <h2 className="section-title">Mend GitHub issues</h2>
-            {(snapshot?.cves?.issues ?? []).length === 0 ? (
-              <p className="helper">No Mend-style GitHub issues were scanned. This is optional and is not a universal security result.</p>
-            ) : (
-              <NamiDataTable
-                columns={[
-                  { key: "cve", header: "CVE" },
-                  { key: "title", header: "Issue" },
-                  { key: "repo", header: "Repository" },
-                  { key: "state", header: "State" },
-                ]}
-                rows={(snapshot?.cves?.issues ?? []).map((item, index) => ({ id: `${item.url}-${index}`, ...item }))}
-                emptyTitle="No Mend issues"
-                emptyDescription="The optional Mend GitHub issue scan returned nothing."
-              />
-            )}
-            {snapshot?.security_markdown ? (
-              <Button
-                kind="tertiary"
-                onClick={() => download("security-report.md", snapshot.security_markdown)}
-              >
-                Download security report
-              </Button>
-            ) : null}
+            <p className="helper">Optional vendor output. It is not a universal security result.</p>
+            <NamiDataTable
+              columns={[
+                { key: "cve", header: "CVE" },
+                { key: "title", header: "Issue" },
+                { key: "repo", header: "Repository" },
+                { key: "state", header: "State" },
+              ]}
+              rows={(security?.cves?.issues ?? []).map((item, index) => ({ id: `${item.url}-${index}`, ...item }))}
+              emptyTitle="No Mend issues"
+              emptyDescription="The optional Mend GitHub issue scan has not been run or returned nothing."
+            />
+            <Button kind="tertiary" onClick={() => void downloadSecurityReport().catch(() => setNote("No security report is stored."))}>Download security report</Button>
           </TabPanel>
           <TabPanel>
             {!coverage ? (
               <NamiEmptyState title="Coverage has not been scanned" description="Generic coverage is separate from review verification." />
             ) : (
-              Object.entries(coverage.repositories).map(([name, repo]) => (
-                <div key={name}>
-                  <h2 className="section-title">{name}</h2>
-                  {repo.status === "ok" || repo.percent != null ? (
-                    <p>{repo.language} coverage {repo.percent == null ? "—" : `${Math.round(repo.percent)}%`}</p>
-                  ) : (
-                    <InlineNotification kind="info" title={`${repo.language} coverage ${repo.status || "not configured"}`} subtitle={repo.message || "Coverage is not configured for this language."} lowContrast hideCloseButton />
-                  )}
-                </div>
-              ))
+              <NamiDataTable
+                columns={[
+                  { key: "repository", header: "Repository" },
+                  { key: "language", header: "Language" },
+                  { key: "coverage", header: "Coverage" },
+                  { key: "status", header: "Status" },
+                ]}
+                rows={Object.entries(coverage.repositories).map(([name, repo]) => ({
+                  id: name,
+                  repository: name,
+                  language: repo.language,
+                  coverage: repo.percent == null ? "—" : `${Math.round(repo.percent)}%`,
+                  status: repo.percent == null ? "Not configured" : "Available",
+                  message: repo.message,
+                }))}
+                emptyTitle="No coverage results"
+                emptyDescription="Run a repository health scan to collect coverage."
+                renderExpanded={(row) => <p>{row.message || "No extra coverage detail was recorded."}</p>}
+              />
             )}
           </TabPanel>
         </TabPanels>
       </Tabs>
     </div>
   );
-}
-
-function download(name: string, contents: string) {
-  const blob = new Blob([contents], { type: "text/markdown" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  link.click();
-  URL.revokeObjectURL(url);
 }

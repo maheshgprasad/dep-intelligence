@@ -135,6 +135,29 @@ def test_alignment_does_not_call_a_different_sha_exact() -> None:
     assert graph_alignment(None, "auth", "abc", "def", dirty=False) == "unavailable"
 
 
+def test_commit_review_survives_a_binary_blob(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path)
+    settings = _settings(tmp_path, repo)
+    (repo / "app.py").write_text("def value():\n    return 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-m", "base")
+    (repo / "model.pt").write_bytes(b"x" * 64 + b"\x80" + b"yyyy")
+    (repo / "app.py").write_text("def value():\n    return 2\n", encoding="utf-8")
+    _git(repo, "add", "model.pt", "app.py")
+    _git(repo, "commit", "-m", "add model")
+    sha = _git_out(repo, "rev-parse", "HEAD")
+    resolved = resolve_change(repo, {"kind": "commit", "commit": sha}, settings)
+    view = build_change_view(resolved, service_id="auth", repository=str(repo), snapshot=None, base_snapshot=None, repo_root=repo)
+    paths = {item.get("new_path") for item in view["changed_files"]}
+    assert "model.pt" in paths
+    assert "app.py" in paths
+    assert not any(item.get("severity") == "error" for item in view["diagnostics"])
+    from dep_intel.review_context import collect_context
+
+    context = collect_context(repo, view, {"ranked_candidates": []}, {})
+    assert isinstance(context["items"], list)
+
+
 def test_git_range_resolves_shas_and_rejects_missing_refs(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path)
     settings = _settings(tmp_path, repo)

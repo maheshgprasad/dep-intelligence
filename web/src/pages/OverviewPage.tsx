@@ -14,12 +14,11 @@ import {
   StructuredListWrapper,
   Tile,
 } from "@carbon/react";
-import { clusterGraph, type Snapshot } from "../api";
+import { clusterRelationships, type AppState } from "../api";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
 import { intelligenceView } from "../intelligence";
-import { isFilePath, symbolName } from "../labels";
 
 export function OverviewPage({
   snapshot,
@@ -28,7 +27,7 @@ export function OverviewPage({
   refreshing,
   onRefresh,
 }: {
-  snapshot: Snapshot | null;
+  snapshot: AppState | null;
   error: string;
   loaded: boolean;
   refreshing: boolean;
@@ -40,22 +39,13 @@ export function OverviewPage({
 
   useEffect(() => {
     if (!snapshot?.cluster?.version) return;
-    void clusterGraph({ limit: 400 })
+    void clusterRelationships(6)
       .then((payload) => {
-        const nodes = new Map(payload.page.nodes.map((node) => [node.key, node]));
-        const rows = (payload.page.edges ?? [])
-          .filter((edge) => edge.relation === "CONSUMES_HTTP" || edge.relation === "CONSUMES_EVENT" || edge.relation === "HANDLED_BY")
-          .slice(0, 6)
-          .map((edge) => {
-            const source = nodes.get(edge.source);
-            const target = nodes.get(edge.target);
-            return {
-              from: source?.service_id || "service",
-              contract: contractLabel(source?.name || source?.qualified_name || edge.relation),
-              to: target?.service_id || target?.name || "service",
-            };
-          });
-        setRelations(rows);
+        setRelations(payload.relationships.map((item) => ({
+          from: item.from_service,
+          contract: item.contract,
+          to: item.to_service,
+        })));
       })
       .catch(() => setRelations([]));
   }, [snapshot?.cluster?.version]);
@@ -175,8 +165,4 @@ export function OverviewPage({
       ) : null}
     </div>
   );
-}
-
-function contractLabel(value: string): string {
-  return isFilePath(value) ? symbolName(value) : value;
 }

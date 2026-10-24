@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -141,7 +142,91 @@ def health() -> dict:
 
 @app.get("/api/snapshot")
 def snapshot() -> dict:
+    """Compatibility snapshot. The React app uses /api/app-state instead."""
     return _snapshot(Settings.load())
+
+
+@app.get("/api/app-state")
+def app_state() -> dict:
+    from dep_intel.app_state import build_app_state
+
+    settings = Settings.load()
+    return build_app_state(settings, get_engine(settings).summary(), _running)
+
+
+@app.get("/api/repositories/{slug}/architecture")
+def repository_architecture(slug: str) -> dict:
+    from dep_intel.app_state import repository_architecture as load_architecture
+
+    payload = load_architecture(Settings.load(), slug)
+    if payload is None:
+        raise HTTPException(status_code=404, detail={"code": "unknown_repository"})
+    return payload
+
+
+@app.get("/api/repository-health/packages")
+def repository_health_packages() -> dict:
+    from dep_intel.app_state import health_packages
+
+    return health_packages(Settings.load())
+
+
+@app.get("/api/repository-health/security")
+def repository_health_security() -> dict:
+    from dep_intel.app_state import health_security
+
+    return health_security(Settings.load())
+
+
+@app.get("/api/repository-health/security/report")
+def repository_health_security_report() -> FileResponse:
+    from dep_intel.app_state import security_report_path
+
+    path = security_report_path(Settings.load())
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"code": "report_missing"})
+    return FileResponse(path, media_type="text/markdown", filename="security_release_report.md")
+
+
+@app.get("/api/repository-health/tests")
+def repository_health_tests() -> dict:
+    from dep_intel.app_state import health_tests
+
+    return health_tests(Settings.load())
+
+
+class HealthRefreshBody(BaseModel):
+    sections: list[str] = Field(default_factory=lambda: ["packages", "security", "tests"])
+
+
+@app.post("/api/repository-health/refresh")
+async def repository_health_refresh(body: HealthRefreshBody) -> dict:
+    from dep_intel.app_state import run_repository_health
+
+    settings = Settings.load()
+    cluster = get_engine(settings)
+    loop = asyncio.get_running_loop()
+
+    def _job(active) -> dict:
+        def on_progress(stage: str, percent: int, message: str) -> None:
+            cluster.update_job_progress(active.id, percent)
+            loop.call_soon_threadsafe(
+                publish,
+                "progress",
+                {
+                    "operation": "health_refresh",
+                    "job_id": active.id,
+                    "job_kind": "repository_health",
+                    "stage": stage,
+                    "percent": percent,
+                    "message": message,
+                },
+            )
+
+        return run_repository_health(settings, body.sections, on_progress)
+
+    job = cluster.submit("repository_health", _job)
+    return {"job_id": job.id, "status": job.status, "name": job.name}
 
 
 @app.get("/api/events")
@@ -227,18 +312,29 @@ async def refresh_intelligence() -> dict:
     _running = True
     loop = asyncio.get_running_loop()
 
-    def on_progress(phase: str, percent: int, message: str) -> None:
-        loop.call_soon_threadsafe(publish, "progress", {"phase": phase, "percent": percent, "message": message})
+    def publish_progress(phase: str, percent: int, message: str) -> None:
+        loop.call_soon_threadsafe(
+            publish,
+            "progress",
+            {"operation": "intelligence_refresh", "phase": phase, "stage": phase, "percent": percent, "message": message},
+        )
+
+    def on_nested(phase: str, percent: int, message: str) -> None:
+        if phase == "complete":
+            return
+        mapped = 55 if phase == "analyze_commit_history" else 20
+        publish_progress(phase, min(mapped, 80), message)
 
     async def job() -> None:
         global _running
         try:
-            on_progress("repository_graph", 15, "Refreshing intelligence")
-            await asyncio.to_thread(run_graphs, "", "", 365, on_progress)
-            on_progress("cluster_graph", 90, "Refreshing contracts")
+            publish_progress("preparing", 10, "Preparing repositories")
+            await asyncio.to_thread(run_graphs, "", "", 365, on_nested)
+            publish_progress("contracts", 85, "Resolving cross-service contracts")
             await asyncio.to_thread(get_engine(Settings.load()).refresh)
             publish("file_updated", {"filename": "snapshot"})
-            on_progress("complete", 100, "Intelligence refresh finished")
+            publish_progress("publish", 95, "Publishing snapshot")
+            publish_progress("complete", 100, "Intelligence refresh finished")
         finally:
             _running = False
 
@@ -354,6 +450,24 @@ async def cluster_contracts() -> dict:
     return await asyncio.to_thread(get_engine(Settings.load()).contracts)
 
 
+@app.get("/api/cluster/catalog")
+async def cluster_catalog(service: str = "") -> dict:
+    payload = await asyncio.to_thread(get_engine(Settings.load()).catalog, service)
+    if payload.get("error") == "unknown_service":
+        raise HTTPException(status_code=404, detail=payload)
+    return payload
+
+
+@app.get("/api/cluster/relationships")
+async def cluster_relationships(limit: int = 50, service: str = "", kind: str = "") -> dict:
+    return await asyncio.to_thread(get_engine(Settings.load()).relationships, limit, service, kind)
+
+
+@app.get("/api/search")
+async def cluster_search(q: str = "", limit: int = 20) -> dict:
+    return await asyncio.to_thread(get_engine(Settings.load()).search, q, limit)
+
+
 @app.post("/api/cluster/impact")
 async def cluster_impact(body: ImpactBody) -> dict:
     status, payload = await asyncio.to_thread(get_engine(Settings.load()).impact, body.model_dump())
@@ -383,6 +497,7 @@ def nrm_capabilities() -> dict:
             },
         ],
         "lag_matching": ["one_to_one", "reusable_target"],
+        "path_scoring": ["coverage_adjusted", "raw"],
         "defaults": {"structural_weight": 0.7, "temporal_weight": 0.3, "cross_repo_window_days": 7},
     }
 
@@ -433,23 +548,47 @@ def _review_engine():
 @app.post("/api/review/change-view")
 async def review_change_view(body: ReviewRunBody) -> dict:
     engine = _review_engine()
-    report = await asyncio.to_thread(engine.run, {**body.model_dump(), "verify": False, "mode": "fast"})
-    return {"change": report.get("change"), "changed_files": report.get("changed_files"), "changed_symbols": report.get("changed_symbols"), "contract_changes": report.get("contract_changes"), "diagnostics": report.get("diagnostics"), "review_id": report.get("review_id")}
+    return await asyncio.to_thread(engine.change_view, body.model_dump())
+
+
+@app.get("/api/review/source-options")
+def review_source_options(repository: str = "") -> dict:
+    from dep_intel.review_source_options import source_options
+
+    settings = Settings.load()
+    repo = Path(repository)
+    if not repo.is_absolute():
+        repo = settings.root / repository
+    return source_options(repo, settings)
+
+
+@app.get("/api/reviews")
+def reviews_list(limit: int = 20) -> dict:
+    from dep_intel.review_store import list_reviews
+
+    return {"reviews": list_reviews(Settings.load().output_dir, limit)}
 
 
 @app.post("/api/review/run")
 async def review_run(body: ReviewRunBody) -> dict:
     engine = _review_engine()
     payload = body.model_dump()
-    if payload.get("mode") == "exact":
+    if payload.get("mode") in {"exact", "auto"}:
         cluster = get_engine(Settings.load())
+        review_id = uuid.uuid4().hex
+        payload["review_id"] = review_id
 
         def _job(active) -> dict:
-            publish("review_started", {"job_id": active.id, "mode": "exact"})
-            return engine.run(payload, cancel=active.cancel)
+            payload["job_id"] = active.id
+            publish("review_started", {"job_id": active.id, "review_id": review_id, "mode": payload.get("mode")})
+            return engine.run(
+                payload,
+                cancel=active.cancel,
+                on_progress=lambda percent: cluster.update_job_progress(active.id, percent),
+            )
 
         job = cluster.submit("boundary_review", _job)
-        return {"job_id": job.id, "status": job.status, "name": job.name}
+        return {"job_id": job.id, "review_id": review_id, "status": job.status, "name": job.name}
     return await asyncio.to_thread(engine.run, payload)
 
 

@@ -18,4 +18,4 @@ Custom SCSS is only layout: page stack, toolbars, table overflow, and path lists
 
 Primary navigation is Overview, Review change, Impact explorer, Architecture, and More (Repository health, Research). Impact explorer starts with service and file, then Analyze impact. Review change is `/review`. Research keeps exact NRM scores. Scores stay three decimals and are not probabilities.
 
-Never show a file path, qualified path, or checkout path. A code item is the repository and its symbol, such as `auth-service · validate`, and nothing else. Keep that pair in tables, expanded details, path diagrams, and pickers. Do not put the path back beside the symbol.
+Show a code item as its symbol first, with the repository-relative path as the secondary identity when more than a basename is needed. File selectors keep the full relative path, such as `src/auth/index.ts`. Technical expansion keeps the qualified name, graph key, and line. Query the graph with the qualified name or graph key, not the display basename. Never show an absolute checkout path.

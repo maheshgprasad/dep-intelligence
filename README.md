@@ -21,9 +21,13 @@ One process serves the dashboard and the API:
 
 Dashboard: http://127.0.0.1:3002
 
-Startup loads the last files under `output/`. It does not rebuild graphs or watch `graph.db`. Use **Refresh intelligence** for repository graphs, commit history, and the cluster contract model. Package updates, advisories, coverage, and the legacy static review stay on their own tools. `NAMI_EAGER_GRAPH_REFRESH=1` and `NAMI_CLUSTER_WATCH=1` restore the boot-time graph jobs.
+Startup loads the last files under `output/`. It does not rebuild graphs or watch `graph.db`. The dashboard reads a small application state from `GET /api/app-state`. `GET /api/snapshot` remains for compatibility and still returns the full analysis payload.
 
-`repos.txt` already points at three local fixtures, so **Run analysis** works without a GitHub token. Add GitHub URLs to that file when you want remote repositories. Put `GITHUB_TOKEN` or `GHE_TOKEN` in `.env` (see `.env.example`).
+The normal flow is **Refresh intelligence**, **Review change**, **Explore impact**, **Architecture**, **Repository health**, and **Research**. Refresh intelligence rebuilds repository graphs, commit history, temporal evidence, the cluster graph, and contracts. **Run repository health scan** is separate: packages, updates, OSV advisories, coverage, and optional vendor checks. It does not rebuild the graph or run Boundary Gate.
+
+Nami Rank Module ranks downstream files. A rank is not a probability and it does not block a change by itself. Nami Boundary Gate reviews an actual change and can pass, warn, block, or return incomplete. High rank alone does not block, and temporal-only evidence alone does not block.
+
+`NAMI_EAGER_GRAPH_REFRESH=1` and `NAMI_CLUSTER_WATCH=1` restore the boot-time graph jobs. Add repositories to `repos.txt`. Put `GITHUB_TOKEN` or `GHE_TOKEN` in `.env` (see `.env.example`).
 
 ## What the scan writes
 

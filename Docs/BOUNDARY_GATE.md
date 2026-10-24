@@ -45,7 +45,9 @@ Feedback is stored under `output/reviews/`. Statuses are accepted, rejected, fal
 
 ## REST
 
-`POST /api/review/change-view`, `POST /api/review/run`, `GET /api/review/{id}`, `GET /api/review/{id}/report`, `POST /api/review/{id}/feedback`, `GET /api/review/config`. Exact mode returns a job id and reuses the existing job runner. Progress uses the existing SSE stream: `review_started`, `review_progress`, `review_completed`, `review_failed`, `verification_started`, `verification_completed`.
+`POST /api/review/change-view` previews a change and stops before impact, policy, model review, verification, and the gate. `POST /api/review/run` accepts `fast`, `exact`, and `auto`. `fast` and `exact` keep their previous meaning. `auto` resolves to fast when the published graph alignment is exact or compatible, and to exact otherwise. The report records `requested_mode` and `resolved_mode`; `mode` is the mode that ran. Exact and auto return a job id and the review id together. `GET /api/reviews` lists stored review metadata. `GET /api/review/source-options` returns bounded branch and commit metadata. `GET /api/review/{id}`, `GET /api/review/{id}/report`, `POST /api/review/{id}/feedback`, and `GET /api/review/config` are unchanged. `POST /api/jobs/{id}/cancel` cancels a queued or running review. Cancellation is incomplete with reason `cancelled`. It is not a block.
+
+Progress events on the existing SSE stream include `job_id`, `review_id`, `stage`, `stage_label`, `stage_index`, `stage_count`, and `percent`. Stages come from `review_progress.REVIEW_STAGES`. A high NRM rank alone does not block. Temporal-only evidence alone does not block.
 
 ## MCP
 

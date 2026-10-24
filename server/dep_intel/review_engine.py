@@ -28,6 +28,7 @@ from dep_intel.review_findings import build_findings
 from dep_intel.review_gate import decide_gate
 from dep_intel.review_model_provider import NoneProvider, model_configured, provider_from_env
 from dep_intel.review_models import MODULE_ABBREV, MODULE_NAME, NBG_VERSION, ORIGIN_STATEMENT, SCORE_NOTE, TEMPORAL_LIMIT, diagnostic
+from dep_intel.review_progress import progress_event, resolve_review_mode
 from dep_intel.review_policy import evaluate_policies, load_review_config
 from dep_intel.review_sources import materialize_worktree, remove_worktree, repository_allowed, resolve_change, retain_worktrees
 from dep_intel.review_store import read_review, render_markdown, write_review
@@ -56,20 +57,22 @@ class ReviewEngine:
         self.publish = publish or (lambda _event, _data: None)
         self.provider = provider
 
-    def run(self, body: dict[str, Any], cancel: Any | None = None) -> dict[str, Any]:
+    def run(self, body: dict[str, Any], cancel: Any | None = None, on_progress: Callable[[int], None] | None = None) -> dict[str, Any]:
         started = time.perf_counter()
-        review_id = uuid.uuid4().hex
+        review_id = str(body.get("review_id") or uuid.uuid4().hex)
+        job_id = str(body.get("job_id") or "")
+        self._on_progress = on_progress
         timings: dict[str, float] = {}
-        self._event("review_started", {"review_id": review_id})
-        self._progress(review_id, "resolve_change")
+        self._event("review_started", {"review_id": review_id, "job_id": job_id})
+        self._progress(review_id, "resolve_change", job_id)
         source = dict(body.get("source") or {})
         repo = _repository_path(source, self.settings)
-        mode = body.get("mode") or "fast"
+        requested_mode = str(body.get("mode") or "fast")
         verify = bool(body.get("verify", True))
         model_enabled = bool((body.get("model") or {}).get("enabled", False))
         config, config_errors = load_review_config(repo if repo.exists() else None, self.settings.root, body.get("config"))
         if config_errors:
-            report = self._finish_incomplete(review_id, repo, source, config_errors, started, timings)
+            report = self._finish_incomplete(review_id, repo, source, config_errors, started, timings, requested_mode=requested_mode)
             return report
         stage = time.perf_counter()
         if not repo.exists() or not repository_allowed(repo, self.settings):
@@ -82,16 +85,18 @@ class ReviewEngine:
         previous = self.cluster.previous() if self.cluster is not None and hasattr(self.cluster, "previous") else None
         service_id = _service_id(snapshot, body.get("service") or source.get("service_id") or "", repo)
         if fatal:
-            return self._finish_incomplete(review_id, repo, source, fatal, started, timings, resolved=resolved, service_id=service_id)
-        self._progress(review_id, "build_change_view")
+            return self._finish_incomplete(review_id, repo, source, fatal, started, timings, resolved=resolved, service_id=service_id, requested_mode=requested_mode)
         stage = time.perf_counter()
         worktrees: list[Path] = []
         alignment = graph_alignment(snapshot, service_id, resolved.get("base_sha"), resolved.get("head_sha"), dirty=resolved.get("kind") in {"working_tree", "staged"})
+        mode = resolve_review_mode(requested_mode, alignment)
         exact_snapshot = None
         if mode == "exact":
             exact_snapshot, alignment, worktrees, exact_diagnostics = self._exact(review_id, repo, resolved, service_id, snapshot, alignment)
             resolved["diagnostics"] = list(resolved.get("diagnostics") or []) + exact_diagnostics
         timings["graph_alignment_ms"] = _ms(stage)
+        self._progress(review_id, "build_change_view", job_id)
+        self._progress(review_id, "align_graph", job_id)
         active_snapshot = exact_snapshot or snapshot
         change = build_change_view(
             resolved,
@@ -112,12 +117,12 @@ class ReviewEngine:
             self._event("review_completed", {"review_id": cached.get("review_id"), "decision": (cached.get("gate") or {}).get("decision"), "cache": True})
             return cached
         as_of = resolved.get("committed_at") if resolved.get("kind") in {"commit", "range", "github_pr"} else None
-        self._progress(review_id, "calculate_impact")
+        self._progress(review_id, "calculate_impact", job_id)
         stage = time.perf_counter()
         impact = self._impact(active_snapshot, change, as_of, service_id, exact=exact_snapshot is not None)
         timings["impact_ms"] = _ms(stage)
         log.info("impact.completed")
-        self._progress(review_id, "apply_policies")
+        self._progress(review_id, "apply_policies", job_id)
         stage = time.perf_counter()
         policies = evaluate_policies(config, change, repo)
         timings["policy_ms"] = _ms(stage)
@@ -130,16 +135,15 @@ class ReviewEngine:
         if model_enabled:
             model_findings, model_summary, model_diagnostic = self._model(change, context, policies)
         timings["model_ms"] = _ms(stage) if model_enabled else 0.0
-        self._progress(review_id, "collect_findings")
+        self._progress(review_id, "collect_findings", job_id)
         findings = build_findings(policies, impact, change, model_findings=model_findings)
-        self._progress(review_id, "verify_findings")
+        self._progress(review_id, "verify_findings", job_id)
         stage = time.perf_counter()
         self._event("verification_started", {"review_id": review_id})
         verification = run_verifications(config, change, policies, repo, enabled=verify, cancel=cancel, secrets=_secrets(self.settings))
         self._event("verification_completed", {"review_id": review_id, "results": [item.get("status") for item in verification]})
         timings["verification_ms"] = _ms(stage)
         findings = apply_verification_findings(findings, verification)
-        self._progress(review_id, "gate_decision")
         accepted, rejected = apply_evidence_gate(
             findings,
             change,
@@ -150,10 +154,17 @@ class ReviewEngine:
         diagnostics = list(change.get("diagnostics") or []) + rejected
         if model_diagnostic:
             diagnostics.append(diagnostic(model_diagnostic, "The optional review model did not return usable findings.", severity="warning"))
-        if cancel is not None and getattr(cancel, "is_set", lambda: False)():
-            diagnostics.append(diagnostic("cancelled", "The review was cancelled.", severity="error"))
+        cancelled = cancel is not None and getattr(cancel, "is_set", lambda: False)()
+        if cancelled:
+            diagnostics.append(diagnostic("cancelled", "The review was cancelled.", severity="warning"))
         gate = decide_gate(accepted, verification, config, alignment=alignment, diagnostics=diagnostics)
-        self._progress(review_id, "write_report")
+        if cancelled:
+            gate["decision"] = "incomplete"
+            gate["blocking_findings"] = []
+            gate["reason_codes"] = ["cancelled"]
+            gate["evidence_complete"] = False
+        self._progress(review_id, "gate_decision", job_id)
+        self._progress(review_id, "write_report", job_id)
         timings["total_ms"] = _ms(started)
         report = _report(
             review_id,
@@ -169,6 +180,8 @@ class ReviewEngine:
             model_summary,
             mode,
             as_of,
+            requested_mode=requested_mode,
+            resolved_mode=mode,
         )
         public_change = {key: value for key, value in change.items() if key != "_files"}
         write_review(self.settings.output_dir, review_id, {
@@ -189,6 +202,35 @@ class ReviewEngine:
         log.info("review.completed")
         self._event("review_completed", {"review_id": review_id, "decision": gate.get("decision")})
         return report
+
+    def change_view(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Resolve and classify a change. Stops before impact, policy, model, verification, and the gate."""
+        source = dict(body.get("source") or {})
+        repo = _repository_path(source, self.settings)
+        config, config_errors = load_review_config(repo if repo.exists() else None, self.settings.root, body.get("config"))
+        resolved = resolve_change(repo, source, self.settings, config.get("budgets"))
+        snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
+        service_id = _service_id(snapshot, body.get("service") or source.get("service_id") or "", repo)
+        alignment = graph_alignment(snapshot, service_id, resolved.get("base_sha"), resolved.get("head_sha"), dirty=resolved.get("kind") in {"working_tree", "staged"})
+        change = build_change_view(
+            resolved,
+            service_id=service_id,
+            repository=str(repo),
+            snapshot=snapshot,
+            base_snapshot=snapshot,
+            repo_root=repo,
+            budgets=config.get("budgets"),
+            graph_alignment=alignment,
+        )
+        public = {key: value for key, value in change.items() if key != "_files"}
+        return {
+            "change": public,
+            "changed_files": public.get("changed_files") or [],
+            "changed_symbols": public.get("changed_symbols") or [],
+            "contract_changes": public.get("contract_changes") or [],
+            "graph_alignment": alignment,
+            "diagnostics": list(config_errors) + list(resolved.get("diagnostics") or []) + list(public.get("diagnostics") or []),
+        }
 
     def explain(self, review_id: str, finding_id: str) -> dict[str, Any]:
         report = read_review(self.settings.output_dir, review_id)
@@ -319,8 +361,15 @@ class ReviewEngine:
             if dest.exists():
                 shutil.rmtree(dest, ignore_errors=True)
 
-    def _progress(self, review_id: str, stage: str) -> None:
-        self._event("review_progress", {"review_id": review_id, "stage": stage})
+    def _progress(self, review_id: str, stage: str, job_id: str = "") -> None:
+        payload = progress_event(stage, review_id, job_id)
+        self._event("review_progress", payload)
+        callback = getattr(self, "_on_progress", None)
+        if callback is not None:
+            try:
+                callback(int(payload["percent"]))
+            except Exception:
+                log.info("progress.callback_failed")
 
     def _event(self, name: str, data: dict) -> None:
         try:
@@ -328,7 +377,7 @@ class ReviewEngine:
         except Exception:
             log.info(name)
 
-    def _finish_incomplete(self, review_id: str, repo: Path, source: dict, errors: list[dict], started: float, timings: dict, resolved: dict | None = None, service_id: str = "") -> dict[str, Any]:
+    def _finish_incomplete(self, review_id: str, repo: Path, source: dict, errors: list[dict], started: float, timings: dict, resolved: dict | None = None, service_id: str = "", requested_mode: str = "fast") -> dict[str, Any]:
         change = {
             "repository": str(repo),
             "service_id": service_id,
@@ -345,7 +394,7 @@ class ReviewEngine:
         gate["decision"] = "incomplete"
         gate["evidence_complete"] = False
         timings["total_ms"] = _ms(started)
-        report = _report(review_id, change, {"ranked_candidates": [], "affected_services": []}, [], gate, [], {"items": []}, errors, timings, {"config_hash": ""}, "", source.get("kind") or "", None)
+        report = _report(review_id, change, {"ranked_candidates": [], "affected_services": []}, [], gate, [], {"items": []}, errors, timings, {"config_hash": ""}, "", requested_mode, None, requested_mode=requested_mode, resolved_mode=requested_mode)
         write_review(self.settings.output_dir, review_id, {"manifest.json": _manifest(review_id, report, {}, ""), "report.json": report, "report.md": render_markdown(report)})
         self._event("review_failed", {"review_id": review_id, "decision": "incomplete"})
         return report
@@ -528,7 +577,7 @@ def _merge_candidate(merged: dict[tuple[str, str], dict[str, Any]], candidate: d
         row["paths"] = [((candidate.get("structural") or {}).get("path") or [])] + list(row.get("paths") or [])[:3]
 
 
-def _report(review_id: str, change: dict, impact: dict, policies: list, gate: dict, verification: list, context: dict, diagnostics: list, timings: dict, config: dict, model_summary: str, mode: str, as_of: str | None) -> dict[str, Any]:
+def _report(review_id: str, change: dict, impact: dict, policies: list, gate: dict, verification: list, context: dict, diagnostics: list, timings: dict, config: dict, model_summary: str, mode: str, as_of: str | None, requested_mode: str | None = None, resolved_mode: str | None = None) -> dict[str, Any]:
     files = change.get("changed_files") or []
     summary = {
         "text": _summary_text(change, gate, impact),
@@ -542,7 +591,9 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
         "module": MODULE_NAME,
         "module_abbrev": MODULE_ABBREV,
         "module_version": NBG_VERSION,
-        "mode": mode,
+        "mode": resolved_mode or mode,
+        "requested_mode": requested_mode or mode,
+        "resolved_mode": resolved_mode or mode,
         "change": {
             "repository": change.get("repository"),
             "service_id": change.get("service_id"),
