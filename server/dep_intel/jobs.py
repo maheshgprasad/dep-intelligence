@@ -42,6 +42,16 @@ class JobRunner:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def update_progress(self, job_id: str, percent: int) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            bounded = max(job.progress, min(100, int(percent)))
+            job.progress = bounded
+            name = job.name
+        self._publish("job_progress", {"job_id": job_id, "name": name, "job_kind": name, "percent": bounded, "operation": name})
+
     def cancel(self, job_id: str) -> Job | None:
         job = self.get(job_id)
         if job is None:

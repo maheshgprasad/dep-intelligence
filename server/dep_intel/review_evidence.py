@@ -161,10 +161,9 @@ def _read(repo: Path, path: str) -> str:
     candidate = (repo / safe).resolve()
     if not contained(candidate, repo.resolve()) or not candidate.is_file():
         return ""
-    try:
-        return candidate.read_text(encoding="utf-8")
-    except OSError:
-        return ""
+    from dep_intel.review_sources import read_utf8
+
+    return read_utf8(candidate)
 
 
 def _safe(path: str) -> str | None:

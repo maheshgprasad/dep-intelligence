@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   Content,
@@ -24,7 +24,7 @@ import {
   Theme,
 } from "@carbon/react";
 import { Activity, Asleep, Light } from "@carbon/icons-react";
-import { getSnapshot, refreshIntelligence, type Snapshot } from "./api";
+import { getAppState, refreshIntelligence, searchWorkspace, type AppState, type SearchHit } from "./api";
 import { StatusTag } from "./components/StatusTag";
 import { intelligenceView } from "./intelligence";
 import { ArchitecturePage } from "./pages/ArchitecturePage";
@@ -35,7 +35,7 @@ import { ResearchPage } from "./pages/ResearchPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewPage } from "./pages/ReviewPage";
 
-type Progress = { phase: string; percent: number; message: string };
+type Progress = { phase: string; percent: number; message: string; operation?: string };
 type ThemeName = "g10" | "g100";
 
 function storedTheme(): ThemeName {
@@ -47,7 +47,8 @@ function storedTheme(): ThemeName {
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<AppState | null>(null);
+  const [hits, setHits] = useState<SearchHit[]>([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [progress, setProgress] = useState<Progress>({ phase: "idle", percent: 0, message: "" });
@@ -70,9 +71,10 @@ export function App() {
     setMenu(false);
   }, [location.pathname]);
 
+  const refreshTimer = useRef<number | null>(null);
   const refresh = useCallback(async () => {
     try {
-      setSnapshot(await getSnapshot());
+      setSnapshot(await getAppState());
       setError("");
     } catch {
       setError("Nami Trace is not running. Start it with scripts/nami-trace.sh.");
@@ -80,9 +82,16 @@ export function App() {
       setLoaded(true);
     }
   }, []);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => void refresh(), 400);
+  }, [refresh]);
 
   useEffect(() => {
     void refresh();
+    return () => {
+      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -93,22 +102,39 @@ export function App() {
     });
     source.addEventListener("progress", (event) => {
       const data = JSON.parse((event as MessageEvent).data) as Progress;
+      if (data.operation !== "intelligence_refresh") return;
       setProgress(data);
-      if (data.phase === "complete") void refresh();
+      if (data.phase === "complete") scheduleRefresh();
     });
-    source.addEventListener("file_updated", () => void refresh());
-    source.addEventListener("graph_updated", () => void refresh());
-    source.addEventListener("job_completed", () => void refresh());
-    source.addEventListener("job_failed", () => void refresh());
+    source.addEventListener("file_updated", () => scheduleRefresh());
+    source.addEventListener("graph_updated", () => scheduleRefresh());
+    source.addEventListener("job_completed", () => scheduleRefresh());
+    source.addEventListener("job_failed", () => scheduleRefresh());
     source.addEventListener("resync", () => {
-      setStreamNote("The live event stream missed updates. The snapshot was reloaded.");
-      void refresh();
+      setStreamNote("The live event stream missed updates. The application state was reloaded.");
+      scheduleRefresh();
     });
     source.onerror = () => {
-      if (opened) setStreamNote("The live event stream disconnected. Reload to fetch a fresh snapshot.");
+      if (opened) setStreamNote("The live event stream disconnected. Reload to fetch fresh application state.");
     };
     return () => source.close();
-  }, [refresh]);
+  }, [scheduleRefresh]);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) {
+      setHits([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void searchWorkspace(term, 8, controller.signal).then(setHits).catch(() => undefined);
+    }, 250);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [query]);
 
   async function refreshCore() {
     setProgress({ phase: "repository_graph", percent: 5, message: "Refreshing intelligence" });
@@ -117,6 +143,13 @@ export function App() {
   }
 
   const current = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
+  const follow = (event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    const href = (event.currentTarget as HTMLAnchorElement).getAttribute("href");
+    if (!href || href.startsWith("http")) return;
+    event.preventDefault();
+    navigate(href);
+  };
 
   return (
     <Theme theme={theme}>
@@ -128,28 +161,28 @@ export function App() {
           isCollapsible
           onClick={() => setMenu((open) => !open)}
         />
-        <HeaderName href="/" prefix="">
+        <HeaderName href="/" prefix="" onClick={follow}>
           Nami Trace
         </HeaderName>
         <HeaderNavigation aria-label="Primary">
-          <HeaderMenuItem href="/" isCurrentPage={location.pathname === "/"}>Overview</HeaderMenuItem>
-          <HeaderMenuItem href="/review" isCurrentPage={current("/review")}>Review change</HeaderMenuItem>
-          <HeaderMenuItem href="/impact" isCurrentPage={current("/impact")}>Impact explorer</HeaderMenuItem>
-          <HeaderMenuItem href="/architecture" isCurrentPage={current("/architecture")}>Architecture</HeaderMenuItem>
+          <HeaderMenuItem href="/" isCurrentPage={location.pathname === "/"} onClick={follow}>Overview</HeaderMenuItem>
+          <HeaderMenuItem href="/review" isCurrentPage={current("/review")} onClick={follow}>Review change</HeaderMenuItem>
+          <HeaderMenuItem href="/impact" isCurrentPage={current("/impact")} onClick={follow}>Impact explorer</HeaderMenuItem>
+          <HeaderMenuItem href="/architecture" isCurrentPage={current("/architecture")} onClick={follow}>Architecture</HeaderMenuItem>
           <HeaderMenu aria-label="More" menuLinkName="More">
-            <HeaderMenuItem href="/health" isCurrentPage={current("/health")}>Repository health</HeaderMenuItem>
-            <HeaderMenuItem href="/research" isCurrentPage={current("/research")}>Research</HeaderMenuItem>
+            <HeaderMenuItem href="/health" isCurrentPage={current("/health")} onClick={follow}>Repository health</HeaderMenuItem>
+            <HeaderMenuItem href="/research" isCurrentPage={current("/research")} onClick={follow}>Research</HeaderMenuItem>
           </HeaderMenu>
         </HeaderNavigation>
         <SideNav aria-label="Primary" expanded={menu} isPersistent={false} onOverlayClick={() => setMenu(false)}>
           <SideNavItems>
-            <SideNavLink href="/" isActive={location.pathname === "/"}>Overview</SideNavLink>
-            <SideNavLink href="/review" isActive={current("/review")}>Review change</SideNavLink>
-            <SideNavLink href="/impact" isActive={current("/impact")}>Impact explorer</SideNavLink>
-            <SideNavLink href="/architecture" isActive={current("/architecture")}>Architecture</SideNavLink>
+            <SideNavLink href="/" isActive={location.pathname === "/"} onClick={follow}>Overview</SideNavLink>
+            <SideNavLink href="/review" isActive={current("/review")} onClick={follow}>Review change</SideNavLink>
+            <SideNavLink href="/impact" isActive={current("/impact")} onClick={follow}>Impact explorer</SideNavLink>
+            <SideNavLink href="/architecture" isActive={current("/architecture")} onClick={follow}>Architecture</SideNavLink>
             <SideNavMenu title="More" defaultExpanded>
-              <SideNavMenuItem href="/health" isActive={current("/health")}>Repository health</SideNavMenuItem>
-              <SideNavMenuItem href="/research" isActive={current("/research")}>Research</SideNavMenuItem>
+              <SideNavMenuItem href="/health" isActive={current("/health")} onClick={follow}>Repository health</SideNavMenuItem>
+              <SideNavMenuItem href="/research" isActive={current("/research")} onClick={follow}>Research</SideNavMenuItem>
             </SideNavMenu>
           </SideNavItems>
         </SideNav>
@@ -171,6 +204,25 @@ export function App() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
+            {hits.length ? (
+              <ul className="search-results">
+                {hits.map((hit) => (
+                  <li key={hit.key}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHits([]);
+                        setQuery("");
+                        navigate(`/architecture?service=${encodeURIComponent(hit.service_id)}&target=${encodeURIComponent(hit.qualified_name || hit.key)}`);
+                      }}
+                    >
+                      <strong>{hit.name || hit.qualified_name}</strong>
+                      <span>{hit.service_id}{hit.file_path ? ` · ${hit.file_path}` : ""}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </form>
           <HeaderGlobalAction aria-label="Intelligence status" tooltipAlignment="end" isActive={panel} onClick={() => setPanel((open) => !open)}>
             <Activity size={20} />
@@ -217,7 +269,7 @@ export function App() {
           <Route path="/impact" element={<ImpactExplorerPage snapshot={snapshot} />} />
           <Route path="/architecture" element={<ArchitecturePage snapshot={snapshot} loaded={loaded} error={error} />} />
           <Route path="/graph" element={<Navigate to="/architecture" replace />} />
-          <Route path="/health" element={<RepositoryHealthPage snapshot={snapshot} loaded={loaded} />} />
+          <Route path="/health" element={<RepositoryHealthPage loaded={loaded} />} />
           <Route path="/research" element={<ResearchPage snapshot={snapshot} />} />
         </Routes>
       </Content>

@@ -77,12 +77,37 @@ body {
 
 .page-actions,
 .button-row,
-.empty-actions,
-.review-options {
+.empty-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 1rem;
   align-items: end;
+}
+
+.review-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.mode-explanations {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-width: 42rem;
+}
+
+.mode-explanations li + li {
+  margin-top: 0.35rem;
+}
+
+.mode-explanations li {
+  color: var(--cds-text-secondary);
+}
+
+.mode-explanations .is-selected {
+  color: var(--cds-text-primary);
 }
 
 .empty-state h2,
@@ -124,9 +149,41 @@ body {
 }
 
 .header-search {
+  position: relative;
   display: flex;
   align-items: center;
   width: min(16rem, 30vw);
+}
+
+.search-results {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  width: 24rem;
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--cds-layer);
+  border: 1px solid var(--cds-border-subtle);
+}
+
+.search-results button {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 0;
+}
+
+.search-results button span {
+  color: var(--cds-text-secondary);
+  font-size: 0.75rem;
 }
 
 .relation-list {

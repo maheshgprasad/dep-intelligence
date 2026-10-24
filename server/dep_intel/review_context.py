@@ -7,6 +7,7 @@ from typing import Any
 
 from dep_intel.paths import contained
 from dep_intel.review_models import DEFAULT_BUDGETS
+from dep_intel.review_sources import read_utf8
 
 
 def collect_context(repo: Path | None, change: dict[str, Any], impact: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
@@ -69,10 +70,10 @@ def _hunk_window(repo: Path, relative: str, hunks: list[dict[str, Any]]) -> str:
     path = (repo / relative).resolve()
     if not contained(path, repo.resolve()) or not path.is_file():
         return ""
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    text = read_utf8(path)
+    if not text and path.stat().st_size:
         return ""
+    lines = text.splitlines()
     if not hunks:
         return "\n".join(lines[:40])
     chunks = []
@@ -85,7 +86,4 @@ def _hunk_window(repo: Path, relative: str, hunks: list[dict[str, Any]]) -> str:
 
 
 def _read(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
+    return read_utf8(path)

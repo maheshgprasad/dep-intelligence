@@ -8,30 +8,44 @@ export type PathHop = {
   target_name?: string;
 };
 
+const RELATIONS: Record<string, string> = {
+  CALLS: "calls",
+  IMPORTS_FROM: "imports from",
+  HANDLED_BY: "handled by",
+  IMPLEMENTED_BY: "implemented by",
+  CONSUMES_HTTP: "consumes HTTP endpoint",
+  CONSUMES_GRPC: "consumes gRPC operation",
+  PRODUCES_EVENT: "produces event",
+  CONSUMED_BY: "consumed by",
+  TESTED_BY: "tested by",
+};
+
 export function FocusedImpactPath({ steps }: { steps: PathHop[] }) {
   if (!steps.length) return <p className="helper">No structural path was recorded for this candidate.</p>;
+  const nodes = [display(steps[0].source_name || steps[0].source)];
+  const services = [serviceOf(steps[0].source)];
+  const relations: string[] = [];
+  for (const step of steps) {
+    relations.push(RELATIONS[step.relation || ""] || (step.relation || "").replaceAll("_", " ").toLowerCase());
+    nodes.push(display(step.target_name || step.target));
+    services.push(serviceOf(step.target));
+  }
   return (
     <ol className="impact-path">
-      {steps.map((step, index) => {
-        const from = serviceOf(step.source);
-        const to = serviceOf(step.target);
-        return (
-          <li key={`${step.source}-${step.target}-${index}`}>
-            <p className="path-service">{from || "Changed code"}</p>
-            <p className="path-symbol">{symbolName(step.source_name || step.source || "")}</p>
-            {step.relation ? <p className="path-relation">{relationLabel(step.relation)}</p> : null}
-            {from && to && from !== to ? <p className="boundary">repository boundary</p> : null}
-            <p className="path-service">{to || "Affected code"}</p>
-            <p className="path-symbol">{symbolName(step.target_name || step.target || "")}</p>
-          </li>
-        );
-      })}
+      {nodes.map((node, index) => (
+        <li key={`${node}-${index}`}>
+          {index > 0 && services[index] && services[index] !== services[index - 1] ? <p className="boundary">repository boundary</p> : null}
+          {services[index] && services[index] !== services[index - 1] ? <p className="path-service">{services[index]}</p> : null}
+          <p className="path-symbol">{node || "Affected code"}</p>
+          {relations[index] ? <p className="path-relation">{relations[index]}</p> : null}
+        </li>
+      ))}
     </ol>
   );
 }
 
-function relationLabel(relation: string): string {
-  return relation.replaceAll("_", " ").toLowerCase();
+function display(value?: string): string {
+  return symbolName(value || "");
 }
 
 function serviceOf(key?: string): string {
@@ -39,4 +53,3 @@ function serviceOf(key?: string): string {
   const head = key.split(":")[0];
   return head.includes("/") ? "" : head;
 }
-

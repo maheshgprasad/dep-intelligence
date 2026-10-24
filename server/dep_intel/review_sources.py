@@ -40,6 +40,23 @@ def repository_allowed(path: Path, settings: Settings) -> bool:
     return False
 
 
+def read_utf8(path: Path) -> str:
+    """Read repository text. Binary files return an empty string instead of failing the review."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _git_text(payload: bytes | None) -> str:
+    if not payload:
+        return ""
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return payload.decode("utf-8", errors="replace")
+
+
 def safe_ref(ref: str) -> bool:
     if not ref or ref.startswith("-") or _UNSAFE_REF.search(ref):
         return False
@@ -62,7 +79,7 @@ def run_git(
         completed = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout,
             check=False,
             shell=False,
@@ -71,8 +88,8 @@ def run_git(
         return 124, "", "git timed out"
     except OSError as exc:
         return 127, "", redact(str(exc), secrets)
-    stdout = completed.stdout or ""
-    stderr = redact(completed.stderr or "", secrets)
+    stdout = _git_text(completed.stdout)
+    stderr = redact(_git_text(completed.stderr), secrets)
     truncated = False
     if len(stdout) > limit:
         stdout = stdout[:limit]

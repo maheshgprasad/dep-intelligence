@@ -1,6 +1,6 @@
-import type { Snapshot } from "./api";
+import type { AppState } from "./api";
 
-export type Readiness = "Current" | "Stale" | "Partial" | "Unavailable" | "Refreshing";
+export type Readiness = "Current" | "Stale" | "Partial" | "Unavailable" | "Refreshing" | "Missing";
 
 export type IntelligenceView = {
   overall: Readiness;
@@ -13,44 +13,39 @@ export type IntelligenceView = {
   attention: string[];
 };
 
-export function intelligenceView(snapshot: Snapshot | null, refreshing: boolean): IntelligenceView {
-  const cluster = snapshot?.cluster;
-  const graphs = snapshot?.graphs?.repos ?? [];
-  const historyPresent = graphs.some((repo) => (snapshot?.graph_details[repo.slug]?.cochange?.commit_count ?? 0) > 0);
-  const graphErrors = graphs.filter((repo) => repo.error).length;
-  const stale = cluster?.stale_services?.length ?? 0;
-  let clusterStatus: Readiness = "Unavailable";
-  if (cluster?.version) clusterStatus = stale > 0 || graphErrors > 0 ? "Stale" : "Current";
-  else if (graphs.length) clusterStatus = "Partial";
-  const history: Readiness = historyPresent ? "Current" : graphs.length ? "Partial" : "Unavailable";
-  const contracts: Readiness = !cluster?.version ? "Unavailable" : (cluster.contract_count ?? 0) > 0 ? "Current" : "Partial";
+const LABELS: Record<string, Readiness> = {
+  current: "Current",
+  stale: "Stale",
+  partial: "Partial",
+  unavailable: "Unavailable",
+  missing: "Missing",
+  failed: "Unavailable",
+};
+
+export function intelligenceView(state: AppState | null, refreshing: boolean): IntelligenceView {
+  const intelligence = state?.intelligence;
   const attention: string[] = [];
-  if ((cluster?.unresolved_count ?? 0) > 0) {
-    attention.push(`${cluster?.unresolved_count} unresolved reference${cluster?.unresolved_count === 1 ? "" : "s"}`);
+  if ((intelligence?.unresolved ?? 0) > 0) {
+    attention.push(`${intelligence?.unresolved} unresolved reference${intelligence?.unresolved === 1 ? "" : "s"}`);
   }
-  for (const service of cluster?.stale_services ?? []) attention.push(`${service} graph is stale`);
-  for (const service of cluster?.services ?? []) {
+  for (const service of intelligence?.stale_services ?? []) attention.push(`${service} graph is stale`);
+  for (const service of state?.cluster?.services ?? []) {
     if (service.error) attention.push(`${service.id} graph unavailable`);
     else if (service.quality && service.quality !== "ok") attention.push(`${service.id} graph is ${service.quality}`);
   }
-  for (const notice of cluster?.config_errors ?? []) attention.push(notice);
-  const overall: Readiness = refreshing
-    ? "Refreshing"
-    : [clusterStatus, history, contracts].includes("Unavailable") && !cluster?.version
-      ? "Unavailable"
-      : attention.length
-        ? "Partial"
-        : clusterStatus === "Current" && history === "Current"
-          ? "Current"
-          : "Partial";
+  for (const notice of state?.cluster?.config_errors ?? []) attention.push(notice);
+  const history = intelligence?.history;
+  if (history && history.total_services > 0 && history.ready_services < history.total_services) {
+    attention.push(`Commit history is ready for ${history.ready_services} of ${history.total_services} repositories`);
+  }
   return {
-    overall,
-    cluster: refreshing ? "Refreshing" : clusterStatus,
-    history: refreshing ? "Refreshing" : history,
-    contracts: refreshing ? "Refreshing" : contracts,
-    stale,
-    unresolved: cluster?.unresolved_count ?? 0,
-    refreshedAt: cluster?.generated_at || "Not refreshed yet",
+    overall: refreshing ? "Refreshing" : LABELS[intelligence?.overall || "unavailable"] || "Partial",
+    cluster: refreshing ? "Refreshing" : LABELS[intelligence?.graph.status || "unavailable"] || "Partial",
+    history: refreshing ? "Refreshing" : LABELS[intelligence?.history.status || "unavailable"] || "Partial",
+    contracts: refreshing ? "Refreshing" : LABELS[intelligence?.contracts.status || "unavailable"] || "Partial",
+    stale: intelligence?.stale_services.length ?? 0,
+    unresolved: intelligence?.unresolved ?? 0,
+    refreshedAt: intelligence?.refreshed_at || "Not refreshed yet",
     attention,
   };
 }

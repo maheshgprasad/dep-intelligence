@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  Button,
   Accordion,
   AccordionItem,
   CodeSnippet,
@@ -17,7 +18,7 @@ import {
   Tabs,
   Tile,
 } from "@carbon/react";
-import { getReview, reviewJob, sendReviewFeedback, type ReviewFinding, type ReviewReport } from "../api";
+import { cancelJob, getReview, reviewJob, sendReviewFeedback, type ReviewFinding, type ReviewReport } from "../api";
 import { FocusedImpactPath } from "../components/FocusedImpactPath";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
@@ -25,15 +26,6 @@ import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
 import { hideFilePaths, repoSymbol, symbolName } from "../labels";
 
-const STAGES = [
-  ["resolve_change", "Resolve change"],
-  ["build_change_view", "Build change view"],
-  ["align_graph", "Align graph"],
-  ["calculate_impact", "Analyze impact"],
-  ["apply_policies", "Evaluate policies"],
-  ["verify_findings", "Verify findings"],
-  ["gate_decision", "Make decision"],
-] as const;
 
 const FEEDBACK = [
   ["accepted", "Useful"],
@@ -51,9 +43,11 @@ export function ReviewDetailPage() {
   const isJob = params.get("job") === "1";
   const [report, setReport] = useState<ReviewReport | null>(null);
   const [error, setError] = useState("");
-  const [stage, setStage] = useState("resolve_change");
   const [jobStatus, setJobStatus] = useState(isJob ? "running" : "");
-  const [note, setNote] = useState("");
+  const [feedbackSuccess, setFeedbackSuccess] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [progress, setProgress] = useState({ stage: "resolve_change", label: "Resolve change", percent: 11, index: 1, count: 9 });
 
   useEffect(() => {
     if (!reviewId) return;
@@ -67,16 +61,36 @@ export function ReviewDetailPage() {
     if (!isJob || !reviewId) return;
     const source = new EventSource("/api/events");
     source.addEventListener("review_progress", (event) => {
-      const data = JSON.parse((event as MessageEvent).data) as { stage?: string };
-      if (data.stage) setStage(data.stage);
+      const data = JSON.parse((event as MessageEvent).data) as { stage?: string; stage_label?: string; percent?: number; stage_index?: number; stage_count?: number; job_id?: string; review_id?: string };
+      if (data.job_id !== reviewId && data.review_id !== reviewId) return;
+      if (data.stage) {
+        setProgress({
+          stage: data.stage,
+          label: data.stage_label || data.stage,
+          percent: data.percent ?? 0,
+          index: data.stage_index ?? 1,
+          count: data.stage_count ?? 9,
+        });
+      }
+    });
+    source.addEventListener("review_completed", (event) => {
+      const data = JSON.parse((event as MessageEvent).data) as { review_id?: string; job_id?: string };
+      if (data.job_id !== reviewId && data.review_id !== reviewId) return;
+      void reviewJob(reviewId).then((job) => {
+        if (job.result?.review_id) navigate(`/review/${job.result.review_id}`, { replace: true });
+      });
     });
     const timer = window.setInterval(() => {
       void reviewJob(reviewId)
         .then((job) => {
           setJobStatus(job.status);
-          if (job.status === "succeeded" && job.result?.review_id) {
+          if (typeof job.result === "object" && job.result && "review_id" in job.result && job.status === "succeeded") {
             window.clearInterval(timer);
             navigate(`/review/${job.result.review_id}`, { replace: true });
+          }
+          if (job.status === "cancelled") {
+            window.clearInterval(timer);
+            setError("Review cancelled");
           }
           if (job.status === "failed") {
             window.clearInterval(timer);
@@ -84,34 +98,40 @@ export function ReviewDetailPage() {
           }
         })
         .catch((exc: unknown) => setError(exc instanceof Error ? exc.message : "The review job was not found."));
-    }, 1000);
+    }, 4000);
     return () => {
       source.close();
       window.clearInterval(timer);
     };
   }, [isJob, reviewId, navigate]);
 
+  if (error === "Review cancelled" && !report) {
+    return (
+      <div className="stack-gap">
+        <InlineNotification kind="info" title="Review cancelled" subtitle="This review stopped before a policy decision." lowContrast hideCloseButton />
+        <Button kind="tertiary" onClick={() => navigate("/review")}>Review another change</Button>
+      </div>
+    );
+  }
   if (error && !report) {
     return <InlineNotification kind="error" title="Review unavailable" subtitle={error} lowContrast hideCloseButton />;
   }
   if (!report) {
-    const index = Math.max(0, STAGES.findIndex(([id]) => id === stage));
     return (
       <div className="stack-gap">
-        <PageHeader title="Reviewing change" breadcrumbs={[{ label: "Review change", href: "/review" }, { label: reviewId.slice(0, 8) }]} />
-        <ProgressBar label={STAGES[index]?.[1] ?? "Reviewing change"} value={Math.round(((index + 1) / STAGES.length) * 100)} max={100} status={jobStatus === "failed" ? "error" : "active"} />
-        <ul className="stage-list">
-          {STAGES.map(([id, label], position) => (
-            <li key={id}>{label} — {position < index ? "complete" : position === index ? "running" : "waiting"}</li>
-          ))}
-        </ul>
+        <PageHeader
+          title="Reviewing change"
+          breadcrumbs={[{ label: "Review change", href: "/review" }, { label: reviewId.slice(0, 8) }]}
+          actions={jobStatus === "queued" || jobStatus === "running" ? <Button kind="danger--tertiary" onClick={() => void cancelJob(reviewId).then(() => setJobStatus("cancelled"))}>Cancel review</Button> : null}
+        />
+        <ProgressBar label={progress.label} value={progress.percent} max={100} status={jobStatus === "failed" ? "error" : "active"} />
+        <p className="helper">{progress.label} · {progress.index} of {progress.count}</p>
       </div>
     );
   }
 
   const decision = report.gate.decision.toLowerCase();
   const kind = decision === "pass" ? "success" : decision === "block" ? "error" : "warning";
-  const blocking = new Set(report.gate.blocking_findings);
 
   return (
     <div className="stack-gap">
@@ -119,15 +139,30 @@ export function ReviewDetailPage() {
         title="Review change"
         breadcrumbs={[{ label: "Review change", href: "/review" }, { label: report.review_id.slice(0, 8) }]}
         eyebrow="Powered by Nami Boundary Gate"
+        actions={
+          <div className="button-row">
+            <Button kind="tertiary" size="sm" onClick={() => navigate("/review")}>Review another change</Button>
+            <Button kind="ghost" size="sm" href={`/api/review/${report.review_id}/report`}>Download report</Button>
+          </div>
+        }
       />
-      <InlineNotification kind={kind} title={decision.toUpperCase()} subtitle={report.summary.text} lowContrast hideCloseButton />
-      {note ? <InlineNotification kind="success" title="Feedback stored" subtitle={note} lowContrast /> : null}
+      <InlineNotification kind={report.gate.reason_codes?.includes("cancelled") ? "info" : kind} title={report.gate.reason_codes?.includes("cancelled") ? "Review cancelled" : decision.toUpperCase()} subtitle={reviewExplanation(report)} lowContrast hideCloseButton />
+      <dl className="detail-list">
+        <div><dt>Review mode</dt><dd>{modeText(report)}</dd></div>
+        <div><dt>Graph alignment</dt><dd>{alignmentText(report.change.graph_alignment)}</dd></div>
+        <div><dt>Change</dt><dd>{sourceText(report.change.source?.kind)}</dd></div>
+      </dl>
+      {report.diagnostics.filter((item) => item.severity !== "error").map((item) => (
+        <p key={item.code} className="helper">{hideFilePaths(item.message)}</p>
+      ))}
+      {feedbackSuccess ? <InlineNotification kind="success" title="Success" subtitle={feedbackSuccess} lowContrast hideCloseButton /> : null}
+      {feedbackError ? <InlineNotification kind="error" title="Error" subtitle={feedbackError} lowContrast hideCloseButton /> : null}
       <Grid>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Changed files</p><p className="stat-value">{report.changed_files.length}</p></Tile></Column>
-        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Changed services</p><p className="stat-value">{report.change.service_id ? 1 : 0}</p></Tile></Column>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Affected services</p><p className="stat-value">{report.impact.affected_services.length}</p></Tile></Column>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Findings</p><p className="stat-value">{report.findings.length}</p></Tile></Column>
-        <Column sm={4} md={4} lg={4}><Tile><p className="stat-label">Verification</p><p className="stat-value">{passed(report)} / {report.verification.length || 0} passed</p></Tile></Column>
+        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Blocking findings</p><p className="stat-value">{report.gate.blocking_findings.length}</p></Tile></Column>
+        <Column sm={4} md={4} lg={4}><Tile><p className="stat-label">Verification</p><p className="stat-value">{report.verification.length ? `${passed(report)} / ${report.verification.length} passed` : "Not run"}</p></Tile></Column>
       </Grid>
       <Tabs>
         <TabList aria-label="Review sections">
@@ -144,7 +179,7 @@ export function ReviewDetailPage() {
                 { key: "title", header: "Finding" },
                 { key: "location", header: "Location" },
                 { key: "evidence_strength", header: "Evidence", render: (row) => <StatusTag status={row.evidence_strength} /> },
-                { key: "status", header: "Status", render: (row) => <StatusTag status={blocking.has(row.finding_id) ? "block" : "info"} label={blocking.has(row.finding_id) ? "Blocking" : "Review"} /> },
+                { key: "status", header: "Status", render: (row) => <StatusTag status={findingTone(row.finding_id, report)} label={findingClass(row.finding_id, report)} /> },
               ]}
               rows={report.findings.map((finding) => ({
                 ...finding,
@@ -152,8 +187,17 @@ export function ReviewDetailPage() {
                 location: repoSymbol(report.change.service_id || "", symbolName(finding.file_path || finding.title)),
               }))}
               emptyTitle="No findings"
-              emptyDescription="This change did not produce a review finding."
-              renderExpanded={(row) => <FindingDetail finding={row} reviewId={report.review_id} onSaved={setNote} />}
+              emptyDescription={report.changed_files.length ? "This change did not produce a review finding." : "This source had no diff, so no finding was produced."}
+              renderExpanded={(row) => (
+                <FindingDetail
+                  finding={row}
+                  reviewId={report.review_id}
+                  busy={feedbackBusy}
+                  onSuccess={(message) => { setFeedbackError(""); setFeedbackSuccess(message); }}
+                  onError={(message) => { setFeedbackSuccess(""); setFeedbackError(message); }}
+                  onBusy={setFeedbackBusy}
+                />
+              )}
             />
           </TabPanel>
           <TabPanel>
@@ -179,6 +223,10 @@ export function ReviewDetailPage() {
                   <p>{row.statement || "Ranked from the published structural and historical evidence."}</p>
                   <h3 className="section-title">Strongest structural path</h3>
                   <FocusedImpactPath steps={row.structural?.path ?? []} />
+                  <div className="button-row">
+                    <Link to={`/impact?service=${encodeURIComponent(row.service_id)}&file=${encodeURIComponent(row.file_path)}`}>Open in Impact explorer</Link>
+                    <Link to={`/architecture?service=${encodeURIComponent(row.service_id)}&target=${encodeURIComponent(row.file_path)}`}>Open in Architecture</Link>
+                  </div>
                   <Accordion>
                     <AccordionItem title="Technical scores">
                       <p>NRM {formatScore(row.hybrid_score)} · Structural {formatScore(row.structural_score)} · Temporal {formatScore(row.temporal_score)}</p>
@@ -247,7 +295,7 @@ export function ReviewDetailPage() {
   );
 }
 
-function FindingDetail({ finding, reviewId, onSaved }: { finding: ReviewFinding & { id: string }; reviewId: string; onSaved: (message: string) => void }) {
+function FindingDetail({ finding, reviewId, busy, onSuccess, onError, onBusy }: { finding: ReviewFinding & { id: string }; reviewId: string; busy: boolean; onSuccess: (message: string) => void; onError: (message: string) => void; onBusy: (value: boolean) => void }) {
   const assisted = finding.evidence?.some((item) => item.source === "llm" || item.source === "model");
   return (
     <div className="stack-gap">
@@ -276,16 +324,33 @@ function FindingDetail({ finding, reviewId, onSaved }: { finding: ReviewFinding 
           <OverflowMenuItem
             key={status}
             itemText={label}
+            disabled={busy}
             onClick={() => {
+              if (busy) return;
+              onBusy(true);
               void sendReviewFeedback(reviewId, finding.fingerprint || finding.finding_id, status)
-                .then(() => onSaved(`${label} was recorded. Ranking scores were not changed.`))
-                .catch((exc: unknown) => onSaved(exc instanceof Error ? exc.message : "Feedback was not stored."));
+                .then(() => onSuccess(status === "false_positive" ? "False positive was recorded." : `${label} was recorded.`))
+                .catch(() => onError("Feedback was not stored."))
+                .finally(() => onBusy(false));
             }}
           />
         ))}
       </OverflowMenu>
     </div>
   );
+}
+
+function findingClass(id: string, report: ReviewReport): string {
+  if (report.gate.blocking_findings.includes(id)) return "Blocking";
+  if (report.gate.warning_findings.includes(id)) return "Warning";
+  if (report.gate.review_targets.includes(id)) return "Review target";
+  return "Advisory";
+}
+
+function findingTone(id: string, report: ReviewReport): string {
+  if (report.gate.blocking_findings.includes(id)) return "block";
+  if (report.gate.warning_findings.includes(id)) return "warn";
+  return "info";
 }
 
 function passed(report: ReviewReport): number {
@@ -306,4 +371,48 @@ function evidenceLabel(origin: string): string {
 
 function formatScore(value: number | undefined): string {
   return typeof value === "number" ? value.toFixed(3) : "—";
+}
+
+function reviewExplanation(report: ReviewReport): string {
+  if (report.gate.reason_codes?.includes("cancelled")) return "This review stopped before a policy decision.";
+  const errors = report.diagnostics.filter((item) => item.severity === "error").map((item) => hideFilePaths(item.message)).filter(Boolean);
+  const mode = modeText(report);
+  const alignment = alignmentText(report.change.graph_alignment);
+  if (errors.length) return `${mode} ${alignment} ${errors.join(" ")}`;
+  if (report.changed_files.length === 0) return `${mode} ${alignment} This source had no diff, so nothing was ranked and no finding was produced.`;
+  return `${mode} ${alignment}`;
+}
+
+function modeText(report: ReviewReport): string {
+  const requested = knownMode(report.requested_mode) || knownMode(report.mode);
+  const resolved = knownMode(report.resolved_mode) || knownMode(report.mode);
+  if (!requested && !resolved) return "Review mode was not recorded.";
+  if (requested === "auto" && resolved === "fast") return "Recommended ran as Fast and used the published intelligence snapshot.";
+  if (requested === "auto" && resolved === "exact") return "Recommended ran as Exact and built a private graph for this revision.";
+  if (resolved === "exact" || requested === "exact") return "Exact built a private graph for this revision.";
+  if (resolved === "fast" || requested === "fast") return "Fast used the published intelligence snapshot.";
+  return "Recommended.";
+}
+
+function knownMode(value: string | undefined): string {
+  return value === "auto" || value === "fast" || value === "exact" ? value : "";
+}
+
+function alignmentText(alignment: string | undefined): string {
+  if (alignment === "exact") return "The published graph matches this revision.";
+  if (alignment === "compatible") return "The published graph is aligned with this revision.";
+  if (alignment === "stale") return "The published graph is not this revision.";
+  return "No published graph was available for this revision.";
+}
+
+function sourceText(kind: string | undefined): string {
+  const labels: Record<string, string> = {
+    working_tree: "Working tree",
+    staged: "Staged changes",
+    commit: "Commit",
+    range: "Commit range",
+    github_pr: "Pull request",
+    explicit: "Selected files",
+  };
+  return labels[kind || ""] || "Change";
 }

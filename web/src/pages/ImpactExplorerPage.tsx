@@ -15,13 +15,13 @@ import {
   InlineNotification,
   Switch,
 } from "@carbon/react";
-import { clusterGraph, runHybridImpact, type HybridCandidate, type HybridImpactResponse, type Snapshot } from "../api";
+import { clusterCatalog, refreshIntelligence, runHybridImpact, type AppState, type HybridCandidate, type HybridImpactResponse } from "../api";
 import { FocusedImpactPath } from "../components/FocusedImpactPath";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { PageHeader } from "../components/PageHeader";
 import { ScoreHelp } from "../components/ScoreHelp";
 import { StatusTag } from "../components/StatusTag";
-import { hideFilePaths, repoSymbol, symbolName } from "../labels";
+import { hideFilePaths, relativePath, repoSymbol, symbolName } from "../labels";
 
 const MODES = [
   { id: "hybrid", text: "Combined" },
@@ -29,7 +29,13 @@ const MODES = [
   { id: "temporal_only", text: "Historical only" },
 ];
 
-export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) {
+const SCENARIOS = [
+  { id: "none", text: "None" },
+  { id: "http_unavailable", text: "HTTP service unavailable" },
+  { id: "grpc_unavailable", text: "gRPC service unavailable" },
+];
+
+export function ImpactExplorerPage({ snapshot }: { snapshot: AppState | null }) {
   const [params, setParams] = useSearchParams();
   const services = snapshot?.cluster?.services ?? [];
   const service = params.get("service") || services[0]?.id || "";
@@ -37,29 +43,44 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
   const analyze = params.get("analyze") === "contract" ? "contract" : "code";
   const [files, setFiles] = useState<string[]>([]);
   const [contracts, setContracts] = useState<{ id: string; label: string }[]>([]);
-  const [contract, setContract] = useState(params.get("contract") || "");
+  const [contract, setContract] = useState("");
   const [evidence, setEvidence] = useState(MODES[0]);
   const [asOf, setAsOf] = useState("");
-  const [scenario, setScenario] = useState("none");
+  const [scenario, setScenario] = useState(SCENARIOS[0]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [stale, setStale] = useState(false);
   const [result, setResult] = useState<HybridImpactResponse | null>(null);
 
+  function invalidate() {
+    setResult(null);
+    setError("");
+    setStale(false);
+  }
+
+  useEffect(() => {
+    invalidate();
+  }, [service, file, contract, analyze, evidence.id, asOf, scenario.id]);
+
   useEffect(() => {
     if (!service) return;
-    void clusterGraph({ service, limit: 2000 }).then((payload) => {
-      const paths = [...new Set(payload.page.nodes.map((node) => node.file_path).filter(Boolean))].sort();
-      setFiles(paths);
-      setContracts(
-        payload.page.nodes
-          .filter((node) => node.category.includes("contract"))
-          .map((node) => ({ id: node.key, label: repoSymbol(node.service_id, symbolName(node.name || node.qualified_name)) })),
-      );
-    }).catch(() => {
-      setFiles([]);
-      setContracts([]);
-    });
+    const controller = new AbortController();
+    let current = true;
+    void clusterCatalog(service, controller.signal)
+      .then((payload) => {
+        if (!current) return;
+        setFiles(payload.files.map((item) => item.path));
+        setContracts(payload.contracts.map((item) => ({ id: item.id, label: item.name })));
+      })
+      .catch(() => {
+        if (!current) return;
+        setFiles([]);
+        setContracts([]);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
   }, [service]);
 
   function setQuery(next: Record<string, string>) {
@@ -75,12 +96,14 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
     setBusy(true);
     setError("");
     setStale(false);
+    const operational = scenario.id === "http_unavailable" || scenario.id === "grpc_unavailable";
     const body: Record<string, unknown> = {
       service,
       experiment: evidence.id,
       as_of: asOf || null,
-      mode: analyze === "contract" ? "contract_change" : scenario === "operational" ? "operational_failure" : "code_change",
+      mode: operational ? "operational_failure" : analyze === "contract" ? "contract_change" : "code_change",
     };
+    if (operational) body.scenario = scenario.id;
     if (analyze === "contract") body.contract_id = contract;
     else body.file = file;
     try {
@@ -88,12 +111,14 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
     } catch (exc) {
       const status = (exc as { status?: number }).status;
       setStale(status === 409);
-      setError(exc instanceof Error ? exc.message : "Impact could not be analyzed.");
+      setError(status === 409 ? "The published intelligence is older than this selection." : exc instanceof Error ? exc.message : "Impact could not be analyzed.");
       setResult(null);
     } finally {
       setBusy(false);
     }
   }
+
+  const selectedContract = contracts.find((item) => item.id === contract) ?? null;
 
   return (
     <div className="stack-gap">
@@ -103,11 +128,23 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
         description="See which files and services may be affected by a code or contract change."
       />
       {error ? (
-        <InlineNotification kind={stale ? "warning" : "error"} title={stale ? "Graph is stale" : "Impact analysis failed"} subtitle={error} lowContrast hideCloseButton />
+        <InlineNotification
+          kind={stale ? "warning" : "error"}
+          title={stale ? "Published intelligence is stale" : "Impact analysis failed"}
+          subtitle={error}
+          lowContrast
+          hideCloseButton
+        />
+      ) : null}
+      {stale ? (
+        <Button kind="tertiary" onClick={() => void refreshIntelligence()}>Refresh intelligence</Button>
       ) : null}
       <ContentSwitcher
         selectedIndex={analyze === "contract" ? 1 : 0}
-        onChange={({ index }) => setQuery({ analyze: index === 1 ? "contract" : "code" })}
+        onChange={({ index }) => {
+          invalidate();
+          setQuery({ analyze: index === 1 ? "contract" : "code" });
+        }}
       >
         <Switch>Code / file</Switch>
         <Switch>API contract</Switch>
@@ -120,18 +157,25 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
             items={services.map((item) => item.id)}
             selectedItem={service}
             itemToString={(item) => item ?? ""}
-            onChange={({ selectedItem }) => setQuery({ service: selectedItem ?? "", file: "" })}
+            onChange={({ selectedItem }) => {
+              setContract("");
+              invalidate();
+              setQuery({ service: selectedItem ?? "", file: "", contract: "" });
+            }}
           />
         </Column>
         <Column sm={4} md={4} lg={7}>
           {analyze === "code" ? (
             <ComboBox
               id="impact-file"
-              titleText="Symbol"
+              titleText="File"
               items={files}
-              selectedItem={file}
-              itemToString={(item) => (item ? repoSymbol(service, symbolName(item)) : "")}
-              onChange={({ selectedItem }) => setQuery({ file: selectedItem ?? "" })}
+              selectedItem={files.includes(file) ? file : null}
+              itemToString={(item) => relativePath(item || "") || item || ""}
+              onChange={({ selectedItem }) => {
+                invalidate();
+                setQuery({ file: selectedItem ?? "" });
+              }}
             />
           ) : (
             <Dropdown
@@ -140,9 +184,10 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
               label="Choose a contract"
               items={contracts}
               itemToString={(item) => item?.label ?? ""}
-              selectedItem={contracts.find((item) => item.id === contract) ?? null}
+              selectedItem={selectedContract}
               onChange={({ selectedItem }) => {
                 setContract(selectedItem?.id ?? "");
+                invalidate();
                 setQuery({ contract: selectedItem?.id ?? "" });
               }}
             />
@@ -169,7 +214,11 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
                 items={MODES}
                 itemToString={(item) => item?.text ?? ""}
                 selectedItem={evidence}
-                onChange={({ selectedItem }) => selectedItem && setEvidence(selectedItem)}
+                onChange={({ selectedItem }) => {
+                  if (!selectedItem) return;
+                  invalidate();
+                  setEvidence(selectedItem);
+                }}
               />
             </Column>
             <Column sm={4} md={4} lg={5}>
@@ -177,6 +226,7 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
                 datePickerType="single"
                 onChange={(dates) => {
                   const date = dates?.[0];
+                  invalidate();
                   if (!date) {
                     setAsOf("");
                     return;
@@ -193,10 +243,14 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: Snapshot | null }) 
                 id="operational-scenario"
                 titleText="Operational scenario"
                 label="None"
-                items={["none", "operational"]}
-                itemToString={(item) => (item === "operational" ? "Simulate an operational failure" : "None")}
+                items={SCENARIOS}
+                itemToString={(item) => item?.text ?? ""}
                 selectedItem={scenario}
-                onChange={({ selectedItem }) => setScenario(selectedItem ?? "none")}
+                onChange={({ selectedItem }) => {
+                  if (!selectedItem) return;
+                  invalidate();
+                  setScenario(selectedItem);
+                }}
               />
             </Column>
           </Grid>
@@ -215,11 +269,12 @@ function ImpactResult({ result }: { result: HybridImpactResponse }) {
       columns={[
         { key: "rank", header: "Rank" },
         { key: "code", header: "Affected code" },
+        { key: "file", header: "File" },
         { key: "service_id", header: "Service" },
         { key: "origin", header: "Evidence", render: (row) => <StatusTag status={originKind(row.evidence_origin)} label={originLabel(row.evidence_origin)} /> },
         { key: "score", header: <ScoreHelp /> },
       ]}
-      rows={result.candidates.map((item, index) => ({ ...item, id: `${item.service_id}-${item.file_path}-${index}`, rank: index + 1, code: repoSymbol(item.service_id, symbolName(item.name || item.file_path)), score: item.hybrid_score.toFixed(3) }))}
+      rows={result.candidates.map((item, index) => ({ ...item, id: `${item.service_id}-${item.file_path}-${index}`, rank: index + 1, code: symbolName(item.name || item.file_path), file: relativePath(item.file_path) || item.file_path, score: item.hybrid_score.toFixed(3) }))}
       emptyTitle="No downstream impact found"
       emptyDescription="No files met the current impact criteria."
       emptyAction={{ label: "Change analysis", href: "/impact" }}
@@ -245,7 +300,8 @@ function CandidateDetail({ row }: { row: HybridCandidate & { id: string } }) {
       </div>
       <div>
         <h3 className="section-title">Affected symbols</h3>
-        <p>{(row.structural.impacted_symbols ?? []).map((item) => repoSymbol(row.service_id, symbolName(item.name))).join(", ") || repoSymbol(row.service_id, symbolName(row.name))}</p>
+        <p>{(row.structural.impacted_symbols ?? []).map((item) => repoSymbol(row.service_id, symbolName(item.name))).join(", ") || symbolName(row.name)}</p>
+        {relativePath(row.file_path) ? <p className="helper">{relativePath(row.file_path)}</p> : null}
       </div>
       <Accordion>
         <AccordionItem title="Technical scores">

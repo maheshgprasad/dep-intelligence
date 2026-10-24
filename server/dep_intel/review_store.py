@@ -25,6 +25,49 @@ def write_review(output_dir: Path, review_id: str, artifacts: dict[str, Any]) ->
     return directory
 
 
+def list_reviews(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
+    """Newest stored reviews, metadata only. A corrupt directory is skipped."""
+    root = output_dir / "reviews"
+    if not root.is_dir():
+        return []
+    rows = []
+    for directory in root.iterdir():
+        if not directory.is_dir() or directory.name.startswith("_"):
+            continue
+        try:
+            report = read_json(directory, "report.json")
+            manifest = read_json(directory, "manifest.json")
+            if not isinstance(report, dict) and not isinstance(manifest, dict):
+                continue
+            report = report if isinstance(report, dict) else {}
+            manifest = manifest if isinstance(manifest, dict) else {}
+            change = report.get("change") if isinstance(report.get("change"), dict) else {}
+            gate = report.get("gate") if isinstance(report.get("gate"), dict) else {}
+            source = change.get("source") if isinstance(change.get("source"), dict) else {}
+            findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+            rows.append({
+                "review_id": str(manifest.get("review_id") or report.get("review_id") or directory.name),
+                "decision": gate.get("decision") or manifest.get("status") or "",
+                "repository": change.get("repository") or manifest.get("repository") or "",
+                "service": change.get("service_id") or manifest.get("service") or "",
+                "source_kind": source.get("kind") or "",
+                "base_sha": change.get("base_sha") or manifest.get("base_sha") or "",
+                "head_sha": change.get("head_sha") or manifest.get("head_sha") or "",
+                "completed_at": manifest.get("completed_at") or "",
+                "finding_count": len(findings),
+                "_mtime": directory.stat().st_mtime,
+            })
+        except (OSError, TypeError, ValueError):
+            continue
+    rows.sort(key=lambda item: item.get("_mtime") or 0, reverse=True)
+    bounded = max(1, min(int(limit or 20), 100))
+    cleaned = []
+    for row in rows[:bounded]:
+        row.pop("_mtime", None)
+        cleaned.append(row)
+    return cleaned
+
+
 def read_review(output_dir: Path, review_id: str) -> dict[str, Any] | None:
     payload = read_json(review_dir(output_dir, review_id), "report.json")
     if not isinstance(payload, dict):

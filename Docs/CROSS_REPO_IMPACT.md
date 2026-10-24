@@ -108,6 +108,10 @@ Deletions are traversed on the previous snapshot. Additions use the new snapshot
 | POST | `/api/cluster/refresh` | Asynchronous graph job |
 | GET | `/api/cluster/graph` | Summary plus a bounded slice |
 | GET | `/api/cluster/contracts` | Contract list |
+| GET | `/api/app-state` | Lightweight dashboard state. `/api/snapshot` remains the full compatibility payload |
+| GET | `/api/cluster/catalog` | Files and contracts for one service |
+| GET | `/api/cluster/relationships` | Cross-service contract relationships. An internal `HANDLED_BY` edge is not one |
+| GET | `/api/search` | Bounded search of published node name, qualified name, file, and service |
 | POST | `/api/cluster/impact` | Impact query |
 | GET | `/api/jobs/{id}` | Job status |
 | POST | `/api/jobs/{id}/cancel` | Cancel a job |
@@ -121,7 +125,7 @@ The dashboard Impact page lists readiness, staleness, and diagnostics, runs a qu
 
 ## Process model
 
-Startup loads the last published cluster snapshot from `output/cluster/generation.json`. It does not rebuild code-review-graph databases and it does not start the filesystem watcher. The dashboard then reads that snapshot once over `/api/snapshot` and `/api/cluster/graph`. Further extracts happen when the user clicks **Refresh graph** or **Run analysis**, or when MCP calls `build_cross_repo_graph`.
+Startup loads the last published cluster snapshot from `output/cluster/generation.json`. It does not rebuild code-review-graph databases and it does not start the filesystem watcher. The dashboard reads `GET /api/app-state` and loads repository or catalog payloads when a page needs them. Further extracts happen when the user clicks **Refresh intelligence**, or when MCP calls `build_cross_repo_graph`.
 
 `NAMI_EAGER_GRAPH_REFRESH=1` restores the old boot-time CRG reread. `NAMI_CLUSTER_WATCH=1` starts the live `graph.db` watcher. Neither is required to serve the last analysis.
 

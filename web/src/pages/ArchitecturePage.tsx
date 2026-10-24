@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Information } from "@carbon/icons-react";
 import {
@@ -10,18 +10,20 @@ import {
   InlineLoading,
   InlineNotification,
   Search,
+  SkeletonText,
   Tab,
   TabList,
   TabPanel,
   TabPanels,
   Tabs,
 } from "@carbon/react";
-import { queryGraph, type CrgPayload, type Snapshot } from "../api";
+import { Link } from "react-router-dom";
+import { queryGraph, repositoryArchitecture, type AppState, type Cochange, type CrgBundle, type CrgPayload } from "../api";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
-import { repoSymbol, symbolName, visibleFields } from "../labels";
+import { graphQueryTarget, relativePath, repoSymbol, symbolName, visibleFields } from "../labels";
 
 const ACTIONS = [
   ["Callers", "callers_of"],
@@ -32,33 +34,55 @@ const ACTIONS = [
   ["Flows", "flows"],
 ] as const;
 
-export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapshot | null; loaded: boolean; error: string }) {
+export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppState | null; loaded: boolean; error: string }) {
   const [params, setParams] = useSearchParams();
-  const repos = snapshot?.graphs?.repos ?? [];
+  const repos = snapshot?.repositories ?? [];
   const service = params.get("service") || "";
   const selected = repos.find((repo) => repo.slug === service || repo.name === service) ?? repos[0];
-  const tools = selected ? snapshot?.graph_details[selected.slug]?.crg?.tools : undefined;
-  const cochange = selected ? snapshot?.graph_details[selected.slug]?.cochange : undefined;
+  const [bundle, setBundle] = useState<{ crg: CrgBundle | null; cochange: Cochange | null } | null>(null);
+  const [loadingRepo, setLoadingRepo] = useState(false);
+  const tools = bundle?.crg?.tools;
+  const cochange = bundle?.cochange ?? undefined;
   const [query, setQuery] = useState(params.get("q") || "");
-  const [target, setTarget] = useState("");
+  const [target, setTarget] = useState(params.get("target") || "");
+  const [targetFile, setTargetFile] = useState("");
   const [live, setLive] = useState<CrgPayload | null>(null);
   const [liveError, setLiveError] = useState("");
   const [busy, setBusy] = useState(false);
+  const searched = useRef("");
 
   useEffect(() => {
-    if (params.get("q")) setQuery(params.get("q") || "");
-  }, [params]);
+    if (!selected) return;
+    const controller = new AbortController();
+    let current = true;
+    setLoadingRepo(true);
+    setBundle(null);
+    void repositoryArchitecture(selected.slug, controller.signal)
+      .then((payload) => {
+        if (current) setBundle({ crg: payload.crg, cochange: payload.cochange });
+      })
+      .catch(() => {
+        if (current) setBundle(null);
+      })
+      .finally(() => {
+        if (current) setLoadingRepo(false);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [selected?.slug]);
 
   const communities = useMemo(() => records(tools?.communities), [tools]);
   const hubs = useMemo(() => records(tools?.hubs), [tools]);
   const bridges = useMemo(() => records(tools?.bridges), [tools]);
 
-  async function search() {
-    if (!selected) return;
+  async function search(text = query) {
+    if (!selected || !text.trim()) return;
     setBusy(true);
     setLiveError("");
     try {
-      setLive(await queryGraph(selected.slug, "semantic_search_nodes_tool", { query: query.trim(), limit: 20, detail_level: "standard" }));
+      setLive(await queryGraph(selected.slug, "semantic_search_nodes_tool", { query: text.trim(), limit: 20, detail_level: "standard" }));
     } catch (exc) {
       setLive(null);
       setLiveError(exc instanceof Error ? exc.message : "Search failed");
@@ -85,6 +109,16 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapsh
     }
   }
 
+  useEffect(() => {
+    const q = params.get("q") || "";
+    if (!q || !selected) return;
+    const token = `${selected.slug}:${q}`;
+    if (searched.current === token) return;
+    searched.current = token;
+    setQuery(q);
+    void search(q);
+  }, [params, selected?.slug]);
+
   if (!loaded) return <InlineLoading description="Loading architecture" />;
   if (error) return <InlineNotification kind="error" title="Architecture is unavailable" subtitle={error} lowContrast hideCloseButton />;
   if (!repos.length) {
@@ -104,6 +138,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapsh
         description="Explore how code, contracts, services and historical relationships connect across the workspace."
         breadcrumbs={service ? [{ label: "Architecture", href: "/architecture" }, { label: selected?.name || service }] : undefined}
       />
+      {loadingRepo ? <SkeletonText heading width="30%" /> : null}
       {selected?.error ? <InlineNotification kind="warning" title={selected.name} subtitle={selected.error} lowContrast hideCloseButton /> : null}
       <ComboBox
         id="architecture-repo"
@@ -136,9 +171,43 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapsh
             <h2 className="section-title">Subsystems</h2>
             <RecordTable repository={selected?.name || ""} rows={communities} emptyTitle="No subsystems" emptyDescription="This repository graph has no community summary." preferred={["repository", "symbol", "label", "size", "symbols", "cohesion"]} />
             <h2 className="section-title">Important connectors</h2>
-            <RecordTable repository={selected?.name || ""} rows={[...bridges, ...hubs]} emptyTitle="No connectors" emptyDescription="No bridge or hub symbols were summarized." preferred={["repository", "symbol", "betweenness", "criticality", "total_degree"]} />
+            <NamiDataTable
+              columns={[
+                { key: "symbol", header: "Symbol" },
+                { key: "file", header: "File" },
+                { key: "role", header: "Role" },
+                { key: "connections", header: "Connections" },
+              ]}
+              rows={connectorRows(hubs, bridges, selected?.checkout || "")}
+              emptyTitle="No connectors"
+              emptyDescription="No bridge or hub symbols were summarized."
+              renderExpanded={(row) => (
+                <dl className="detail-list">
+                  <div><dt>Qualified name</dt><dd>{row.qualified}</dd></div>
+                  <div><dt>Kind</dt><dd>{row.kind || "—"}</dd></div>
+                </dl>
+              )}
+            />
             <h2 className="section-title">Boundary warnings</h2>
-            <RecordTable repository={selected?.name || ""} rows={records(tools?.surprises)} emptyTitle="No boundary warnings" emptyDescription="No architecture boundary surprises were recorded." preferred={["repository", "symbol", "message", "kind"]} />
+            <p className="helper">Connections the graph did not expect, such as a call that crosses subsystems or a test boundary. The score orders them. It is not a probability.</p>
+            <NamiDataTable
+              columns={[
+                { key: "connection", header: "Connection" },
+                { key: "relation", header: "Relation" },
+                { key: "why", header: "Why" },
+                { key: "score", header: "Score" },
+              ]}
+              rows={warningRows(tools?.surprises, selected?.checkout || "")}
+              emptyTitle="No boundary warnings"
+              emptyDescription="No unexpected cross-boundary connections were recorded."
+              renderExpanded={(row) => (
+                <dl className="detail-list">
+                  <div><dt>From</dt><dd>{row.from}</dd></div>
+                  <div><dt>To</dt><dd>{row.to}</dd></div>
+                  {row.communities ? <div><dt>Subsystems</dt><dd>{row.communities}</dd></div> : null}
+                </dl>
+              )}
+            />
           </TabPanel>
           <TabPanel>
             <search aria-label="Search symbols">
@@ -167,15 +236,20 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapsh
               rows={records(live)}
               emptyTitle={live ? "No matches" : "Search for a symbol"}
               emptyDescription={live ? "Try removing a filter or changing your search." : "Results stay in this repository."}
-              preferred={["repository", "symbol", "kind", "line"]}
-              onUse={(value) => setTarget(value)}
+              preferred={["repository", "symbol", "file", "kind", "line"]}
+              onUse={(row) => {
+                setTarget(graphQueryTarget(row));
+                setTargetFile(relativePath(String(row.file || row.file_path || "")));
+              }}
             />
             {target ? (
               <div className="button-row">
-                <p>Selected {repoSymbol(selected?.name || "", target)}</p>
+                <p>Selected {repoSymbol(selected?.name || "", symbolName(target))}</p>
+                {targetFile ? <p className="helper">{targetFile}</p> : null}
                 {ACTIONS.map(([label, pattern]) => (
                   <Button key={pattern} kind="tertiary" size="sm" disabled={busy} onClick={() => void follow(pattern)}>{label}</Button>
                 ))}
+                {targetFile && selected ? <Link to={`/impact?service=${encodeURIComponent(selected.slug)}&file=${encodeURIComponent(targetFile)}`}>Explore impact</Link> : null}
               </div>
             ) : null}
           </TabPanel>
@@ -185,10 +259,11 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapsh
               <NamiDataTable
                 columns={[
                   { key: "code", header: "Code" },
+                  { key: "file", header: "File" },
                   { key: "commits", header: "Commits" },
                   { key: "churn", header: "Edit activity" },
                 ]}
-                rows={(cochange.hotspots ?? []).map((item) => ({ id: item.file, code: repoSymbol(selected?.name || "", symbolName(item.file)), commits: item.commits, churn: item.churn_score.toFixed(3) }))}
+                rows={(cochange.hotspots ?? []).map((item) => ({ id: item.file, code: symbolName(item.file), file: relativePath(item.file) || symbolName(item.file), commits: item.commits, churn: item.churn_score.toFixed(3) }))}
                 emptyTitle="History unavailable"
                 emptyDescription={cochange.message || "Commit history has not been mined for this repository."}
               />
@@ -220,9 +295,42 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: Snapsh
             <h2 className="section-title">Untested high-connectivity symbols</h2>
             <RecordTable repository={selected?.name || ""} rows={records(tools?.knowledge_gaps)} emptyTitle="No coverage gaps recorded" emptyDescription="The graph summary did not list untested connectors." preferred={["repository", "symbol"]} />
             <h2 className="section-title">Possible dead code</h2>
-            <RecordTable repository={selected?.name || ""} rows={records(tools?.dead_code)} emptyTitle="No possible dead code" emptyDescription="The graph summary did not list unused symbols." preferred={["repository", "symbol"]} />
+            <p className="helper">A symbol is listed when the graph finds no callers, no tests, no importers, and it is not an entry point. The reason on each row is that evidence. {limitNote(tools?.dead_code)}</p>
+            <NamiDataTable
+              columns={[
+                { key: "symbol", header: "Symbol" },
+                { key: "file", header: "File" },
+                { key: "kind", header: "Kind" },
+                { key: "line", header: "Line" },
+                { key: "reason", header: "Reason" },
+              ]}
+              rows={deadCodeRows(tools?.dead_code, tools?.refactor, selected?.checkout || "")}
+              emptyTitle="No possible dead code"
+              emptyDescription="The graph summary did not list unused symbols."
+              renderExpanded={(row) => (
+                <dl className="detail-list">
+                  <div><dt>Qualified name</dt><dd>{row.qualified}</dd></div>
+                </dl>
+              )}
+            />
             <h2 className="section-title">Refactoring candidates</h2>
-            <RecordTable repository={selected?.name || ""} rows={records(tools?.refactor)} emptyTitle="No refactoring candidates" emptyDescription="No structural refactor suggestions were recorded." preferred={["repository", "symbol", "message", "kind"]} />
+            <p className="helper">Each candidate names the symbol, the suggested change, and why the graph suggested it. {limitNote(tools?.refactor)}</p>
+            <NamiDataTable
+              columns={[
+                { key: "symbol", header: "Symbol" },
+                { key: "file", header: "File" },
+                { key: "suggestion", header: "Suggestion" },
+                { key: "reason", header: "Reason" },
+              ]}
+              rows={refactorRows(tools?.refactor, tools?.dead_code, selected?.checkout || "")}
+              emptyTitle="No refactoring candidates"
+              emptyDescription="No structural refactor suggestions were recorded."
+              renderExpanded={(row) => (
+                <dl className="detail-list">
+                  <div><dt>Qualified name</dt><dd>{row.qualified}</dd></div>
+                </dl>
+              )}
+            />
           </TabPanel>
         </TabPanels>
       </Tabs>
@@ -251,12 +359,11 @@ function RecordTable({
   emptyTitle: string;
   emptyDescription: string;
   preferred: string[];
-  onUse?: (value: string) => void;
+  onUse?: (row: Record<string, string>) => void;
 }) {
   const presented = rows.map((row, index) => {
     const fields = visibleFields(row, repository);
-    const symbol = String(row.name || row.qualified_name || fields.symbol || index);
-    return { id: `${fields.repository}-${fields.symbol}-${index}`, queryTarget: symbolName(symbol), ...fields };
+    return { id: `${fields.repository}-${fields.symbol}-${index}`, queryTarget: graphQueryTarget(row), ...fields };
   });
   const keys = preferred.filter((key) => presented.some((row) => row[key as keyof typeof row]));
   const columns = (keys.length ? keys : ["repository", "symbol"]).map((key) => ({ key, header: label(key) }));
@@ -265,7 +372,7 @@ function RecordTable({
     <NamiDataTable
       columns={columns.map((column) =>
         column.key === "use"
-          ? { ...column, render: (row: { queryTarget?: string }) => <Button size="sm" kind="ghost" onClick={() => onUse?.(row.queryTarget || "")}>Select</Button> }
+          ? { ...column, render: (row: Record<string, string>) => <Button size="sm" kind="ghost" onClick={() => onUse?.(row)}>Select</Button> }
           : column,
       )}
       rows={presented}
@@ -301,4 +408,182 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function label(key: string): string {
   return key.replaceAll("_", " ");
+}
+
+function connectorRows(hubs: Record<string, unknown>[], bridges: Record<string, unknown>[], checkout: string) {
+  const hubsRows = hubs.map((row, index) => ({
+    id: `hub-${String(row.qualified_name || row.name || index)}`,
+    symbol: String(row.name || ""),
+    file: displayPath(String(row.file || ""), checkout),
+    role: "Highly connected",
+    connections: degreeText(row),
+    qualified: displayPath(String(row.qualified_name || ""), checkout),
+    kind: String(row.kind || ""),
+  }));
+  const bridgeRows = bridges.map((row, index) => ({
+    id: `bridge-${String(row.qualified_name || row.name || index)}`,
+    symbol: String(row.name || ""),
+    file: displayPath(String(row.file || ""), checkout),
+    role: "Bridge",
+    connections: betweennessText(row.betweenness),
+    qualified: displayPath(String(row.qualified_name || ""), checkout),
+    kind: String(row.kind || ""),
+  }));
+  return [...hubsRows, ...bridgeRows];
+}
+
+function warningRows(payload: unknown, checkout: string) {
+  return records(payload).map((row, index) => {
+    const source = String(row.source || "");
+    const target = String(row.target || "");
+    const reasons = Array.isArray(row.reasons) ? row.reasons.map((item) => reasonText(String(item))) : [];
+    return {
+      id: `${source}-${target}-${index}`,
+      connection: source && target ? `${source} → ${target}` : source || target,
+      relation: relationText(String(row.edge_kind || "")),
+      why: reasons.join(", ") || "Unexpected connection",
+      score: typeof row.surprise_score === "number" ? row.surprise_score.toFixed(3) : "—",
+      from: displayPath(String(row.source_qualified || source), checkout),
+      to: displayPath(String(row.target_qualified || target), checkout),
+      communities: communityText(row.source_community, row.target_community),
+    };
+  });
+}
+
+function degreeText(row: Record<string, unknown>): string {
+  const total = numberText(row.total_degree);
+  const incoming = numberText(row.in_degree);
+  const outgoing = numberText(row.out_degree);
+  if (!total) return "Degree unavailable";
+  return `${total} total · ${incoming || "0"} in · ${outgoing || "0"} out`;
+}
+
+function betweennessText(value: unknown): string {
+  return typeof value === "number" ? `${value.toFixed(3)} betweenness` : "Betweenness unavailable";
+}
+
+function numberText(value: unknown): string {
+  return typeof value === "number" ? String(value) : "";
+}
+
+function communityText(source: unknown, target: unknown): string {
+  if (typeof source !== "number" && typeof target !== "number") return "";
+  return `${source ?? "—"} → ${target ?? "—"}`;
+}
+
+function displayPath(value: string, checkout: string): string {
+  const trimmed = value.trim().replaceAll("\\", "/");
+  if (!trimmed) return "";
+  const root = checkout.trim().replaceAll("\\", "/").replace(/\/$/, "");
+  const [filePart, symbol] = trimmed.split("::");
+  let file = filePart;
+  if (root && file.startsWith(`${root}/`)) file = file.slice(root.length + 1);
+  if (file.startsWith("/")) file = "";
+  if (symbol) return file ? `${file}::${symbol}` : symbol;
+  return file;
+}
+
+function relationText(relation: string): string {
+  const labels: Record<string, string> = {
+    CALLS: "calls",
+    IMPORTS_FROM: "imports",
+    HANDLED_BY: "handled by",
+    IMPLEMENTED_BY: "implemented by",
+    CONSUMES_HTTP: "consumes HTTP endpoint",
+    CONSUMES_GRPC: "consumes gRPC operation",
+    PRODUCES_EVENT: "produces event",
+    CONSUMED_BY: "consumed by",
+    TESTED_BY: "tested by",
+  };
+  return labels[relation] || relation.replaceAll("_", " ").toLowerCase() || "related";
+}
+
+function reasonText(reason: string): string {
+  const labels: Record<string, string> = {
+    "cross-community": "Crosses subsystems",
+    "cross-test-boundary": "Crosses a test boundary",
+  };
+  return labels[reason] || reason.replaceAll("-", " ");
+}
+
+function deadCodeRows(deadPayload: unknown, refactorPayload: unknown, checkout: string) {
+  const reasons = new Map<string, string>();
+  for (const suggestion of records(refactorPayload)) {
+    const rationale = String(suggestion.rationale || "");
+    for (const symbol of stringList(suggestion.symbols)) {
+      if (rationale) reasons.set(symbol, rationale);
+    }
+  }
+  return records(deadPayload).map((row, index) => {
+    const qualified = String(row.qualified_name || "");
+    return {
+      id: qualified || `dead-${index}`,
+      symbol: symbolLabel(row),
+      file: relativeFile(row, checkout),
+      kind: String(row.kind || ""),
+      line: row.line ? String(row.line) : "",
+      reason: reasons.get(qualified) || "The graph listed this symbol as unused. No separate reason was recorded.",
+      qualified: displayPath(qualified, checkout) || symbolLabel(row),
+    };
+  });
+}
+
+function refactorRows(refactorPayload: unknown, deadPayload: unknown, checkout: string) {
+  const located = new Map(records(deadPayload).map((row) => [String(row.qualified_name || ""), row]));
+  return records(refactorPayload).flatMap((suggestion, index) => {
+    const symbols = stringList(suggestion.symbols);
+    const targets = symbols.length ? symbols : [""];
+    return targets.map((qualified, offset) => {
+      const locatedRow = located.get(qualified);
+      return {
+        id: `${qualified || "refactor"}-${index}-${offset}`,
+        symbol: symbolLabel(locatedRow || { qualified_name: qualified, name: quotedName(String(suggestion.description || "")) }),
+        file: locatedRow ? relativeFile(locatedRow, checkout) : fileFromQualified(qualified, checkout),
+        suggestion: suggestionText(suggestion),
+        reason: String(suggestion.rationale || "No reason was recorded."),
+        qualified: displayPath(qualified, checkout),
+      };
+    });
+  });
+}
+
+function limitNote(payload: unknown): string {
+  if (!isRecord(payload) || payload.truncated !== true) return "";
+  const total = typeof payload.total === "number" ? payload.total : 0;
+  const shown = records(payload).length;
+  return total > shown ? `Showing ${shown} of ${total}.` : "";
+}
+
+function symbolLabel(row: Record<string, unknown>): string {
+  const qualified = String(row.qualified_name || "");
+  const after = qualified.split("::").pop() || "";
+  if (after && !after.includes("/")) return after;
+  return String(row.name || after);
+}
+
+function relativeFile(row: Record<string, unknown>, checkout: string): string {
+  const relative = String(row.relative_path || "");
+  if (relative && !relative.startsWith("/") && !relative.split("/").includes("..")) return relative;
+  return fileFromQualified(String(row.qualified_name || row.file || row.file_path || ""), checkout);
+}
+
+function fileFromQualified(qualified: string, checkout: string): string {
+  const shown = displayPath(qualified, checkout);
+  if (shown.includes("::")) return shown.split("::")[0];
+  return shown.includes("/") ? shown : "";
+}
+
+function suggestionText(suggestion: Record<string, unknown>): string {
+  const description = String(suggestion.description || "").replace(/ '[^']*'$/, "").trim();
+  if (description) return description;
+  const type = String(suggestion.type || "").replaceAll("_", " ");
+  return type ? type.charAt(0).toUpperCase() + type.slice(1) : "Review this symbol";
+}
+
+function quotedName(description: string): string {
+  return description.match(/'([^']+)'/)?.[1] || "";
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }

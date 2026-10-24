@@ -24,7 +24,10 @@ _STATUS = {
     "T": "mode_changed",
 }
 _SOURCE_EXT = {".py", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".go", ".java", ".rs", ".rb", ".swift", ".kt"}
-_BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".wasm", ".so", ".dylib", ".exe", ".ico", ".woff", ".woff2"}
+_BINARY_EXT = {
+    ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".wasm", ".so", ".dylib", ".exe", ".ico", ".woff", ".woff2",
+    ".pt", ".pth", ".onnx", ".pkl", ".pickle", ".npy", ".npz", ".bin", ".safetensors", ".ckpt", ".h5", ".tflite", ".pb",
+}
 _LOCK = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "cargo.lock", "gemfile.lock"}
 _MANIFEST = {"package.json", "requirements.txt", "pyproject.toml", "go.mod", "cargo.toml", "pom.xml", "gemfile"}
 
@@ -663,6 +666,8 @@ def _changed_lines(changed: dict[str, Any], *, deleted: bool) -> list[int]:
 
 
 def _file_texts(changed: dict[str, Any], repo_root: Path | None, resolved: dict[str, Any]) -> tuple[str, str]:
+    if changed.get("binary") or "binary" in (changed.get("classifications") or []):
+        return "", ""
     if "old_text" in changed or "new_text" in changed:
         return changed.get("old_text") or "", changed.get("new_text") or ""
     old = _show(repo_root, resolved.get("base_sha"), changed.get("old_path"))
@@ -670,10 +675,9 @@ def _file_texts(changed: dict[str, Any], repo_root: Path | None, resolved: dict[
     if changed.get("new_path") and repo_root is not None:
         candidate = repo_root / changed["new_path"]
         if candidate.is_file():
-            try:
-                new = candidate.read_text(encoding="utf-8")
-            except OSError:
-                new = ""
+            from dep_intel.review_sources import read_utf8
+
+            new = read_utf8(candidate)
         elif resolved.get("head_sha"):
             new = _show(repo_root, resolved.get("head_sha"), changed.get("new_path"))
     return old, new
@@ -685,7 +689,7 @@ def _show(repo: Path | None, sha: str | None, path: str | None) -> str:
     from dep_intel.review_sources import run_git
 
     code, stdout, _stderr = run_git(repo, ["show", f"{sha}:{path}"], timeout=15)
-    if code != 0:
+    if code != 0 or "\ufffd" in stdout:
         return ""
     return stdout
 

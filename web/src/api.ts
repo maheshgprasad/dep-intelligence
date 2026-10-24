@@ -275,7 +275,10 @@ export type HybridImpactResponse = {
 
 export async function nrmCapabilities(): Promise<{
   module_version: string;
-  temporal_providers: { id: string; available: boolean; reason?: string }[];
+  temporal_providers: { id: string; available: boolean; reason?: string; quality?: string }[];
+  fusion_methods?: string[];
+  lag_matching?: string[];
+  path_scoring?: string[];
   defaults: { structural_weight: number; temporal_weight: number; cross_repo_window_days: number };
 }> {
   const response = await fetch("/api/cluster/nrm/capabilities");
@@ -323,7 +326,10 @@ export type ReviewFinding = {
 export type ReviewReport = {
   review_id: string;
   gate: { decision: string; reason_codes: string[]; blocking_findings: string[]; warning_findings: string[]; review_targets: string[]; evidence_complete: boolean };
-  change: { repository?: string; service_id?: string; base_sha?: string | null; head_sha?: string | null; graph_alignment?: string; graph_version?: string; temporal_cutoff?: string | null };
+  mode?: string;
+  requested_mode?: string;
+  resolved_mode?: string;
+  change: { repository?: string; service_id?: string; base_sha?: string | null; head_sha?: string | null; graph_alignment?: string; graph_version?: string; temporal_cutoff?: string | null; source?: { kind?: string } };
   summary: { text: string };
   changed_files: { new_path?: string | null; old_path?: string | null; change_type: string; additions: number | null; deletions: number | null; classifications: string[] }[];
   changed_symbols: { qualified_name: string; file_path: string; kind: string; name?: string }[];
@@ -346,13 +352,13 @@ export type ReviewReport = {
   findings: ReviewFinding[];
   verification: { id: string; command: string[]; status: string; duration_ms: number; exit_code: number | null; output: string }[];
   policies: { policy_id: string; applied: boolean; result: string; severity: string; evidence: string }[];
-  diagnostics: { code: string; message: string }[];
+  diagnostics: { code: string; message: string; severity?: string }[];
   limitations: string[];
   performance?: { total_ms?: number };
   score_note?: string;
 };
 
-export async function reviewConfig(repository = ""): Promise<{ model_configured: boolean; policies: { id: string; severity: string; check: string }[]; diagnostics: { message: string }[]; score_note: string }> {
+export async function reviewConfig(repository = ""): Promise<{ model_configured: boolean; policies: { id: string; severity: string; check: string }[]; diagnostics: { message: string }[]; score_note: string; verification?: { commands?: string[] } }> {
   const response = await fetch(`/api/review/config?repository=${encodeURIComponent(repository)}`);
   if (!response.ok) throw new Error("Review configuration failed");
   return response.json();
@@ -411,5 +417,158 @@ export async function refreshIntelligence(): Promise<{ started: boolean; message
 export async function refreshCluster(): Promise<{ job_id: string; status: string }> {
   const response = await fetch("/api/cluster/refresh", { method: "POST" });
   if (!response.ok) throw new Error("refresh failed");
+  return response.json();
+}
+
+export type AppState = {
+  schema_version: number;
+  running: boolean;
+  repositories: { slug: string; name: string; checkout: string; error: string | null }[];
+  cluster: ClusterSummary;
+  intelligence: {
+    overall: string;
+    graph: { status: string; ready_services: number; total_services: number };
+    history: { status: string; ready_services: number; total_services: number; missing_services?: string[] };
+    contracts: { status: string; extraction_complete: boolean; count: number };
+    stale_services: string[];
+    unresolved: number;
+    refreshed_at: string | null;
+  };
+  health: {
+    packages: { available: boolean; updated_at: string | null };
+    security: { available: boolean; updated_at: string | null };
+    tests: { available: boolean; updated_at: string | null };
+  };
+};
+
+export async function getAppState(signal?: AbortSignal): Promise<AppState> {
+  const response = await fetch("/api/app-state", { signal });
+  if (!response.ok) throw new Error("Application state failed");
+  return response.json();
+}
+
+export async function clusterCatalog(service: string, signal?: AbortSignal): Promise<{
+  graph_version: string;
+  service: string;
+  files: { path: string; label: string }[];
+  contracts: { id: string; name: string; category: string; service_id: string }[];
+}> {
+  const response = await fetch(`/api/cluster/catalog?service=${encodeURIComponent(service)}`, { signal });
+  if (!response.ok) throw new Error("The file catalog could not be loaded.");
+  return response.json();
+}
+
+export async function clusterRelationships(limit = 12): Promise<{ relationships: { from_service: string; to_service: string; kind: string; contract_id: string; contract: string }[] }> {
+  const response = await fetch(`/api/cluster/relationships?limit=${limit}`);
+  if (!response.ok) throw new Error("Relationships could not be loaded.");
+  return response.json();
+}
+
+export type SearchHit = {
+  key: string;
+  service_id: string;
+  name: string;
+  qualified_name: string;
+  file_path: string;
+  kind: string;
+  line_start: number | null;
+};
+
+export async function searchWorkspace(query: string, limit = 20, signal?: AbortSignal): Promise<SearchHit[]> {
+  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { signal });
+  if (!response.ok) throw new Error("Search failed");
+  const payload = await response.json();
+  return payload.results ?? [];
+}
+
+export async function repositoryArchitecture(slug: string, signal?: AbortSignal): Promise<{ repository: GraphRepo; crg: CrgBundle | null; cochange: Cochange | null }> {
+  const response = await fetch(`/api/repositories/${encodeURIComponent(slug)}/architecture`, { signal });
+  if (!response.ok) throw new Error("Architecture data could not be loaded.");
+  return response.json();
+}
+
+export async function reviewSourceOptions(repository: string, signal?: AbortSignal): Promise<{
+  current_branch: string;
+  default_branch: string;
+  dirty_files: number;
+  staged_files: number;
+  branches: string[];
+  recent_commits: { sha: string; short_sha: string; subject: string; committed_at: string }[];
+  error?: string;
+}> {
+  const response = await fetch(`/api/review/source-options?repository=${encodeURIComponent(repository)}`, { signal });
+  if (!response.ok) throw new Error("Repository source options could not be loaded.");
+  return response.json();
+}
+
+export async function previewChange(body: Record<string, unknown>): Promise<{
+  changed_files: ReviewReport["changed_files"];
+  changed_symbols: ReviewReport["changed_symbols"];
+  contract_changes: ReviewReport["contract_changes"];
+  graph_alignment: string;
+  diagnostics: { message: string }[];
+}> {
+  const response = await fetch("/api/review/change-view", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("The change preview could not be built.");
+  return response.json();
+}
+
+export async function recentReviews(): Promise<{ review_id: string; decision: string; repository: string; service: string; source_kind: string; completed_at: string; finding_count: number; head_sha?: string; base_sha?: string }[]> {
+  const response = await fetch("/api/reviews?limit=20");
+  if (!response.ok) throw new Error("Stored reviews could not be listed.");
+  const payload = await response.json();
+  return payload.reviews ?? [];
+}
+
+export async function cancelJob(jobId: string): Promise<void> {
+  const response = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+  if (!response.ok) throw new Error("The review could not be cancelled.");
+}
+
+export async function healthPackages(signal?: AbortSignal): Promise<{ matrix: Snapshot["matrix"]; updates: Snapshot["updates"] }> {
+  const response = await fetch("/api/repository-health/packages", { signal });
+  if (!response.ok) throw new Error("Package health could not be loaded.");
+  return response.json();
+}
+
+export async function healthSecurity(signal?: AbortSignal): Promise<{
+  advisories: NonNullable<Snapshot["vulnerabilities"]>["findings"];
+  hygiene: NonNullable<Snapshot["vulnerabilities"]>["findings"];
+  cves: Snapshot["cves"];
+}> {
+  const response = await fetch("/api/repository-health/security", { signal });
+  if (!response.ok) throw new Error("Security health could not be loaded.");
+  return response.json();
+}
+
+export async function healthTests(signal?: AbortSignal): Promise<{ coverage: Snapshot["coverage"] }> {
+  const response = await fetch("/api/repository-health/tests", { signal });
+  if (!response.ok) throw new Error("Coverage could not be loaded.");
+  return response.json();
+}
+
+export async function downloadSecurityReport(): Promise<void> {
+  const response = await fetch("/api/repository-health/security/report");
+  if (!response.ok) throw new Error("No security report is stored.");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "security_release_report.md";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function refreshHealth(sections: string[] = ["packages", "security", "tests"]): Promise<{ job_id: string }> {
+  const response = await fetch("/api/repository-health/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sections }),
+  });
+  if (!response.ok) throw new Error("The health scan could not be started.");
   return response.json();
 }

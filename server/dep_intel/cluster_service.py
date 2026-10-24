@@ -93,6 +93,21 @@ class ClusterEngine:
             return {"version": "", "nodes": [], "edges": [], "total": 0, "truncated": False}
         return graph_slice(snapshot, **kwargs)
 
+    def catalog(self, service: str) -> dict[str, Any]:
+        from dep_intel.app_state import service_catalog
+
+        return service_catalog(self.current(), service)
+
+    def relationships(self, limit: int = 50, service: str = "", kind: str = "") -> dict[str, Any]:
+        from dep_intel.app_state import cross_service_relationships
+
+        return cross_service_relationships(self.current(), limit=limit, service=service, kind=kind)
+
+    def search(self, query: str, limit: int = 20) -> dict[str, Any]:
+        from dep_intel.app_state import search_cluster
+
+        return search_cluster(self.current(), query, limit)
+
     def contracts(self) -> dict[str, Any]:
         snapshot = self.current()
         if snapshot is None:
@@ -329,6 +344,9 @@ class ClusterEngine:
 
     def cancel_job(self, job_id: str) -> Job | None:
         return self._jobs.cancel(job_id)
+
+    def update_job_progress(self, job_id: str, percent: int) -> None:
+        self._jobs.update_progress(job_id, percent)
 
     def start_watcher(self) -> None:
         manifest, _errors = self._classify()
@@ -589,11 +607,12 @@ def resolve_roots(snapshot: Snapshot, *, service: str, symbol: str, file: str, l
 
 
 def _file_allowed(snapshot: Snapshot, service: str, file: str) -> bool:
+    """Validate a file identity against the published graph. No filesystem access."""
     if Path(file).is_absolute() or ".." in Path(file).parts:
         return False
     if not service:
         return True
-    return any(node.file_path == file and node.service_id == service for node in snapshot.nodes.values()) or True
+    return any(node.file_path == file and node.service_id == service for node in snapshot.nodes.values())
 
 
 def _candidate(node) -> dict[str, Any]:
