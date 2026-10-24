@@ -186,6 +186,15 @@ body {
   font-size: 0.75rem;
 }
 
+.cluster-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .relation-list {
   list-style: none;
   padding: 0;

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "services": [
+    {
+      "id": "auth-service",
+      "repository": "fixtures/auth-service",
+      "graph_db": ".code-review-graph/graph.db",
+      "frameworks": ["express"],
+      "http": {
+        "origins": ["http://auth-service:3001"],
+        "host_aliases": ["auth-service"],
+        "base_path": ""
+      }
+    },
+    {
+      "id": "user-service",
+      "repository": "fixtures/user-service",
+      "graph_db": ".code-review-graph/graph.db",
+      "frameworks": ["express", "axios"],
+      "client_bindings": [
+        {
+          "file": "src/users.js",
+          "client": "axios",
+          "target_service": "auth-service"
+        }
+      ]
+    },
+    {
+      "id": "report-job",
+      "repository": "fixtures/report-job",
+      "graph_db": ".code-review-graph/graph.db",
+      "frameworks": []
+    }
+  ],
+  "impact": {
+    "threshold": 0.1,
+    "epsilon": 0.000000001,
+    "max_hops": 64,
+    "max_nodes": 10000,
+    "max_edges_examined": 200000,
+    "timeout_ms": 2000,
+    "weights": {
+      "internal_dependency": 0.95,
+      "http_contract": 0.8,
+      "grpc_contract": 0.8,
+      "event_contract": 0.4
+    }
+  },
+  "watch": {
+    "enabled": true,
+    "debounce_ms": 500,
+    "reconcile_seconds": 30
+  },
+  "workers": {
+    "repository_reads": 4,
+    "crg_sessions": 2
+  }
+}

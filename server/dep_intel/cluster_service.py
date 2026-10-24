@@ -28,7 +28,7 @@ from dep_intel.crg_adapter import (
 )
 from dep_intel.cross_repo_graph import assemble, graph_slice, published_dict, repo_for, snapshot_from_published
 from dep_intel.events import bus
-from dep_intel.graph_models import CODE_SYMBOL, Diagnostic, Partition, Snapshot
+from dep_intel.graph_models import CODE_SYMBOL, EVENT_CONTRACT, GRPC_CONTRACT, HTTP_CONTRACT, Diagnostic, Partition, Snapshot
 from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
 from dep_intel.impact import analyze
 from dep_intel.jobs import Job, JobRunner
@@ -552,7 +552,9 @@ def resolve_roots(snapshot: Snapshot, *, service: str, symbol: str, file: str, l
         matches = [
             node
             for node in snapshot.nodes.values()
-            if node.metadata.get("identity") == contract_id and (not service or node.service_id == service)
+            if node.category in {HTTP_CONTRACT, GRPC_CONTRACT, EVENT_CONTRACT}
+            and (node.key == contract_id or node.metadata.get("identity") == contract_id)
+            and (not service or node.service_id == service)
         ]
         if len(matches) == 1:
             return [matches[0].key], [], ""

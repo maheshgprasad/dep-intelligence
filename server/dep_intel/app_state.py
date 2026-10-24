@@ -150,7 +150,7 @@ def service_catalog(snapshot: Snapshot | None, service: str) -> dict[str, Any]:
 
 def cross_service_relationships(snapshot: Snapshot | None, *, limit: int = 50, service: str = "", kind: str = "") -> dict[str, Any]:
     if snapshot is None:
-        return {"relationships": []}
+        return {"relationships": [], "total": 0, "truncated": False, "clusters": [], "individuals": []}
     rows = []
     for edge in snapshot.edges:
         relation_kind = CROSS_RELATIONS.get(edge.relation)
@@ -160,21 +160,83 @@ def cross_service_relationships(snapshot: Snapshot | None, *, limit: int = 50, s
             continue
         source = snapshot.nodes.get(edge.source)
         target = snapshot.nodes.get(edge.target)
-        if source is None or target is None or source.service_id == target.service_id:
+        if source is None or target is None:
             continue
-        if service and service not in {source.service_id, target.service_id}:
+        caller, contract = _caller_and_contract(edge.relation, source, target)
+        if caller is None or contract is None or caller.service_id == contract.service_id:
             continue
-        contract = target if target.category in CONTRACT_CATEGORIES else source
+        if service and service not in {caller.service_id, contract.service_id}:
+            continue
+        file = caller.file_path or str(edge.evidence.get("file") or "")
+        if file.startswith("/") or ".." in Path(file).parts:
+            file = ""
         rows.append({
-            "from_service": source.service_id,
-            "to_service": target.service_id,
+            "from_service": caller.service_id,
+            "to_service": contract.service_id,
             "kind": relation_kind,
             "contract_id": contract.key,
             "contract": contract.name or contract.qualified_name,
+            "contract_identity": str(contract.metadata.get("identity") or contract.qualified_name or ""),
+            "caller_symbol": caller.name or "",
+            "caller_file": file,
+            "caller_line": caller.line_start,
+            "caller_qualified": caller.qualified_name or "",
+            "evidence": str(edge.evidence.get("status") or ""),
+            "resolution": str(edge.evidence.get("resolution") or ""),
         })
-    rows.sort(key=lambda item: (item["from_service"], item["to_service"], item["kind"], item["contract"]))
+    rows.sort(key=lambda item: (item["from_service"], item["to_service"], item["kind"], item["contract"], item["caller_symbol"]))
+    clusters, individuals = _relationship_groups(snapshot, rows)
     bounded = max(1, min(int(limit or 50), 200))
-    return {"relationships": rows[:bounded]}
+    return {
+        "relationships": rows[:bounded],
+        "total": len(rows),
+        "truncated": len(rows) > bounded,
+        "clusters": clusters,
+        "individuals": individuals,
+    }
+
+
+def _caller_and_contract(relation: str, source, target):
+    if relation == CONSUMED_BY:
+        caller, contract = target, source
+    else:
+        caller, contract = source, target
+    if contract.category not in CONTRACT_CATEGORIES and caller.category in CONTRACT_CATEGORIES:
+        caller, contract = contract, caller
+    if contract.category not in CONTRACT_CATEGORIES:
+        return None, None
+    return caller, contract
+
+
+def _relationship_groups(snapshot: Snapshot, rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    parent: dict[str, str] = {}
+
+    def find(service_id: str) -> str:
+        parent.setdefault(service_id, service_id)
+        if parent[service_id] != service_id:
+            parent[service_id] = find(parent[service_id])
+        return parent[service_id]
+
+    def union(left: str, right: str) -> None:
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    grouped: dict[str, int] = {}
+    for row in rows:
+        union(row["from_service"], row["to_service"])
+    for row in rows:
+        root = find(row["from_service"])
+        grouped[root] = grouped.get(root, 0) + 1
+    clusters = []
+    connected: set[str] = set()
+    for root, count in grouped.items():
+        members = sorted(service_id for service_id in parent if find(service_id) == root)
+        connected.update(members)
+        clusters.append({"services": members, "relationships": count})
+    clusters.sort(key=lambda item: (-len(item["services"]), item["services"][0] if item["services"] else ""))
+    individuals = sorted(service_id for service_id in snapshot.partitions if service_id not in connected)
+    return clusters, individuals
 
 
 def search_cluster(snapshot: Snapshot | None, query: str, limit: int = 20) -> dict[str, Any]:

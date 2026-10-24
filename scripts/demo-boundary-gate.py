@@ -38,7 +38,7 @@ def main() -> None:
             _build(dest)
     _git_init(services["auth-service"])
     (work / "repos.txt").write_text("auth-service\nuser-service\nreport-job\n", encoding="utf-8")
-    manifest_body = json.loads((ROOT / "cluster-manifest.json").read_text(encoding="utf-8"))
+    manifest_body = json.loads((ROOT / "fixtures" / "cluster-manifest.json").read_text(encoding="utf-8"))
     for service in manifest_body["services"]:
         service["repository"] = service["id"]
     (work / "cluster-manifest.json").write_text(json.dumps(manifest_body, indent=2) + "\n", encoding="utf-8")

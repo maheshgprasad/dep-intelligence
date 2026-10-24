@@ -26,7 +26,7 @@ cd web && npm install && cd ..
 ./scripts/nami-trace.sh
 ```
 
-`repos.txt` remains the allowlist and is the list of repositories that are analyzed. `cluster-manifest.json` only adds contract bindings for repositories already on that list. The file shipped with the project describes the local fixtures. When those fixtures are not in `repos.txt`, it is skipped and each allowlisted repository is still read. Cross-repository links are not inferred from route names. `CLUSTER_MANIFEST` overrides the manifest path. `DEP_INTEL_REFRESH_CHECKOUTS=1` fetches clean tool-owned clones under `output/checkouts`. User worktrees are never reset. Git tokens are passed through a temporary askpass helper and are not placed in clone URLs.
+`repos.txt` remains the allowlist and is the list of repositories that are analyzed. `cluster-manifest.json` declares which of those repositories belong to one cluster and how they call each other. Every `repository` value must match an allowlist entry. `fixtures/cluster-manifest.json` is the local fixture example used by tests and demos. A manifest whose services are all absent from `repos.txt` is skipped, and each allowlisted repository is still read on its own. Cross-repository links are not inferred from route names. `CLUSTER_MANIFEST` overrides the manifest path. `DEP_INTEL_REFRESH_CHECKOUTS=1` fetches clean tool-owned clones under `output/checkouts`. User worktrees are never reset. Git tokens are passed through a temporary askpass helper and are not placed in clone URLs.
 
 Build graphs for the fixture copy and print the impact report:
 

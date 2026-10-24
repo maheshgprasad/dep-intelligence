@@ -5,12 +5,14 @@ import {
   Button,
   Column,
   ComboBox,
+  ContentSwitcher,
   DefinitionTooltip,
   Grid,
   InlineLoading,
   InlineNotification,
   Search,
   SkeletonText,
+  Switch,
   Tab,
   TabList,
   TabPanel,
@@ -18,7 +20,7 @@ import {
   Tabs,
 } from "@carbon/react";
 import { Link } from "react-router-dom";
-import { queryGraph, repositoryArchitecture, type AppState, type Cochange, type CrgBundle, type CrgPayload } from "../api";
+import { clusterRelationships, queryGraph, repositoryArchitecture, type AppState, type Cochange, type CrgBundle, type CrgPayload, type RelationshipMap, type ServiceRelationship } from "../api";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -38,7 +40,11 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const [params, setParams] = useSearchParams();
   const repos = snapshot?.repositories ?? [];
   const service = params.get("service") || "";
+  const explicitView = params.get("view");
+  const view = explicitView === "cluster" || explicitView === "repository" ? explicitView : service ? "repository" : "cluster";
   const selected = repos.find((repo) => repo.slug === service || repo.name === service) ?? repos[0];
+  const [relations, setRelations] = useState<RelationshipMap | null>(null);
+  const [relationsError, setRelationsError] = useState("");
   const [bundle, setBundle] = useState<{ crg: CrgBundle | null; cochange: Cochange | null } | null>(null);
   const [loadingRepo, setLoadingRepo] = useState(false);
   const tools = bundle?.crg?.tools;
@@ -52,7 +58,24 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const searched = useRef("");
 
   useEffect(() => {
-    if (!selected) return;
+    if (!snapshot?.cluster?.version) return;
+    const controller = new AbortController();
+    let current = true;
+    void clusterRelationships(200, controller.signal)
+      .then((payload) => {
+        if (current) setRelations(payload);
+      })
+      .catch(() => {
+        if (current) setRelationsError("Cross-service relationships could not be loaded.");
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [snapshot?.cluster?.version]);
+
+  useEffect(() => {
+    if (view !== "repository" || !selected) return;
     const controller = new AbortController();
     let current = true;
     setLoadingRepo(true);
@@ -71,7 +94,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
       current = false;
       controller.abort();
     };
-  }, [selected?.slug]);
+  }, [selected?.slug, view]);
 
   const communities = useMemo(() => records(tools?.communities), [tools]);
   const hubs = useMemo(() => records(tools?.hubs), [tools]);
@@ -135,9 +158,36 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
     <div className="stack-gap">
       <PageHeader
         title="Architecture"
-        description="Explore how code, contracts, services and historical relationships connect across the workspace."
-        breadcrumbs={service ? [{ label: "Architecture", href: "/architecture" }, { label: selected?.name || service }] : undefined}
+        description={view === "cluster" ? "Services that call each other. This is separate from the structure inside one repository." : "Internal structure, history, and diagnostics for one repository."}
+        breadcrumbs={view === "repository" && service ? [{ label: "Architecture", href: "/architecture?view=cluster" }, { label: selected?.name || service }] : undefined}
       />
+      <ContentSwitcher
+        key={view}
+        selectedIndex={view === "repository" ? 1 : 0}
+        onChange={({ index }) => {
+          const next = new URLSearchParams(params);
+          next.set("view", index === 1 ? "repository" : "cluster");
+          setParams(next, { replace: true });
+        }}
+      >
+        <Switch>Cluster</Switch>
+        <Switch>Repository</Switch>
+      </ContentSwitcher>
+      {view === "cluster" ? (
+        <ClusterView
+          repos={repos}
+          map={relations}
+          error={relationsError}
+          onOpen={(serviceId) => {
+            const repo = repositoryForService(repos, serviceId);
+            const next = new URLSearchParams(params);
+            next.set("view", "repository");
+            if (repo) next.set("service", repo.slug);
+            setParams(next);
+          }}
+        />
+      ) : null}
+      {view === "repository" ? <>
       {loadingRepo ? <SkeletonText heading width="30%" /> : null}
       {selected?.error ? <InlineNotification kind="warning" title={selected.name} subtitle={selected.error} lowContrast hideCloseButton /> : null}
       <ComboBox
@@ -149,6 +199,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
         onChange={({ selectedItem }) => {
           const repo = repos.find((item) => item.name === selectedItem);
           const next = new URLSearchParams(params);
+          next.set("view", "repository");
           if (repo) next.set("service", repo.slug);
           setParams(next, { replace: true });
         }}
@@ -166,8 +217,8 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
               <Column sm={4} md={2} lg={4}><p className="stat-label"><Term term="Subsystems" definition="Groups of symbols that call each other more than they call the rest of the code." /></p><p className="stat-value">{communities.length}</p></Column>
               <Column sm={4} md={2} lg={4}><p className="stat-label"><Term term="Bridge symbols" definition="Symbols that sit between subsystems." /></p><p className="stat-value">{bridges.length}</p></Column>
               <Column sm={4} md={2} lg={4}><p className="stat-label">Highly connected symbols</p><p className="stat-value">{hubs.length}</p></Column>
-              <Column sm={4} md={2} lg={4}><p className="stat-label"><Term term="Contracts" definition="HTTP, event, or RPC operations shared across services." /></p><p className="stat-value">{snapshot?.cluster?.contract_count ?? 0}</p></Column>
             </Grid>
+            <p className="helper">These groups are inside this repository. Calls between services are on the Cluster view.</p>
             <h2 className="section-title">Subsystems</h2>
             <RecordTable repository={selected?.name || ""} rows={communities} emptyTitle="No subsystems" emptyDescription="This repository graph has no community summary." preferred={["repository", "symbol", "label", "size", "symbols", "cohesion"]} />
             <h2 className="section-title">Important connectors</h2>
@@ -334,8 +385,134 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
           </TabPanel>
         </TabPanels>
       </Tabs>
+      </> : null}
     </div>
   );
+}
+
+function ClusterView({
+  repos,
+  map,
+  error,
+  onOpen,
+}: {
+  repos: { slug: string; name: string }[];
+  map: RelationshipMap | null;
+  error: string;
+  onOpen: (serviceId: string) => void;
+}) {
+  if (error) return <InlineNotification kind="error" title="Cluster is unavailable" subtitle={error} lowContrast hideCloseButton />;
+  if (!map) return <InlineLoading description="Loading the service cluster" />;
+  const clusters = map.clusters;
+  const rows = map.relationships.map((item) => relationshipRow(item, repos));
+  return (
+    <div className="stack-gap">
+      <Grid>
+        <Column sm={4} md={2} lg={4}><p className="stat-label">Service clusters</p><p className="stat-value">{clusters.length}</p></Column>
+        <Column sm={4} md={2} lg={4}><p className="stat-label">Cross-service calls</p><p className="stat-value">{map.total}</p></Column>
+        <Column sm={4} md={2} lg={4}><p className="stat-label">Separate repositories</p><p className="stat-value">{map.individuals.length}</p></Column>
+      </Grid>
+      {clusters.length === 0 ? (
+        <NamiEmptyState title="No service cluster" description="No service calls another service yet. Each repository can still be opened on its own." />
+      ) : clusters.map((cluster, index) => (
+        <section key={cluster.services.join("-")}>
+          <h2 className="section-title">{clusters.length === 1 ? "Service cluster" : `Service cluster ${index + 1}`}</h2>
+          <p className="helper">{`${cluster.services.length} services call each other across repository boundaries. ${cluster.relationships === 1 ? "1 call is" : `${cluster.relationships} calls are`} listed below. Opening a service shows that repository’s internal structure.`}</p>
+          <ul className="cluster-members">
+            {cluster.services.map((serviceId) => (
+              <li key={serviceId}>
+                <Button kind="ghost" size="sm" onClick={() => onOpen(serviceId)}>{serviceLabel(repos, serviceId)}</Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <h2 className="section-title">Cross-service calls</h2>
+      {map.truncated ? <p className="helper">Showing {rows.length} of {map.total}.</p> : null}
+      <NamiDataTable
+        columns={[
+          { key: "caller", header: "Caller" },
+          { key: "symbol", header: "Symbol" },
+          { key: "contract", header: "Contract" },
+          { key: "provider", header: "Provider" },
+          { key: "kind", header: "Kind" },
+          { key: "evidence", header: "Evidence" },
+        ]}
+        rows={rows}
+        emptyTitle="No cross-service calls"
+        emptyDescription="Services in this workspace do not call one another."
+        paginate={false}
+        renderExpanded={(row) => (
+          <dl className="detail-list">
+            <div><dt>What this call is</dt><dd>{row.detail}</dd></div>
+            <div><dt>Caller file</dt><dd>{row.file || "—"}{row.line ? `:${row.line}` : ""}</dd></div>
+            <div><dt>Qualified name</dt><dd>{row.qualified || "—"}</dd></div>
+            <div><dt>Contract identity</dt><dd>{row.identity || "—"}</dd></div>
+            <div><dt>Impact</dt><dd><Link to={`/impact?service=${encodeURIComponent(row.providerId)}&analyze=contract&contract=${encodeURIComponent(row.contractId)}`}>Analyze this contract</Link></dd></div>
+          </dl>
+        )}
+      />
+      <h2 className="section-title">Separate repositories</h2>
+      <p className="helper">These repositories are in the workspace and have no cross-service call. They are not part of a cluster.</p>
+      {map.individuals.length === 0 ? (
+        <p className="helper">Every service in the snapshot belongs to a cluster.</p>
+      ) : (
+        <ul className="cluster-members">
+          {map.individuals.map((serviceId) => (
+            <li key={serviceId}>
+              <Button kind="ghost" size="sm" onClick={() => onOpen(serviceId)}>{serviceLabel(repos, serviceId)}</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function relationshipRow(item: ServiceRelationship, repos: { slug: string; name: string }[]) {
+  return {
+    id: `${item.from_service}-${item.contract_id}-${item.caller_qualified}`,
+    caller: serviceLabel(repos, item.from_service),
+    symbol: item.caller_symbol || "—",
+    contract: item.contract,
+    provider: serviceLabel(repos, item.to_service),
+    providerId: item.to_service,
+    contractId: item.contract_id,
+    kind: item.kind === "http" ? "HTTP" : item.kind === "grpc" ? "gRPC" : item.kind === "event" ? "Event" : item.kind,
+    evidence: evidenceLabel(item.evidence, item.resolution),
+    detail: evidenceSentence(item),
+    file: item.caller_file,
+    line: item.caller_line ?? "",
+    qualified: item.caller_qualified,
+    identity: item.contract_identity,
+  };
+}
+
+function evidenceLabel(status: string, resolution: string) {
+  const source = status === "declared" ? "Declared" : status === "extracted" ? "From source" : "Unrecorded";
+  const binding = resolution === "exact" ? "symbol" : resolution === "file" ? "file" : resolution === "unbound" ? "unbound" : "";
+  return binding ? `${source} · ${binding}` : source;
+}
+
+function evidenceSentence(item: ServiceRelationship) {
+  const source = item.evidence === "declared"
+    ? "This call is declared in the cluster manifest"
+    : item.evidence === "extracted"
+      ? "This call was read from source"
+      : "No evidence source was recorded";
+  const place = item.caller_file ? `${item.caller_symbol || "The caller"} in ${item.caller_file}${item.caller_line ? `:${item.caller_line}` : ""}` : item.caller_symbol;
+  if (item.resolution === "exact" && place) return `${source}. It is bound to ${place}.`;
+  if (item.resolution === "file" && item.caller_file) return `${source}. It is bound to ${item.caller_file}, not one symbol.`;
+  return `${source}.`;
+}
+
+function serviceLabel(repos: { slug: string; name: string }[], serviceId: string) {
+  return repositoryForService(repos, serviceId)?.name || serviceId;
+}
+
+function repositoryForService(repos: { slug: string; name: string }[], serviceId: string) {
+  const slug = serviceId.replace(/-/g, "_");
+  return repos.find((repo) => repo.slug === serviceId || repo.name === serviceId || repo.name.endsWith(`/${serviceId}`) || repo.slug.endsWith(`_${slug}`) || repo.slug.endsWith(slug));
 }
 
 function Term({ term, definition }: { term: string; definition: string }) {

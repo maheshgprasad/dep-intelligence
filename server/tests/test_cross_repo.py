@@ -203,7 +203,7 @@ def test_manifest_rejects_unknown_version_duplicates_and_escape(tmp_path: Path) 
     bad.write_text(json.dumps(missing), encoding="utf-8")
     _manifest, errors = load_manifest(bad, repos, ROOT)
     assert any("missing service" in error for error in errors)
-    good, errors = load_manifest(ROOT / "cluster-manifest.json", repos, ROOT)
+    good, errors = load_manifest(ROOT / "fixtures" / "cluster-manifest.json", repos, ROOT)
     assert errors == [] and good is not None
 
 
@@ -214,9 +214,9 @@ def test_fixture_manifest_does_not_replace_the_allowlist(tmp_path: Path) -> None
     from dep_intel.sources import load_repos
 
     repos = load_repos(settings)
-    strict, errors = load_manifest(ROOT / "cluster-manifest.json", repos, ROOT)
+    strict, errors = load_manifest(ROOT / "fixtures" / "cluster-manifest.json", repos, ROOT)
     assert strict is None and any("not an entry in repos.txt" in error for error in errors)
-    manifest, applied_errors, notices = applicable_manifest(ROOT / "cluster-manifest.json", repos, ROOT)
+    manifest, applied_errors, notices = applicable_manifest(ROOT / "fixtures" / "cluster-manifest.json", repos, ROOT)
     assert applied_errors == [] and manifest is not None
     assert [service.id for service in manifest.services] == ["example_api"]
     assert notices and "repos.txt" in notices[0] and "fixtures" in notices[0]
@@ -426,7 +426,7 @@ def test_express_axios_fetch_prefixes_and_ambiguous_hosts() -> None:
     settings = _settings(Path("/tmp"))
     from dep_intel.sources import load_repos
 
-    manifest, errors = load_manifest(ROOT / "cluster-manifest.json", load_repos(_settings(ROOT / "output")), ROOT)
+    manifest, errors = load_manifest(ROOT / "fixtures" / "cluster-manifest.json", load_repos(_settings(ROOT / "output")), ROOT)
     assert manifest and not errors
     model = build_contract_model(
         manifest,
@@ -437,7 +437,7 @@ def test_express_axios_fetch_prefixes_and_ambiguous_hosts() -> None:
         },
     )
     assert any(call.provider_id == "auth-service" and call.path == "/api/auth/validate" for call in model.calls)
-    billing = json.loads((ROOT / "cluster-manifest.json").read_text(encoding="utf-8"))
+    billing = json.loads((ROOT / "fixtures" / "cluster-manifest.json").read_text(encoding="utf-8"))
     billing["services"].append(
         {
             "id": "billing-service",
@@ -649,7 +649,7 @@ def test_bridge_restitch_does_not_duplicate(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     from dep_intel.sources import load_repos
 
-    manifest, errors = load_manifest(ROOT / "cluster-manifest.json", load_repos(settings), ROOT)
+    manifest, errors = load_manifest(ROOT / "fixtures" / "cluster-manifest.json", load_repos(settings), ROOT)
     assert manifest and not errors
     auth = (ROOT / "fixtures/auth-service/src/server.js").read_text(encoding="utf-8")
     user = (ROOT / "fixtures/user-service/src/users.js").read_text(encoding="utf-8")
@@ -747,7 +747,7 @@ def test_fixture_manifest_links_list_users() -> None:
     from dep_intel.sources import load_repos
 
     settings = _settings(ROOT / "output")
-    manifest, errors = load_manifest(ROOT / "cluster-manifest.json", load_repos(settings), ROOT)
+    manifest, errors = load_manifest(ROOT / "fixtures" / "cluster-manifest.json", load_repos(settings), ROOT)
     assert manifest and not errors
     files = {
         "auth-service": {"src/server.js": (ROOT / "fixtures/auth-service/src/server.js").read_text(encoding="utf-8")},

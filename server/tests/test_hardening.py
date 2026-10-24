@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from dep_intel.api import app
 from dep_intel.app_state import build_app_state, cross_service_relationships, service_catalog
 from dep_intel.cluster_manifest import ImpactSettings
-from dep_intel.cluster_service import _file_allowed
+from dep_intel.cluster_service import _file_allowed, resolve_roots
 from dep_intel.config import Settings
 from dep_intel.cross_repo_graph import index_snapshot
 from dep_intel.graph_models import CODE_SYMBOL, CONSUMES_HTTP, HANDLED_BY, HTTP_CONTRACT, GraphEdge, GraphNode, Partition, symbol_key
@@ -96,25 +96,39 @@ def test_catalog_returns_unique_relative_files_for_one_service() -> None:
     assert len({item["path"] for item in catalog["files"]}) == len(catalog["files"])
     assert catalog["contracts"][0]["service_id"] == "auth-service"
     assert service_catalog(snapshot, "missing")["error"] == "unknown_service"
+    contract.metadata["identity"] = contract.qualified_name
+    by_key, _candidates, error = resolve_roots(snapshot, service="auth-service", symbol="", file="", line=None, contract_id=catalog["contracts"][0]["id"])
+    assert error == "" and by_key == [contract.key]
+    by_identity, _candidates, error = resolve_roots(snapshot, service="auth-service", symbol="", file="", line=None, contract_id=contract.qualified_name)
+    assert error == "" and by_identity == [contract.key]
 
 
 def test_relationships_are_cross_service_contracts_only() -> None:
     contract = _contract("auth-service")
     caller = _node("user-service", "listUsers", "src/users.js")
     handler = _node("auth-service", "validate", "src/auth/index.ts")
+    report = _node("report-job", "total", "report_job.py")
     snapshot = _snapshot(
-        [contract, caller, handler],
+        [contract, caller, handler, report],
         [
-            GraphEdge(caller.key, contract.key, CONSUMES_HTTP, {"status": "extracted"}),
+            GraphEdge(caller.key, contract.key, CONSUMES_HTTP, {"status": "extracted", "resolution": "exact", "file": "src/users.js", "line": 6}),
             GraphEdge(contract.key, handler.key, HANDLED_BY, {"status": "extracted"}),
         ],
     )
-    rows = cross_service_relationships(snapshot)["relationships"]
+    payload = cross_service_relationships(snapshot)
+    rows = payload["relationships"]
     assert len(rows) == 1
     assert rows[0]["from_service"] == "user-service"
     assert rows[0]["to_service"] == "auth-service"
     assert rows[0]["kind"] == "http"
     assert rows[0]["contract"] == "POST /api/auth/validate"
+    assert rows[0]["caller_symbol"] == "listUsers"
+    assert rows[0]["caller_file"] == "src/users.js"
+    assert rows[0]["evidence"] == "extracted"
+    assert rows[0]["resolution"] == "exact"
+    assert payload["total"] == 1
+    assert payload["clusters"] == [{"services": ["auth-service", "user-service"], "relationships": 1}]
+    assert payload["individuals"] == ["report-job"]
 
 
 def test_review_progress_is_authoritative_and_monotonic(tmp_path: Path) -> None:
