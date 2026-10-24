@@ -39,7 +39,7 @@ def main() -> None:
             _build(dest)
     repos = work / "repos.txt"
     repos.write_text("auth-service\nuser-service\nreport-job\n", encoding="utf-8")
-    manifest_body = json.loads((ROOT / "cluster-manifest.json").read_text(encoding="utf-8"))
+    manifest_body = json.loads((ROOT / "fixtures" / "cluster-manifest.json").read_text(encoding="utf-8"))
     for service in manifest_body["services"]:
         service["repository"] = service["id"]
     manifest_body["watch"]["debounce_ms"] = 100

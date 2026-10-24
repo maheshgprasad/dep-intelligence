@@ -458,8 +458,31 @@ export async function clusterCatalog(service: string, signal?: AbortSignal): Pro
   return response.json();
 }
 
-export async function clusterRelationships(limit = 12): Promise<{ relationships: { from_service: string; to_service: string; kind: string; contract_id: string; contract: string }[] }> {
-  const response = await fetch(`/api/cluster/relationships?limit=${limit}`);
+export type ServiceRelationship = {
+  from_service: string;
+  to_service: string;
+  kind: string;
+  contract_id: string;
+  contract: string;
+  contract_identity: string;
+  caller_symbol: string;
+  caller_file: string;
+  caller_line: number | null;
+  caller_qualified: string;
+  evidence: string;
+  resolution: string;
+};
+
+export type RelationshipMap = {
+  relationships: ServiceRelationship[];
+  total: number;
+  truncated: boolean;
+  clusters: { services: string[]; relationships: number }[];
+  individuals: string[];
+};
+
+export async function clusterRelationships(limit = 12, signal?: AbortSignal): Promise<RelationshipMap> {
+  const response = await fetch(`/api/cluster/relationships?limit=${limit}`, { signal });
   if (!response.ok) throw new Error("Relationships could not be loaded.");
   return response.json();
 }

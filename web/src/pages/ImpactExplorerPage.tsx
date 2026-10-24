@@ -43,7 +43,7 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: AppState | null }) 
   const analyze = params.get("analyze") === "contract" ? "contract" : "code";
   const [files, setFiles] = useState<string[]>([]);
   const [contracts, setContracts] = useState<{ id: string; label: string }[]>([]);
-  const [contract, setContract] = useState("");
+  const [contract, setContract] = useState(params.get("contract") || "");
   const [evidence, setEvidence] = useState(MODES[0]);
   const [asOf, setAsOf] = useState("");
   const [scenario, setScenario] = useState(SCENARIOS[0]);
@@ -70,7 +70,10 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: AppState | null }) 
       .then((payload) => {
         if (!current) return;
         setFiles(payload.files.map((item) => item.path));
-        setContracts(payload.contracts.map((item) => ({ id: item.id, label: item.name })));
+        const next = payload.contracts.map((item) => ({ id: item.id, label: item.name }));
+        setContracts(next);
+        const requested = params.get("contract") || "";
+        if (requested && next.some((item) => item.id === requested)) setContract(requested);
       })
       .catch(() => {
         if (!current) return;
