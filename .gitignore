@@ -12,3 +12,4 @@ __pycache__/
 fixtures/**/.git
 # Added by code-review-graph
 .code-review-graph/
+repos.txt
