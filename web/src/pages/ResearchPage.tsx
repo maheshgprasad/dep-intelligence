@@ -126,6 +126,10 @@ export function ResearchPage({ snapshot }: { snapshot: AppState | null }) {
       <Button kind="primary" disabled={!service || !file || Boolean(weightError)} onClick={() => void run()}>Run evaluation</Button>
       {result ? (
         <>
+          <div className="button-row">
+            <Button kind="ghost" size="sm" onClick={() => downloadResearch("research.json", JSON.stringify(result.candidates, null, 2), "application/json")}>JSON</Button>
+            <Button kind="ghost" size="sm" onClick={() => downloadResearch("research.csv", researchCsv(result), "text/csv")}>CSV</Button>
+          </div>
           <p className="helper">
             Temporal causal validity {String(result.causal_validity?.temporal)}. Structural causal validity {String(result.causal_validity?.structural)}. Overall causal validity {String(result.causal_validity?.overall)}. Provider {result.temporal_provider}. Cutoff {result.temporal_cutoff || "none"}.
           </p>
@@ -156,4 +160,21 @@ export function ResearchPage({ snapshot }: { snapshot: AppState | null }) {
       ) : null}
     </div>
   );
+}
+
+function downloadResearch(filename: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function researchCsv(result: HybridImpactResponse): string {
+  const lines = ["service,file,nami_rank,structural,temporal,origin"];
+  for (const item of result.candidates) {
+    lines.push([item.service_id, item.file_path, item.hybrid_score.toFixed(3), item.structural.score.toFixed(3), item.temporal.score.toFixed(3), item.evidence_origin].join(","));
+  }
+  return lines.join("\n");
 }

@@ -63,6 +63,28 @@ body {
   gap: 1rem;
 }
 
+.decision-hero h2 {
+  font-size: 1.5rem;
+  font-weight: 400;
+  margin: 0.5rem 0;
+}
+
+.decision-kicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.action-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.action-list p {
+  margin: 0.25rem 0 0.75rem;
+}
+
 .eyebrow {
   margin: 0;
   font-size: 0.75rem;

@@ -119,6 +119,45 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## Applied policies", ""])
     for item in report.get("policies") or []:
         lines.append(f"- {item.get('policy_id')}: applied={item.get('applied')} result={item.get('result')} — {item.get('evidence')}")
+    assessment = report.get("assessment") or {}
+    if assessment:
+        lines.extend(["", "## Assessment", "", assessment.get("headline") or "", "", assessment.get("summary") or "", "", f"Next step: {assessment.get('recommended_next_step') or ''}", ""])
+    presentation = report.get("decision_presentation") or {}
+    if presentation:
+        lines.extend([f"Heading: {presentation.get('heading') or ''}", f"Gate label: {presentation.get('label') or ''}", ""])
+    enforcement = report.get("enforcement") or {}
+    if enforcement:
+        lines.extend([
+            "## Enforcement",
+            "",
+            f"Gate decision: {(enforcement.get('gate_decision') or gate.get('decision') or '').upper()}",
+            f"Enforcement: {enforcement.get('enforcement_mode') or ''}",
+            f"Workflow prevented: {'Yes' if enforcement.get('workflow_prevented') else 'No'}",
+            "",
+        ])
+    if report.get("gate_checklist"):
+        lines.extend(["## Gate checklist", ""])
+        for item in report.get("gate_checklist") or []:
+            lines.append(f"- {item.get('label')}: {item.get('status')}")
+        lines.append("")
+    if report.get("inferences"):
+        lines.extend(["## Inferences", ""])
+        for item in report.get("inferences") or []:
+            lines.append(f"- {item.get('title')}: {item.get('statement')}")
+        lines.append("")
+    rules = gate.get("decision_rules") or []
+    if rules:
+        lines.extend(["## Decision evidence", ""])
+        for item in rules:
+            lines.append(f"- {item.get('title')} ({item.get('rule_id')}), evidence {item.get('evidence_grade')}")
+        lines.append("")
+    actions = report.get("actions") or []
+    if actions:
+        lines.extend(["## Actions", ""])
+        for item in actions:
+            kind = "Required" if item.get("required") else "Recommended"
+            lines.append(f"- {kind}: {item.get('title')}. {item.get('description')}")
+        lines.append("")
     lines.extend(["", "## Evidence limitations", ""])
     for item in report.get("limitations") or []:
         lines.append(f"- {item}")

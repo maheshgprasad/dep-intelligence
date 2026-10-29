@@ -14,7 +14,7 @@ import {
   StructuredListWrapper,
   Tile,
 } from "@carbon/react";
-import { clusterRelationships, type AppState } from "../api";
+import { clusterRelationships, recentReviews, type AppState } from "../api";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
@@ -36,6 +36,16 @@ export function OverviewPage({
   const view = intelligenceView(snapshot, refreshing);
   const services = snapshot?.cluster?.services ?? [];
   const [relations, setRelations] = useState<{ from: string; contract: string; to: string }[]>([]);
+  const [blockedReview, setBlockedReview] = useState("");
+
+  useEffect(() => {
+    void recentReviews()
+      .then((reviews) => {
+        const blocked = reviews.find((item) => item.decision === "block");
+        setBlockedReview(blocked ? blocked.review_id : "");
+      })
+      .catch(() => setBlockedReview(""));
+  }, [snapshot?.cluster?.version]);
 
   useEffect(() => {
     if (!snapshot?.cluster?.version) return;
@@ -67,9 +77,16 @@ export function OverviewPage({
     <div className="stack-gap">
       <PageHeader
         title="Nami Trace"
-        description="Cross-repository change intelligence"
+        description="Nami Trace helps teams understand what a change may affect, why, what should be verified, and whether it is ready to proceed."
         status={refreshing ? <p className="helper">Showing the previous snapshot while intelligence refreshes.</p> : null}
       />
+      {snapshot.cluster?.stale_services?.length ? (
+        <InlineNotification kind="info" title="Intelligence is out of date" subtitle={`${snapshot.cluster.stale_services.length} service${snapshot.cluster.stale_services.length === 1 ? "" : "s"} ${snapshot.cluster.stale_services.length === 1 ? "has" : "have"} stale intelligence. Refresh before relying on structural paths.`} lowContrast hideCloseButton />
+      ) : null}
+      {blockedReview ? (
+        <InlineNotification kind="warning" title="A recent review needs action" subtitle="A stored review is blocked. Open it to see the evidence and the required next step." lowContrast hideCloseButton />
+      ) : null}
+      {blockedReview ? <Link href={`/review/${blockedReview}`}>Open the blocked review</Link> : null}
       <Grid>
         <Column sm={4} md={2} lg={4}>
           <Tile>

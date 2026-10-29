@@ -388,6 +388,22 @@ def record_review_feedback(
     return json.dumps(payload, default=str)
 
 
+@mcp.tool()
+def export_review(review_id: str, format: str = "markdown", repos_file: str = "", output_dir: str = "") -> str:
+    """Write a stored review export and return its path. Formats are markdown and json. PDF stays a file download."""
+    from dep_intel.review_export import ensure_export
+
+    kind = "markdown" if format in {"markdown", "md"} else "json" if format == "json" else ""
+    if not kind:
+        return json.dumps({"code": "unsupported_format", "format": format, "formats": ["markdown", "json"]})
+    settings = Settings.load(repos_file, output_dir)
+    try:
+        path = ensure_export(settings.output_dir, review_id, kind)
+    except FileNotFoundError:
+        return json.dumps({"code": "review_not_found", "review_id": review_id})
+    return json.dumps({"review_id": review_id, "format": kind, "path": str(path)})
+
+
 def main() -> None:
     mcp.run()
 

@@ -19,6 +19,12 @@ import {
   Tile,
 } from "@carbon/react";
 import { cancelJob, getReview, reviewJob, sendReviewFeedback, type ReviewFinding, type ReviewReport } from "../api";
+import { ActionList } from "../components/ActionList";
+import { AssessmentSummary } from "../components/AssessmentSummary";
+import { DecisionReason } from "../components/DecisionReason";
+import { EvidenceList } from "../components/EvidenceList";
+import { ExportMenu } from "../components/ExportMenu";
+import { GateChecklist } from "../components/GateChecklist";
 import { FocusedImpactPath } from "../components/FocusedImpactPath";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
@@ -142,10 +148,15 @@ export function ReviewDetailPage() {
         actions={
           <div className="button-row">
             <Button kind="tertiary" size="sm" onClick={() => navigate("/review")}>Review another change</Button>
-            <Button kind="ghost" size="sm" href={`/api/review/${report.review_id}/report`}>Download report</Button>
+            <ExportMenu reviewId={report.review_id} summary={report.copy_summary || report.summary.text} />
           </div>
         }
       />
+      <AssessmentSummary report={report} />
+      <ActionList actions={report.actions ?? []} />
+      <DecisionReason rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
+      <GateChecklist items={report.gate_checklist ?? []} />
+      <EvidenceList evidence={report.evidence_catalog ?? []} counter={report.counter_evidence ?? []} suppressed={report.suppressed_findings ?? []} />
       <InlineNotification kind={report.gate.reason_codes?.includes("cancelled") ? "info" : kind} title={report.gate.reason_codes?.includes("cancelled") ? "Review cancelled" : decision.toUpperCase()} subtitle={reviewExplanation(report)} lowContrast hideCloseButton />
       <dl className="detail-list">
         <div><dt>Review mode</dt><dd>{modeText(report)}</dd></div>
@@ -201,6 +212,7 @@ export function ReviewDetailPage() {
             />
           </TabPanel>
           <TabPanel>
+            <p className="helper">Nami Rank orders downstream files using current dependency structure and historical change evidence. It does not decide whether this change is blocked.</p>
             <NamiDataTable
               columns={[
                 { key: "rank", header: "Rank" },

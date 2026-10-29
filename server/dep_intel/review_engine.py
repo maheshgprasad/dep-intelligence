@@ -23,6 +23,8 @@ from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
 from dep_intel.impact import analyze
 from dep_intel.review_context import collect_context
 from dep_intel.review_evidence import apply_evidence_gate
+from dep_intel.review_explain import attach_explanation
+from dep_intel.review_sufficiency import apply_claim_sufficiency
 from dep_intel.review_feedback import record_feedback
 from dep_intel.review_findings import build_findings
 from dep_intel.review_gate import decide_gate
@@ -151,7 +153,8 @@ class ReviewEngine:
             minimum=(config.get("gate") or {}).get("minimum_evidence") or "weak",
             alignment=alignment,
         )
-        diagnostics = list(change.get("diagnostics") or []) + rejected
+        accepted, sufficiency_rejected = apply_claim_sufficiency(accepted, alignment=alignment)
+        diagnostics = list(change.get("diagnostics") or []) + rejected + sufficiency_rejected
         if model_diagnostic:
             diagnostics.append(diagnostic(model_diagnostic, "The optional review model did not return usable findings.", severity="warning"))
         cancelled = cancel is not None and getattr(cancel, "is_set", lambda: False)()
@@ -585,7 +588,7 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
         "finding_count": len(gate.get("findings") or []),
         "model_summary": model_summary,
     }
-    return {
+    body = {
         "schema_version": 1,
         "review_id": review_id,
         "module": MODULE_NAME,
@@ -620,6 +623,7 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
         "score_note": SCORE_NOTE,
         "cache": {"hit": False},
     }
+    return attach_explanation(body, config)
 
 
 def _summary_text(change: dict, gate: dict, impact: dict) -> str:
@@ -725,5 +729,6 @@ def public_config(repo: Path | None, settings: Settings) -> dict[str, Any]:
         "verification": {"enabled": (config.get("verification") or {}).get("enabled"), "allow_network": (config.get("verification") or {}).get("allow_network"), "commands": [item.get("id") for item in (config.get("verification") or {}).get("commands") or []]},
         "model_configured": model_configured(),
         "diagnostics": errors,
+        "enforcement": config.get("enforcement"),
         "score_note": SCORE_NOTE,
     }

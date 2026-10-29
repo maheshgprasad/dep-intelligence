@@ -69,6 +69,28 @@ Exit `0` for pass or warn, `1` for block, and `2` for incomplete or a configurat
 
 The older static `review_code` scan and the standalone API-dependency report remain available to MCP and tests. They are not dashboard pages. Package, advisory, and coverage scans live under Repository health and are not part of Refresh intelligence.
 
+## Explainability
+
+The gate decision is unchanged by the explanation layer. After `decide_gate`, the report adds an assessment, a checklist, evidence ids (`EV-001` …), inferences (`INF-001` …), actions, and decision rules. Finding generators still propose a candidate strength. `review_sufficiency` can downgrade or suppress that grade. It does not raise a candidate to verified, and it does not read Nami Rank as a block.
+
+Nami Rank still only orders downstream files. A high rank, temporal-only evidence, or a model suggestion cannot block.
+
+| Condition | Evidence required | Outcome |
+| --- | --- | --- |
+| Consumed contract removed | Removal plus a known consumer, with current structural evidence | BLOCK `BG-CONTRACT-001` |
+| Required verification failed | Command executed and a non-zero exit | BLOCK `BG-VERIFY-001` |
+| Verified blocking policy violation | Policy match on a changed line | BLOCK `BG-POLICY-001` |
+| Verified critical evidence | Policy match and critical severity | BLOCK `BG-CRITICAL-001` |
+| Cross-service structural impact | Structural path to another service | WARN `BG-IMPACT-001` |
+| Temporal association only | Repository history | Review target `BG-TEMPORAL-001`, never BLOCK |
+| Graph stale or unavailable when strict graph is on | Current graph evidence | INCOMPLETE `BG-GRAPH-001` |
+| Required verification did not finish | A finished command result | INCOMPLETE `BG-EVIDENCE-001` |
+| Model suggestion only | None that the gate will accept | Advisory `BG-AI-001`, never BLOCK |
+
+Stale structural evidence for a consumed-contract claim is downgraded, so it is not a verified block. Strict graph mode still returns INCOMPLETE before that claim can block. Enforcement mode (`advisory`, `merge_gate`, `deployment_gate`) is recorded on the report and does not change the gate decision. The CLI keeps its existing exit codes unless `--enforcement` is set.
+
+Details: [REVIEW_EVIDENCE.md](REVIEW_EVIDENCE.md) and [EXPORTS.md](EXPORTS.md).
+
 ## Limitations
 
 Automatic protobuf, gRPC, and broker discovery are not claimed. Manifest-declared contracts keep that provenance. Handler body edits are not API breaks. Historical association is not a dependency. Exact review depends on `code-review-graph` to build a private partition. Verification is not a security sandbox. Pull request generation does not post comments.

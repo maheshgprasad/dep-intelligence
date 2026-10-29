@@ -56,6 +56,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "policies": [],
     "budgets": {},
+    "enforcement": {"mode": "advisory", "incomplete": "hold"},
 }
 
 
@@ -110,6 +111,17 @@ def validate_config(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str,
             errors.append(diagnostic("invalid_policy", f"Policy {policy_id} has an unknown severity.", severity="error"))
             continue
         kept.append(item)
+    enforcement = raw.get("enforcement") if isinstance(raw.get("enforcement"), dict) else {}
+    mode = str(enforcement.get("mode") or config["enforcement"]["mode"])
+    incomplete = str(enforcement.get("incomplete") or config["enforcement"]["incomplete"])
+    if mode not in {"advisory", "merge_gate", "deployment_gate"}:
+        errors.append(diagnostic("invalid_policy", "enforcement.mode must be advisory, merge_gate, or deployment_gate.", severity="error"))
+    else:
+        config["enforcement"]["mode"] = mode
+    if incomplete not in {"hold", "allow"}:
+        errors.append(diagnostic("invalid_policy", "enforcement.incomplete must be hold or allow.", severity="error"))
+    else:
+        config["enforcement"]["incomplete"] = incomplete
     config["policies"] = kept
     config["config_hash"] = hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
     return config, errors
