@@ -14,8 +14,9 @@ import {
   InlineLoading,
   InlineNotification,
   Switch,
+  Tile,
 } from "@carbon/react";
-import { clusterCatalog, refreshIntelligence, runHybridImpact, type AppState, type HybridCandidate, type HybridImpactResponse } from "../api";
+import { clusterCatalog, impactNarrative, refreshIntelligence, runHybridImpact, type AppState, type HybridCandidate, type HybridImpactResponse, type ImpactNarrative } from "../api";
 import { FocusedImpactPath } from "../components/FocusedImpactPath";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { PageHeader } from "../components/PageHeader";
@@ -51,9 +52,11 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: AppState | null }) 
   const [error, setError] = useState("");
   const [stale, setStale] = useState(false);
   const [result, setResult] = useState<HybridImpactResponse | null>(null);
+  const [narrative, setNarrative] = useState<ImpactNarrative | null>(null);
 
   function invalidate() {
     setResult(null);
+    setNarrative(null);
     setError("");
     setStale(false);
   }
@@ -110,12 +113,15 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: AppState | null }) 
     if (analyze === "contract") body.contract_id = contract;
     else body.file = file;
     try {
-      setResult(await runHybridImpact(body));
+      const ranked = await runHybridImpact(body);
+      setResult(ranked);
+      setNarrative(await impactNarrative(ranked).catch(() => null));
     } catch (exc) {
       const status = (exc as { status?: number }).status;
       setStale(status === 409);
       setError(status === 409 ? "The published intelligence is older than this selection." : exc instanceof Error ? exc.message : "Impact could not be analyzed.");
       setResult(null);
+      setNarrative(null);
     } finally {
       setBusy(false);
     }
@@ -259,13 +265,28 @@ export function ImpactExplorerPage({ snapshot }: { snapshot: AppState | null }) 
           </Grid>
         </AccordionItem>
       </Accordion>
-      {result ? <ImpactResult result={result} /> : null}
+      {result ? <ImpactResult result={result} narrative={narrative} /> : null}
     </div>
   );
 }
 
-function ImpactResult({ result }: { result: HybridImpactResponse }) {
+function ImpactResult({ result, narrative }: { result: HybridImpactResponse; narrative: ImpactNarrative | null }) {
   return (
+    <div className="stack-gap">
+      {narrative ? (
+        <Tile>
+          <h2 className="section-title">Nami inference</h2>
+          <p className="section-title">{narrative.title}</p>
+          <p>{narrative.statement}</p>
+          <p>Recommended: {narrative.recommended}</p>
+          <p className="helper">Nami Rank orders downstream files. This summary is not a merge decision, and a rank is not a probability of breakage.</p>
+          <div className="button-row">
+            <Button kind="ghost" size="sm" onClick={() => downloadText("impact.json", JSON.stringify(result, null, 2), "application/json")}>JSON</Button>
+            <Button kind="ghost" size="sm" onClick={() => downloadText("impact.csv", impactCsv(result), "text/csv")}>CSV</Button>
+            <Button kind="ghost" size="sm" onClick={() => downloadText("impact.md", impactMarkdown(result, narrative), "text/markdown")}>Markdown</Button>
+          </div>
+        </Tile>
+      ) : null}
     <NamiDataTable
       title="Downstream candidates"
       description={result.score_meaning}
@@ -283,6 +304,7 @@ function ImpactResult({ result }: { result: HybridImpactResponse }) {
       emptyAction={{ label: "Change analysis", href: "/impact" }}
       renderExpanded={(row) => <CandidateDetail row={row} />}
     />
+    </div>
   );
 }
 
@@ -326,4 +348,26 @@ function originLabel(origin: string): string {
   if (origin === "hybrid" || origin === "both") return "Structure + history";
   if (origin.includes("temporal")) return "History";
   return "Structure";
+}
+
+function downloadText(filename: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function impactCsv(result: HybridImpactResponse): string {
+  const lines = ["rank,service,file,evidence,nami_rank,structural,temporal"];
+  result.candidates.forEach((item, index) => {
+    lines.push([index + 1, item.service_id, item.file_path, item.evidence_origin, item.hybrid_score.toFixed(3), item.structural.score.toFixed(3), item.temporal.score.toFixed(3)].join(","));
+  });
+  return lines.join("\n");
+}
+
+function impactMarkdown(result: HybridImpactResponse, narrative: ImpactNarrative): string {
+  const rows = result.candidates.map((item, index) => `| ${index + 1} | ${item.service_id} | ${item.file_path} | ${item.evidence_origin} | ${item.hybrid_score.toFixed(3)} |`);
+  return [`# ${narrative.title}`, "", narrative.statement, "", `Recommended: ${narrative.recommended}`, "", "| Rank | Service | File | Evidence | Nami Rank |", "| --- | --- | --- | --- | --- |", ...rows, ""].join("\n");
 }

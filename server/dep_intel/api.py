@@ -616,7 +616,45 @@ def review_report(review_id: str) -> FileResponse:
     path = Settings.load().output_dir / "reviews" / review_id / "report.md"
     if not path.is_file():
         raise HTTPException(status_code=404, detail={"code": "review_not_found"})
-    return FileResponse(path, media_type="text/markdown")
+    return FileResponse(path, media_type="text/markdown", filename=f"nami-review-{review_id[:8]}.md")
+
+
+def _review_export(review_id: str, kind: str, media_type: str, filename: str) -> FileResponse:
+    from dep_intel.review_export import ensure_export
+
+    try:
+        path = ensure_export(Settings.load().output_dir, review_id, kind)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail={"code": "review_not_found"}) from None
+    return FileResponse(path, media_type=media_type, filename=filename)
+
+
+@app.get("/api/review/{review_id}/export/json")
+async def review_export_json(review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_review_export, review_id, "json", "application/json", f"nami-review-{review_id[:8]}.json")
+
+
+@app.get("/api/review/{review_id}/export/pdf")
+async def review_export_pdf(review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_review_export, review_id, "pdf", "application/pdf", f"nami-review-{review_id[:8]}.pdf")
+
+
+@app.get("/api/review/{review_id}/export/evidence")
+async def review_export_evidence(review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_review_export, review_id, "zip", "application/zip", f"nami-review-{review_id[:8]}-evidence.zip")
+
+
+class ImpactSummaryBody(BaseModel):
+    root: dict[str, Any] = Field(default_factory=dict)
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    ranked_candidates: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post("/api/cluster/impact-summary")
+def impact_summary(body: ImpactSummaryBody) -> dict:
+    from dep_intel.review_explain import summarize_impact
+
+    return summarize_impact(body.model_dump())
 
 
 @app.get("/api/review/{review_id}/finding/{finding_id}")

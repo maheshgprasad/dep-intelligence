@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Run Nami Boundary Gate from the command line.
 
-Exit status:
+Exit status, unless --enforcement is set:
   0  pass or warn
   1  block
   2  incomplete, or the review could not be executed
+
+The stored report always includes the gate decision. Enforcement mode does not
+change that decision. --enforcement advisory exits 0. merge_gate and
+deployment_gate exit 0 for pass or warn, 1 for block, and 2 for incomplete
+unless enforcement.incomplete is allow.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ def main() -> int:
     parser.add_argument("--model", dest="model", action="store_true")
     parser.add_argument("--no-model", dest="model", action="store_false")
     parser.add_argument("--json", dest="as_json", action="store_true")
+    parser.add_argument("--enforcement", choices=["advisory", "merge_gate", "deployment_gate"], default="")
     args = parser.parse_args()
     kind = "working_tree"
     if args.staged:
@@ -70,12 +76,20 @@ def main() -> int:
     finally:
         cluster.close()
     decision = (report.get("gate") or {}).get("decision") or "incomplete"
+    enforcement = report.get("enforcement") or {}
     if args.as_json:
         print(json.dumps(report, indent=2, default=str))
     else:
         print(f"Decision: {decision.upper()}")
         print(report.get("summary", {}).get("text") or "")
+        print(f"Gate decision: {decision.upper()}")
+        print(f"Enforcement: {enforcement.get('enforcement_mode') or 'advisory'}")
+        print(f"Workflow prevented: {'Yes' if enforcement.get('workflow_prevented') else 'No'}")
         print(f"Review: {report.get('review_id')}")
+    if args.enforcement:
+        from dep_intel.review_explain import enforcement_exit
+
+        return enforcement_exit(decision, args.enforcement, enforcement.get("incomplete_policy") or "hold")
     if decision in {"pass", "warn"}:
         return 0
     if decision == "block":

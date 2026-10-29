@@ -323,9 +323,118 @@ export type ReviewFinding = {
   evidence?: { summary: string; source: string; structured_data?: Record<string, unknown> }[];
 };
 
+export type ReviewAssessment = {
+  headline: string;
+  summary: string;
+  impact_level: "none" | "service" | "cross_service" | string;
+  recommended_next_step: string;
+  inference_refs: string[];
+};
+
+export type ReviewEvidence = {
+  evidence_id: string;
+  kind: string;
+  source: string;
+  source_label?: string;
+  statement: string;
+  service_id?: string | null;
+  repository?: string | null;
+  file_path?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  base_sha?: string | null;
+  head_sha?: string | null;
+  graph_version?: string | null;
+  freshness?: string;
+  supports: string[];
+  contradicts: string[];
+};
+
+export type ReviewAction = {
+  action_id: string;
+  title: string;
+  description: string;
+  required: boolean;
+  reason: string;
+  satisfies: string[];
+  alternative_group?: string;
+};
+
+export type ReviewInference = {
+  inference_id: string;
+  type: string;
+  title: string;
+  statement: string;
+  severity: string;
+  confidence: string;
+  evidence_refs: string[];
+  counter_evidence_refs: string[];
+  affected_services: string[];
+  recommended_actions: ReviewAction[];
+};
+
+export type GateChecklistItem = {
+  check_id: string;
+  label: string;
+  status: "passed" | "failed" | "warning" | "not_evaluated" | "unavailable";
+  evidence_refs: string[];
+};
+
+export type DecisionRule = {
+  rule_id: string;
+  title: string;
+  outcome: string;
+  decision: string;
+  inference_refs: string[];
+  evidence_refs: string[];
+  evidence_grade: string;
+  required_actions: string[];
+  blocks: boolean;
+};
+
+export type DecisionPresentation = {
+  decision: string;
+  heading: string;
+  label: string;
+  note: string;
+};
+
+export type ReviewEnforcement = {
+  gate_decision: string;
+  enforcement_mode: "advisory" | "merge_gate" | "deployment_gate" | string;
+  incomplete_policy: string;
+  enforced: boolean;
+  workflow_prevented: boolean;
+  exit_code: number;
+};
+
+export type SuppressedFinding = {
+  potential_claim: string;
+  reason: string;
+  finding_id?: string;
+  counter_evidence_refs: string[];
+};
+
+export type ExportFormat = "pdf" | "markdown" | "json" | "evidence";
+
+export type ImpactNarrative = {
+  title: string;
+  statement: string;
+  recommended: string;
+};
+
 export type ReviewReport = {
   review_id: string;
-  gate: { decision: string; reason_codes: string[]; blocking_findings: string[]; warning_findings: string[]; review_targets: string[]; evidence_complete: boolean };
+  gate: {
+    decision: string;
+    reason_codes: string[];
+    blocking_findings: string[];
+    warning_findings: string[];
+    review_targets: string[];
+    evidence_complete: boolean;
+    summary?: string;
+    decision_rules?: DecisionRule[];
+  };
   mode?: string;
   requested_mode?: string;
   resolved_mode?: string;
@@ -356,6 +465,16 @@ export type ReviewReport = {
   limitations: string[];
   performance?: { total_ms?: number };
   score_note?: string;
+  assessment?: ReviewAssessment;
+  evidence_catalog?: ReviewEvidence[];
+  counter_evidence?: ReviewEvidence[];
+  inferences?: ReviewInference[];
+  gate_checklist?: GateChecklistItem[];
+  actions?: ReviewAction[];
+  suppressed_findings?: SuppressedFinding[];
+  enforcement?: ReviewEnforcement;
+  decision_presentation?: DecisionPresentation;
+  copy_summary?: string;
 };
 
 export async function reviewConfig(repository = ""): Promise<{ model_configured: boolean; policies: { id: string; severity: string; check: string }[]; diagnostics: { message: string }[]; score_note: string; verification?: { commands?: string[] } }> {
@@ -396,6 +515,37 @@ export async function getReview(reviewId: string): Promise<ReviewReport> {
 export async function reviewJob(jobId: string): Promise<{ status: string; result?: ReviewReport; error?: string }> {
   const response = await fetch(`/api/jobs/${jobId}`);
   if (!response.ok) throw new Error("Review job was not found");
+  return response.json();
+}
+
+export async function downloadReviewExport(reviewId: string, format: ExportFormat): Promise<void> {
+  const path =
+    format === "markdown"
+      ? `/api/review/${reviewId}/report`
+      : format === "json"
+        ? `/api/review/${reviewId}/export/json`
+        : format === "pdf"
+          ? `/api/review/${reviewId}/export/pdf`
+          : `/api/review/${reviewId}/export/evidence`;
+  const response = await fetch(path);
+  if (!response.ok) throw new Error("The export could not be created.");
+  const blob = await response.blob();
+  const extension = format === "evidence" ? "zip" : format === "markdown" ? "md" : format;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nami-review-${reviewId.slice(0, 8)}.${extension}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function impactNarrative(result: HybridImpactResponse): Promise<ImpactNarrative> {
+  const response = await fetch("/api/cluster/impact-summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root: result.root ?? {}, candidates: result.candidates }),
+  });
+  if (!response.ok) throw new Error("The impact summary could not be built.");
   return response.json();
 }
 
