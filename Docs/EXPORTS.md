@@ -54,3 +54,16 @@ The PDF is a text report: decision, assessment, checklist, required and recommen
 ## Impact and research
 
 Impact Explorer can download the ranked candidate table as JSON, CSV, or Markdown. Research can download the evaluation table as JSON or CSV. Those files are the table on screen. Nested gate evidence stays in the review export.
+
+## Intelligence report exports
+
+Repository and cluster reports use schema `nami.intelligence.report`, version 1. Review exports stay on `nami.review.export`.
+
+| Format | Endpoint |
+| --- | --- |
+| JSON | `GET /api/reports/{id}/export/json` |
+| Markdown | `GET /api/reports/{id}/export/markdown` |
+| PDF | `GET /api/reports/{id}/export/pdf` |
+| Evidence package | `GET /api/reports/{id}/export/evidence` |
+
+These files are rendered from `output/reports/<id>/report.json`. Export does not refresh the graph, run Nami Rank, or run Boundary Gate. The intelligence PDF is a white page with Carbon’s light text, blue accent, and gray rules. Review PDFs stay text-only. See [REPORTING.md](REPORTING.md).

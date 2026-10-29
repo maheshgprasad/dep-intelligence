@@ -404,6 +404,54 @@ def export_review(review_id: str, format: str = "markdown", repos_file: str = ""
     return json.dumps({"review_id": review_id, "format": kind, "path": str(path)})
 
 
+@mcp.tool()
+def generate_intelligence_report(scope: str = "cluster", service: str = "", repos_file: str = "", output_dir: str = "") -> str:
+    """Generate a repository or cluster intelligence report from published intelligence. Does not refresh, rank, or run the gate."""
+    from dep_intel.cluster_service import get_engine
+    from dep_intel.reporting.builder import ReportError, generate_report
+
+    settings = Settings.load(repos_file, output_dir)
+    snapshot = get_engine(settings).current()
+    try:
+        document = generate_report(settings, snapshot, scope, service)
+    except (ReportError, KeyError) as exc:
+        return json.dumps({"code": "report_unavailable", "message": str(exc)})
+    return json.dumps({
+        "report_id": document["report_id"],
+        "scope": document["scope"],
+        "graph_version": document["reproducibility"]["graph_version"],
+        "readiness": (document.get("executive_summary") or {}).get("readiness"),
+    })
+
+
+@mcp.tool()
+def get_intelligence_report(report_id: str, repos_file: str = "", output_dir: str = "") -> str:
+    """Return a stored intelligence report. This does not regenerate it."""
+    from dep_intel.reporting.store import read_report
+
+    settings = Settings.load(repos_file, output_dir)
+    document = read_report(settings.output_dir, report_id)
+    if document is None:
+        return json.dumps({"code": "report_not_found", "report_id": report_id})
+    return json.dumps(document, default=str)
+
+
+@mcp.tool()
+def export_intelligence_report(report_id: str, format: str = "markdown", repos_file: str = "", output_dir: str = "") -> str:
+    """Write a stored intelligence report export and return its path. Formats are markdown, json, and pdf. PDF is a file path, not bytes."""
+    from dep_intel.reporting.package import ensure_export
+
+    kind = {"markdown": "markdown", "md": "markdown", "json": "json", "pdf": "pdf"}.get(format, "")
+    if not kind:
+        return json.dumps({"code": "unsupported_format", "format": format, "formats": ["markdown", "json", "pdf"]})
+    settings = Settings.load(repos_file, output_dir)
+    try:
+        path = ensure_export(settings.output_dir, report_id, kind)
+    except FileNotFoundError:
+        return json.dumps({"code": "report_not_found", "report_id": report_id})
+    return json.dumps({"report_id": report_id, "format": kind, "path": str(path)})
+
+
 def main() -> None:
     mcp.run()
 

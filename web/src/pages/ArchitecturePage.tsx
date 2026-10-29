@@ -21,6 +21,7 @@ import {
 } from "@carbon/react";
 import { Link } from "react-router-dom";
 import { clusterRelationships, queryGraph, repositoryArchitecture, type AppState, type Cochange, type CrgBundle, type CrgPayload, type RelationshipMap, type ServiceRelationship } from "../api";
+import { GenerateReportButton } from "../components/GenerateReportButton";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -203,6 +204,11 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
           if (repo) next.set("service", repo.slug);
           setParams(next, { replace: true });
         }}
+      />
+      <GenerateReportButton
+        scope="repository"
+        service={snapshot?.cluster?.services?.find((item) => item.id === selected?.slug || item.id === selected?.name)?.id || selected?.slug || ""}
+        staleCount={snapshot?.cluster?.stale_services?.includes(selected?.slug || "") ? 1 : 0}
       />
       <Tabs>
         <TabList aria-label="Architecture">

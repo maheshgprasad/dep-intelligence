@@ -28,6 +28,8 @@ import { getAppState, refreshIntelligence, searchWorkspace, type AppState, type 
 import { StatusTag } from "./components/StatusTag";
 import { intelligenceView } from "./intelligence";
 import { ArchitecturePage } from "./pages/ArchitecturePage";
+import { ReportDetailPage } from "./pages/ReportDetailPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { ImpactExplorerPage } from "./pages/ImpactExplorerPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RepositoryHealthPage } from "./pages/RepositoryHealthPage";
@@ -172,6 +174,7 @@ export function App() {
           <HeaderMenu aria-label="More" menuLinkName="More">
             <HeaderMenuItem href="/health" isCurrentPage={current("/health")} onClick={follow}>Repository health</HeaderMenuItem>
             <HeaderMenuItem href="/research" isCurrentPage={current("/research")} onClick={follow}>Research</HeaderMenuItem>
+            <HeaderMenuItem href="/reports" isCurrentPage={current("/reports")} onClick={follow}>Reports</HeaderMenuItem>
           </HeaderMenu>
         </HeaderNavigation>
         <SideNav aria-label="Primary" expanded={menu} isPersistent={false} onOverlayClick={() => setMenu(false)}>
@@ -183,6 +186,7 @@ export function App() {
             <SideNavMenu title="More" defaultExpanded>
               <SideNavMenuItem href="/health" isActive={current("/health")} onClick={follow}>Repository health</SideNavMenuItem>
               <SideNavMenuItem href="/research" isActive={current("/research")} onClick={follow}>Research</SideNavMenuItem>
+              <SideNavMenuItem href="/reports" isActive={current("/reports")} onClick={follow}>Reports</SideNavMenuItem>
             </SideNavMenu>
           </SideNavItems>
         </SideNav>
@@ -271,6 +275,8 @@ export function App() {
           <Route path="/graph" element={<Navigate to="/architecture" replace />} />
           <Route path="/health" element={<RepositoryHealthPage loaded={loaded} />} />
           <Route path="/research" element={<ResearchPage snapshot={snapshot} />} />
+          <Route path="/reports" element={<ReportsPage snapshot={snapshot} />} />
+          <Route path="/reports/:reportId" element={<ReportDetailPage />} />
         </Routes>
       </Content>
     </Theme>

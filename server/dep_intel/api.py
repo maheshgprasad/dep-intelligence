@@ -689,6 +689,95 @@ def cluster_job_cancel(job_id: str) -> dict:
     return {"id": job.id, "status": job.status}
 
 
+class IntelligenceReportBody(BaseModel):
+    scope: str
+    service: str = ""
+    graph_version: str = ""
+    refresh: bool = False
+
+
+@app.post("/api/reports")
+async def create_intelligence_report(body: IntelligenceReportBody) -> dict:
+    return await asyncio.to_thread(_create_intelligence_report, body.scope, body.service, body.graph_version, body.refresh)
+
+
+def _create_intelligence_report(scope: str, service: str, graph_version: str, refresh: bool) -> dict:
+    from dep_intel.reporting.builder import ReportError, generate_report
+
+    settings = Settings.load()
+    engine = get_engine(settings)
+    if refresh:
+        refreshed = engine.refresh()
+        if refreshed.get("status") not in {"ok", None}:
+            raise HTTPException(status_code=409, detail={"code": "refresh_failed", "status": refreshed.get("status"), "errors": refreshed.get("errors") or []})
+        if graph_version and refreshed.get("version") not in {graph_version, None, ""}:
+            raise HTTPException(status_code=409, detail={"code": "graph_version_mismatch", "graph_version": refreshed.get("version"), "requested": graph_version})
+    snapshot = engine.current()
+    try:
+        document = generate_report(settings, snapshot, scope, service, graph_version)
+    except ReportError as exc:
+        raise HTTPException(status_code=409, detail={"code": "report_unavailable", "message": str(exc)}) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "unknown_service", "service": service}) from exc
+    return {
+        "report_id": document["report_id"],
+        "scope": document["scope"],
+        "status": "complete",
+        "generated_at": document["generated_at"],
+        "graph_version": document["reproducibility"]["graph_version"],
+        "readiness": (document.get("executive_summary") or {}).get("readiness"),
+    }
+
+
+@app.get("/api/reports")
+def list_intelligence_reports(limit: int = 20) -> dict:
+    from dep_intel.reporting.store import list_reports
+
+    return {"reports": list_reports(Settings.load().output_dir, limit)}
+
+
+@app.get("/api/reports/{report_id}")
+def get_intelligence_report(report_id: str) -> dict:
+    from dep_intel.reporting.store import read_report
+
+    document = read_report(Settings.load().output_dir, report_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail={"code": "report_not_found"})
+    return document
+
+
+def _intelligence_export(report_id: str, kind: str, media_type: str) -> FileResponse:
+    from dep_intel.reporting.package import ensure_export, public_filename
+
+    settings = Settings.load()
+    try:
+        path = ensure_export(settings.output_dir, report_id, kind)
+        filename = public_filename(settings.output_dir, report_id, kind)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail={"code": "report_not_found"}) from None
+    return FileResponse(path, media_type=media_type, filename=filename)
+
+
+@app.get("/api/reports/{report_id}/export/pdf")
+async def intelligence_export_pdf(report_id: str) -> FileResponse:
+    return await asyncio.to_thread(_intelligence_export, report_id, "pdf", "application/pdf")
+
+
+@app.get("/api/reports/{report_id}/export/markdown")
+async def intelligence_export_markdown(report_id: str) -> FileResponse:
+    return await asyncio.to_thread(_intelligence_export, report_id, "markdown", "text/markdown")
+
+
+@app.get("/api/reports/{report_id}/export/json")
+async def intelligence_export_json(report_id: str) -> FileResponse:
+    return await asyncio.to_thread(_intelligence_export, report_id, "json", "application/json")
+
+
+@app.get("/api/reports/{report_id}/export/evidence")
+async def intelligence_export_evidence(report_id: str) -> FileResponse:
+    return await asyncio.to_thread(_intelligence_export, report_id, "zip", "application/zip")
+
+
 @app.get("/")
 def dashboard() -> FileResponse:
     return _ui("")
