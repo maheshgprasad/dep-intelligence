@@ -539,6 +539,88 @@ export async function downloadReviewExport(reviewId: string, format: ExportForma
   URL.revokeObjectURL(url);
 }
 
+export type IntelligenceReportSummary = {
+  report_id: string;
+  scope: string;
+  service: string | null;
+  generated_at: string;
+  graph_version: string;
+};
+
+export type IntelligenceReport = {
+  schema: string;
+  schema_version: number;
+  report_id: string;
+  scope: string;
+  generated_at: string;
+  identity: {
+    service?: string;
+    repository?: string;
+    repository_sha?: string | null;
+    graph_version?: string;
+    revision_vector?: Record<string, { workspace_head?: string | null }>;
+  };
+  executive_summary: { headline?: string; summary?: string; readiness?: string; readiness_label?: string };
+  intelligence_status: Record<string, { status?: string; label?: string }>;
+  inferences: { type: string; statement: string; evidence?: string[] }[];
+  recommendations: { title: string; reason: string; service?: string | null }[];
+  intelligence_gaps?: string[];
+  limitations: string[];
+  reproducibility: { report_hash?: string; graph_version?: string; generated_at?: string; note?: string };
+  services?: { service: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number }[];
+  workspace?: { service_count: number; relationship_count: number; contract_count: number; graph_stale: number; unresolved_count: number; history_ready: number };
+};
+
+export async function createIntelligenceReport(body: { scope: "cluster" | "repository"; service?: string; graph_version?: string; refresh?: boolean }): Promise<{ report_id: string; scope: string; graph_version: string; readiness?: string }> {
+  const response = await fetch("/api/reports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload.detail;
+    const message = typeof detail === "object" && detail && "message" in detail ? String(detail.message) : "The report could not be generated from current intelligence.";
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+export async function listIntelligenceReports(): Promise<IntelligenceReportSummary[]> {
+  const response = await fetch("/api/reports?limit=20");
+  if (!response.ok) return [];
+  const payload = await response.json();
+  return payload.reports ?? [];
+}
+
+export async function getIntelligenceReport(reportId: string): Promise<IntelligenceReport> {
+  const response = await fetch(`/api/reports/${reportId}`);
+  if (response.status === 404) throw new Error("This report is not stored.");
+  if (!response.ok) throw new Error("The report could not be loaded.");
+  return response.json();
+}
+
+export async function downloadIntelligenceExport(reportId: string, format: ExportFormat): Promise<void> {
+  const path =
+    format === "markdown"
+      ? `/api/reports/${reportId}/export/markdown`
+      : format === "json"
+        ? `/api/reports/${reportId}/export/json`
+        : format === "pdf"
+          ? `/api/reports/${reportId}/export/pdf`
+          : `/api/reports/${reportId}/export/evidence`;
+  const response = await fetch(path);
+  if (!response.ok) throw new Error("The export could not be created.");
+  const blob = await response.blob();
+  const extension = format === "evidence" ? "zip" : format === "markdown" ? "md" : format;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nami-intelligence-${reportId.slice(0, 8)}.${extension}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function impactNarrative(result: HybridImpactResponse): Promise<ImpactNarrative> {
   const response = await fetch("/api/cluster/impact-summary", {
     method: "POST",

@@ -16,6 +16,7 @@ import {
 } from "@carbon/react";
 import { clusterRelationships, recentReviews, type AppState } from "../api";
 import { NamiEmptyState } from "../components/NamiEmptyState";
+import { GenerateReportButton } from "../components/GenerateReportButton";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
 import { intelligenceView } from "../intelligence";
@@ -79,6 +80,7 @@ export function OverviewPage({
         title="Nami Trace"
         description="Nami Trace helps teams understand what a change may affect, why, what should be verified, and whether it is ready to proceed."
         status={refreshing ? <p className="helper">Showing the previous snapshot while intelligence refreshes.</p> : null}
+        actions={<GenerateReportButton scope="cluster" staleCount={snapshot.cluster?.stale_services?.length || 0} />}
       />
       {snapshot.cluster?.stale_services?.length ? (
         <InlineNotification kind="info" title="Intelligence is out of date" subtitle={`${snapshot.cluster.stale_services.length} service${snapshot.cluster.stale_services.length === 1 ? "" : "s"} ${snapshot.cluster.stale_services.length === 1 ? "has" : "have"} stale intelligence. Refresh before relying on structural paths.`} lowContrast hideCloseButton />

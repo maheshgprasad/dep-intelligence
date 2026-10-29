@@ -51,6 +51,8 @@ Structural change impact is a separate cluster graph. It reads each repository's
 
 **Nami Boundary Gate** reviews one change. It builds a Change View, asks Nami Rank for downstream files, applies `nami-review.yaml`, and returns pass, warn, block, or incomplete. Ranking scores stay ranking evidence. Gate feedback does not change NRM. The stored review explains the decision with evidence, inferences, and actions, and can be exported as Markdown, JSON, PDF, or an evidence package. See [Docs/BOUNDARY_GATE.md](Docs/BOUNDARY_GATE.md), [Docs/REVIEW_EVIDENCE.md](Docs/REVIEW_EVIDENCE.md), and [Docs/EXPORTS.md](Docs/EXPORTS.md).
 
+Repository and cluster intelligence reports are a separate scope. They describe the published snapshot: services, contracts, relationships, history, health, and gaps. They do not return pass, warn, or block. See [Docs/REPORTING.md](Docs/REPORTING.md).
+
 ```bash
 server/.venv/bin/python scripts/review-change.py --repository fixtures/auth-service --working-tree
 server/.venv/bin/python scripts/demo-boundary-gate.py
