@@ -219,6 +219,7 @@ jobs:
           path: output/ci
       - name: Write job summary
         if: always()
+        continue-on-error: true
         env:
           JOB_BACKEND: ${{ needs.backend.result }}
           JOB_SEMANTIC: ${{ needs.semantic.result }}

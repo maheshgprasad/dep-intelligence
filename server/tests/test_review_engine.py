@@ -82,7 +82,8 @@ def test_future_history_is_not_visible_at_the_review_cutoff(tmp_path: Path) -> N
         "model": {"enabled": False},
         "config": {"policies": [], "verification": {"enabled": False, "commands": []}},
     })
-    assert cluster.as_of == cutoff
+    assert cluster.as_of is not None
+    assert datetime.fromisoformat(cluster.as_of) == datetime.fromisoformat(cutoff)
     paths = [item.get("file_path") for item in report["impact"]["ranked_candidates"]]
     assert "src/c.js" not in paths
     ref = CanonicalFileRef("auth", "auth", "src/a.js")
