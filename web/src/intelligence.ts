@@ -25,8 +25,9 @@ const LABELS: Record<string, Readiness> = {
 export function intelligenceView(state: AppState | null, refreshing: boolean): IntelligenceView {
   const intelligence = state?.intelligence;
   const attention: string[] = [];
-  if ((intelligence?.unresolved ?? 0) > 0) {
-    attention.push(`${intelligence?.unresolved} unresolved reference${intelligence?.unresolved === 1 ? "" : "s"}`);
+  const providers = intelligence?.provider_discovery;
+  if ((providers?.unique_unresolved ?? 0) > 0) {
+    attention.push(`${providers?.unique_unresolved} unresolved provider reference${providers?.unique_unresolved === 1 ? "" : "s"}`);
   }
   for (const service of intelligence?.stale_services ?? []) attention.push(`${service} graph is stale`);
   for (const service of state?.cluster?.services ?? []) {

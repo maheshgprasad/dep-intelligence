@@ -21,4 +21,5 @@ STATUS_LABELS = {
     "limited": "Limited",
     "complete": "Complete",
     "none": "No findings",
+    "workspace_only": "Workspace-wide",
 }

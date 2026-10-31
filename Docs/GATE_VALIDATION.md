@@ -79,7 +79,7 @@ These checks are bounded to triggered rules and a few mutations each. They test 
 
 ## Where it appears
 
-Repository and cluster intelligence reports stay on their own path (`POST /api/reports`, schema `nami.intelligence.report`). Gate validation is attached to a change review. It does not replace those reports. See [REPORTING.md](REPORTING.md).
+Workspace, service cluster, and repository intelligence reports stay on their own path (`POST /api/reports`, schema `nami.intelligence.report`). Gate validation is attached to a change review. It does not replace those reports. A review with no `gate_validation` field was created before a stored validation result existed. An empty or incomplete `gate_validation` object is a missing record, and those two cases stay distinct. See [REPORTING.md](REPORTING.md).
 
 The review stores `gate_validation`. The review page shows Decision validation after the Nami explanation. PDF, Markdown, JSON, and the evidence package include the same result. Package files:
 

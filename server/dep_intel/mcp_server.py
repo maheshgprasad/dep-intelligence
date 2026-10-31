@@ -405,15 +405,15 @@ def export_review(review_id: str, format: str = "markdown", repos_file: str = ""
 
 
 @mcp.tool()
-def generate_intelligence_report(scope: str = "cluster", service: str = "", repos_file: str = "", output_dir: str = "") -> str:
-    """Generate a repository or cluster intelligence report from published intelligence. Does not refresh, rank, or run the gate."""
+def generate_intelligence_report(scope: str = "workspace", service: str = "", cluster_id: str = "", repos_file: str = "", output_dir: str = "") -> str:
+    """Generate a workspace, service-cluster, or repository intelligence report. Scope cluster is a legacy alias for workspace. Does not refresh, rank, or run the gate."""
     from dep_intel.cluster_service import get_engine
     from dep_intel.reporting.builder import ReportError, generate_report
 
     settings = Settings.load(repos_file, output_dir)
     snapshot = get_engine(settings).current()
     try:
-        document = generate_report(settings, snapshot, scope, service)
+        document = generate_report(settings, snapshot, scope, service, cluster_id=cluster_id)
     except (ReportError, KeyError) as exc:
         return json.dumps({"code": "report_unavailable", "message": str(exc)})
     return json.dumps({
@@ -422,6 +422,30 @@ def generate_intelligence_report(scope: str = "cluster", service: str = "", repo
         "graph_version": document["reproducibility"]["graph_version"],
         "readiness": (document.get("executive_summary") or {}).get("readiness"),
     })
+
+
+@mcp.tool()
+def list_service_clusters(repos_file: str = "", output_dir: str = "") -> str:
+    """List connected service clusters from confirmed cross-service calls. This is not a Kubernetes cluster list."""
+    from dep_intel.cluster_service import get_engine
+    from dep_intel.service_clusters import detect_service_clusters
+
+    settings = Settings.load(repos_file, output_dir)
+    snapshot = get_engine(settings).current()
+    groups = detect_service_clusters(snapshot) if snapshot is not None else {"clusters": [], "standalone": []}
+    return json.dumps({
+        "clusters": [
+            {
+                "cluster_id": item["cluster_id"],
+                "label": item["label"],
+                "service_count": item["service_count"],
+                "relationship_count": item["relationship_count"],
+                "services": item["services"],
+            }
+            for item in groups["clusters"]
+        ],
+        "standalone": groups["standalone"],
+    }, default=str)
 
 
 @mcp.tool()

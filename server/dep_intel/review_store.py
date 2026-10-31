@@ -25,7 +25,7 @@ def write_review(output_dir: Path, review_id: str, artifacts: dict[str, Any]) ->
     return directory
 
 
-def list_reviews(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
+def list_reviews(output_dir: Path, limit: int | None = 20) -> list[dict[str, Any]]:
     """Newest stored reviews, metadata only. A corrupt directory is skipped."""
     root = output_dir / "reviews"
     if not root.is_dir():
@@ -60,9 +60,9 @@ def list_reviews(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
         except (OSError, TypeError, ValueError):
             continue
     rows.sort(key=lambda item: item.get("_mtime") or 0, reverse=True)
-    bounded = max(1, min(int(limit or 20), 100))
+    chosen = rows if limit is None else rows[: max(1, min(int(limit or 20), 100))]
     cleaned = []
-    for row in rows[:bounded]:
+    for row in chosen:
         row.pop("_mtime", None)
         cleaned.append(row)
     return cleaned

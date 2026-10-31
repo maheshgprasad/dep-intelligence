@@ -195,7 +195,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
         <InlineNotification
           kind="info"
           title="Topology status"
-          subtitle={`${topology.services?.length ?? 0} services. ${topology.relationships?.length ?? 0} resolved relationships. ${topology.unresolved?.length ?? 0} unresolved references. ${topology.overrides?.length ?? 0} manual overrides.`}
+          subtitle={`Provider discovery. ${topology.services?.length ?? 0} analyzed services. ${topology.relationships?.length ?? 0} resolved provider bindings. ${topology.unresolved?.length ?? 0} unresolved provider references. ${topology.overrides?.length ?? 0} manual overrides.`}
           lowContrast
           hideCloseButton
         />
@@ -453,7 +453,7 @@ function ClusterView({
       ) : clusters.map((cluster, index) => (
         <section key={cluster.services.join("-")}>
           <h2 className="section-title">{clusters.length === 1 ? "Service cluster" : `Service cluster ${index + 1}`}</h2>
-          <p className="helper">{`${cluster.services.length} services call each other across repository boundaries. ${cluster.relationships === 1 ? "1 call is" : `${cluster.relationships} calls are`} listed below. Opening a service shows that repository’s internal structure.`}</p>
+          <p className="helper">{`${cluster.services.length} services are connected by ${cluster.relationships} confirmed cross-service ${cluster.relationships === 1 ? "call" : "calls"}. Direction is kept on each call. Opening a service shows that repository’s internal structure.`}</p>
           <ul className="cluster-members">
             {cluster.services.map((serviceId) => (
               <li key={serviceId}>

@@ -1,26 +1,41 @@
 # Intelligence reports
 
-Nami Trace can report three scopes. Workspace and repository reports are observational. They do not return PASS, WARN, BLOCK, or INCOMPLETE. The stored workspace scope name remains `cluster`. The user-facing title is Workspace intelligence. Readiness is Complete when structural intelligence is current and optional sources are available, Partial when structure is current but history or health is incomplete, and Limited when structural intelligence itself is stale or unavailable.
+Nami Trace reports four scopes. Workspace, service cluster, and repository reports are observational. They do not return PASS, WARN, BLOCK, or INCOMPLETE. Readiness is Complete when structural intelligence is current and optional sources are available, Partial when structure is current but history or health is incomplete, and Limited when structural intelligence itself is stale or unavailable.
 
-| Scope | Question | Schema |
-| --- | --- | --- |
-| Change | What changed, what could be affected, and can this change proceed? | `nami.review.export` |
-| Repository | What do we know about this service, and where is that view incomplete? | `nami.intelligence.report` |
-| Cluster | How are the services connected, and where is workspace intelligence incomplete? | `nami.intelligence.report` |
+| Scope | Contains |
+| --- | --- |
+| Workspace | Everything in the published snapshot |
+| Service Cluster | One connected component of confirmed service calls |
+| Repository | One repository/service |
+| Change | One Boundary Gate review |
 
-A repository or cluster report is not a Boundary Gate decision. It does not return pass, warn, block, or incomplete. Review counts inside the report are historical gate outcomes, not a quality score. Gate validation and commentary belong to a change review. They do not replace this report.
+Legacy API value `"cluster"` is an alias for Workspace. A stored report whose scope is `"cluster"` remains a workspace snapshot. It is not reinterpreted as a Service Cluster.
+
+Service Cluster is a Nami reporting and topology concept: a connected component of confirmed cross-service relationships. It is not a Kubernetes cluster. Membership uses confirmed contract calls only. Direction is ignored for connectivity and kept on each displayed call. A repository with no confirmed call is standalone. It stays in the workspace and can have its own repository report. It is not a one-node service cluster.
+
+A workspace, service cluster, or repository report is not a Boundary Gate decision. Review counts inside the report are historical gate outcomes, not a quality score. Gate validation and commentary belong to a change review. They do not replace this report.
 
 ## Point in time
 
-`POST /api/reports` reads the published cluster snapshot. It does not rebuild graphs, mine history, refresh topology, scan health, run Nami Rank, or run Boundary Gate.
+`POST /api/reports` reads the published snapshot. It does not rebuild graphs, mine history, refresh topology, scan health, run Nami Rank, or run Boundary Gate. Opening a stored report does not add reviews that were created later. Exports render `report.json` and do not enrich it.
 
 ```json
-{ "scope": "cluster" }
+{ "scope": "workspace" }
+```
+
+```json
+{ "scope": "service_cluster", "cluster_id": "svc-cluster-…" }
 ```
 
 ```json
 { "scope": "repository", "service": "auth-service" }
 ```
+
+```json
+{ "scope": "cluster" }
+```
+
+The last body is accepted and stored as a workspace report. The server resolves `cluster_id` from the published snapshot. A browser-supplied service list is not the membership.
 
 Optional `graph_version` must match the published snapshot. If it does not, generation fails instead of using a newer snapshot. `refresh: true` rebuilds the cluster snapshot first and then reports that resulting version.
 
@@ -43,17 +58,20 @@ Markdown, JSON, PDF, and an evidence zip. The zip lists its own files in `metada
 ## CLI
 
 ```bash
-server/.venv/bin/python scripts/nami-report.py --cluster
+server/.venv/bin/python scripts/nami-report.py --workspace
+server/.venv/bin/python scripts/nami-report.py --service-cluster svc-cluster-…
 server/.venv/bin/python scripts/nami-report.py --repository auth-service
-server/.venv/bin/python scripts/nami-report.py --cluster --refresh
+server/.venv/bin/python scripts/nami-report.py --cluster
 ```
+
+`--cluster` is a deprecated alias for `--workspace`.
 
 Without `--format`, the command prints the report id and the export paths. `--refresh` is the only way the CLI rebuilds the snapshot first.
 
 ## MCP
 
-`generate_intelligence_report`, `get_intelligence_report`, and `export_intelligence_report` are additive. Export returns a file path for markdown, JSON, or PDF. It does not return PDF bytes.
+`generate_intelligence_report` accepts `workspace`, `service_cluster` (with `cluster_id`), `repository`, and the legacy `cluster` alias. `list_service_clusters` returns membership without the whole graph. `get_intelligence_report` and `export_intelligence_report` read the stored report. Export returns a file path for markdown, JSON, or PDF. It does not return PDF bytes.
 
 ## Limits
 
-Relationship rows in the human-readable report are bounded. The total count is kept. Nami Rank is not run to decorate these reports. Automatic protobuf, gRPC, and broker discovery are not claimed. Historical change association is not a dependency.
+Relationship rows in the human-readable report are bounded. Connected components, contract consumers, and provenance counts use the full confirmed set. Unresolved provider references come from stored topology discovery. Unresolved code symbols are a code-graph diagnostic and are not provider references. Nami Rank is not run to decorate these reports. Automatic protobuf, gRPC, and broker discovery are not claimed. Historical change association is not a dependency. A stored report is not rewritten when it is opened.

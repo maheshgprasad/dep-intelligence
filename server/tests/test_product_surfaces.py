@@ -22,7 +22,7 @@ def test_ui_routes_stay_registered() -> None:
 def test_failed_validation_copy_does_not_claim_validated_evidence() -> None:
     text = (ROOT / "web/src/components/NamiCommentary.tsx").read_text(encoding="utf-8")
     assert 'if (status === "failed") return "Generated from stored Nami evidence; decision validation failed"' in text
-    assert 'if (status === "validated") return "Based on validated Nami evidence"' in text
+    assert 'if (status === "validated") return "Generated from stored Nami evidence"' in text
 
 
 def test_api_families_stay_registered() -> None:

@@ -29,7 +29,9 @@ def service_summary(
     if part.error and part.quality == "ok":
         graph_status = "unavailable"
     health_states = [health["packages"]["status"], health["security"]["status"], health["coverage"]["status"]]
-    if all(item == "not_scanned" for item in health_states):
+    if all(item == "workspace_only" for item in health_states):
+        health_status = "workspace_only"
+    elif all(item == "not_scanned" for item in health_states):
         health_status = "not_scanned"
     elif any(item == "available" for item in health_states) and not all(item == "available" for item in health_states):
         health_status = "partial"

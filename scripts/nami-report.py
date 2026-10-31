@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Generate a repository or cluster intelligence report from published intelligence.
+"""Generate a workspace, service-cluster, or repository intelligence report.
 
 By default this uses the current snapshot and does not refresh graphs.
 Pass --refresh to rebuild the cluster snapshot first, then report that version.
+--cluster is a deprecated alias for --workspace.
 """
 
 from __future__ import annotations
@@ -23,7 +24,9 @@ from dep_intel.reporting.package import ensure_export  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a Nami intelligence report from published intelligence.")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--cluster", action="store_true")
+    group.add_argument("--workspace", action="store_true", help="Report every repository in the published snapshot.")
+    group.add_argument("--cluster", action="store_true", help="Deprecated alias for --workspace.")
+    group.add_argument("--service-cluster", default="", help="Report one confirmed service cluster by id.")
     group.add_argument("--repository", default="")
     parser.add_argument("--format", choices=["pdf", "json", "markdown", "evidence"], default="")
     parser.add_argument("--refresh", action="store_true", help="Refresh the cluster snapshot before generating.")
@@ -37,8 +40,13 @@ def main() -> int:
             if refreshed.get("status") != "ok":
                 return 2
         snapshot = engine.current()
-        scope = "cluster" if args.cluster else "repository"
-        document = generate_report(settings, snapshot, scope, args.repository)
+        if args.repository:
+            scope, service, cluster_id = "repository", args.repository, ""
+        elif args.service_cluster:
+            scope, service, cluster_id = "service_cluster", "", args.service_cluster
+        else:
+            scope, service, cluster_id = "workspace", "", ""
+        document = generate_report(settings, snapshot, scope, service, cluster_id=cluster_id)
     except ReportError as exc:
         print(exc)
         return 2

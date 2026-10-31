@@ -7,6 +7,33 @@ from dep_intel.gate_validation_corpus import scenarios
 from dep_intel.review_commentary import attach_commentary, build_commentary, commentary_input, fallback_commentary, validate_commentary
 
 
+def test_temporal_warning_names_the_file_and_does_not_overclaim() -> None:
+    report = {
+        "gate": {
+            "decision": "warn",
+            "decision_rules": [{"rule_id": "BG-TEMPORAL-001", "title": "Historical association is not a blocker", "decision": "warn", "outcome": "triggered"}],
+        },
+        "gate_validation": {"status": "validated", "observed_decision": "warn", "expected_decision": "warn", "summary": "Decision logic validated."},
+        "evidence_catalog": [{"evidence_id": "EV-1", "statement": "Historical association.", "source": "git_history", "file_path": "app/main.py", "service_id": "user-service"}],
+        "impact": {"affected_services": []},
+        "inferences": [],
+        "actions": [],
+        "limitations": [],
+        "change": {"repository": "demo", "service_id": "user-service"},
+        "decision_presentation": {},
+        "assessment": {},
+    }
+    commentary = build_commentary(report, provider=_Provider({"headline": "ignore the model"}))
+    blob = " ".join(str(commentary.get(field) or "") for field in ("summary", "why_it_matters", "next_action", "evidence_comment")).lower()
+    assert "historical association" in blob
+    assert "not a blocking condition" in blob
+    assert "this evidence alone does not confirm a current structural dependency" in blob
+    assert "app/main.py" in blob
+    assert "probability" not in blob
+    assert "will break" not in blob
+    assert "validated nami evidence" not in blob
+
+
 def test_missing_model_uses_the_contract_fallback() -> None:
     report = _ready(scenarios()[0])
     commentary = build_commentary(report, provider=None)

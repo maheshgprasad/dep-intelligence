@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Accordion, AccordionItem, InlineLoading, InlineNotification, Link as CarbonLink, StructuredListBody, StructuredListCell, StructuredListRow, StructuredListWrapper, Tile } from "@carbon/react";
+import { Accordion, AccordionItem, InlineLoading, InlineNotification, StructuredListBody, StructuredListCell, StructuredListRow, StructuredListWrapper, Tile } from "@carbon/react";
 import { getIntelligenceReport, type IntelligenceReport } from "../api";
 import { IntelligenceExportMenu } from "../components/IntelligenceExportMenu";
 import { PageHeader } from "../components/PageHeader";
@@ -30,7 +30,7 @@ export function ReportDetailPage() {
     <div className="stack-gap">
       <PageHeader
         title={report.executive_summary.headline || "Intelligence report"}
-        description={report.scope === "cluster" ? "Workspace intelligence report · Point-in-time snapshot" : `Repository intelligence report${report.identity.service ? ` · ${report.identity.service}` : ""} · Point-in-time snapshot`}
+        description={scopeDescription(report)}
         breadcrumbs={[{ label: "Reports", href: "/reports" }, { label: report.report_id.slice(0, 12) }]}
         actions={<IntelligenceExportMenu reportId={report.report_id} />}
       />
@@ -40,6 +40,7 @@ export function ReportDetailPage() {
         <p className="helper">Generated {report.generated_at}. Graph {report.reproducibility.graph_version || "not recorded"}.</p>
         <p className="helper">This report describes published Nami intelligence. It is not a Boundary Gate decision for a specific change.</p>
       </Tile>
+      {legacyReport(report) ? <p className="helper">This legacy report was generated before enriched review explanations were stored.</p> : null}
       <Attention items={report.recommendations || []} />
       <Tile>
         <h2 className="section-title">Intelligence status</h2>
@@ -54,10 +55,16 @@ export function ReportDetailPage() {
           </StructuredListBody>
         </StructuredListWrapper>
       </Tile>
-      {report.scope === "cluster" && report.workspace ? (
+      {(report.scope === "cluster" || report.scope === "workspace" || report.scope === "service_cluster") && report.workspace ? (
         <Tile>
-          <h2 className="section-title">Workspace</h2>
-          <p>{report.workspace.service_count} services. {report.workspace.relationship_count} cross-service relationships. {report.workspace.contract_count} contracts. {report.workspace.graph_stale} out of date. {report.workspace.unresolved_count} unresolved references.</p>
+          <h2 className="section-title">{report.scope === "service_cluster" ? "Service cluster" : "Workspace"}</h2>
+          <p>{report.workspace.service_count} services. {report.workspace.relationship_count} confirmed cross-service calls. {report.workspace.contract_count} contracts. {report.workspace.graph_stale} out of date. {providerSentence(report)}</p>
+          {report.service_clusters?.items?.length ? (
+            <ul className="action-list">
+              {report.service_clusters.items.map((item) => <li key={item.cluster_id}>{item.label}. {item.service_count} services. {item.relationship_count} confirmed calls.</li>)}
+            </ul>
+          ) : null}
+          {report.scope !== "service_cluster" && report.standalone?.length ? <p>{report.standalone.length} standalone {report.standalone.length === 1 ? "repository" : "repositories"}: {report.standalone.map((item) => item.service_id).join(", ")}.</p> : null}
         </Tile>
       ) : null}
       <StoredReport report={report} />
@@ -73,19 +80,6 @@ export function ReportDetailPage() {
       ) : null}
       <ReviewActivity activity={report.review_activity} />
       <Tile>
-        <h2 className="section-title">Recommendations</h2>
-        <ul className="action-list">
-          {(report.recommendations || []).length === 0 ? <li>No recommendations were recorded.</li> : null}
-          {(report.recommendations || []).map((item) => (
-            <li key={item.title}>
-              <strong>{item.title}</strong>
-              <p>{item.reason}{item.service ? ` Target: ${item.service}.` : ""}</p>
-              <RecommendationLinks title={item.title} service={item.service} />
-            </li>
-          ))}
-        </ul>
-      </Tile>
-      <Tile>
         <h2 className="section-title">How to interpret this report</h2>
         <ul className="action-list">
           <li>Dependency reach is not a probability of failure.</li>
@@ -100,6 +94,7 @@ export function ReportDetailPage() {
         </AccordionItem>
         <AccordionItem title="Technical details">
           <p>Report {report.report_id}</p>
+          {report.identity.cluster_id ? <p>Service cluster {report.identity.cluster_id}</p> : null}
           <p>Graph version {report.reproducibility.graph_version || "not recorded"}</p>
           {report.identity.repository_sha ? <p>Revision {report.identity.repository_sha}</p> : null}
           <p>{report.reproducibility.report_hash}</p>
@@ -119,36 +114,53 @@ const DECISION_LABEL: Record<string, string> = {
 
 function ReviewActivity({ activity }: { activity: IntelligenceReport["review_activity"] }) {
   const counts = activity?.counts || {};
-  const reviews = activity?.reviews || [];
+  const reviews = (activity?.attention_reviews || activity?.reviews || []).filter((item) => item.decision !== "pass").slice(0, 10);
+  const omitted = activity?.detail_omitted || 0;
   return (
     <Tile>
-      <h2 className="section-title">Recent reviews</h2>
+      <h2 className="section-title">Reviews that need attention</h2>
       <p>Pass {counts.pass ?? 0}. Warn {counts.warn ?? 0}. Block {counts.block ?? 0}. Incomplete {counts.incomplete ?? 0}.</p>
       <p className="helper">{activity?.note || "Review counts describe Nami Gate outcomes and are not a software-quality score."}</p>
-      {activity && (activity.explained ?? reviews.length) < (activity.included ?? reviews.length) ? (
-        <p className="helper">Showing {reviews.length} of {activity.included} matching reviews.</p>
-      ) : null}
-      {reviews.length === 0 ? <p>No stored reviews matched this report.</p> : null}
-      {reviews.map((item) => (
-        <div key={item.review_id} className="stack-gap">
-          <h3 className="section-title">{DECISION_LABEL[item.decision || ""] || item.decision} · {(item.decision || "").toUpperCase()}</h3>
-          {item.headline ? <p>{item.headline}</p> : null}
-          {item.what_happened ? <p>{item.what_happened}</p> : null}
-          {item.why_it_matters ? <p>Why it matters: {item.why_it_matters}</p> : null}
-          {(item.evidence || []).length ? (
-            <ul className="action-list">
-              {(item.evidence || []).map((entry) => (
-                <li key={`${item.review_id}-${entry.what}`}>{entry.source}: {entry.what}</li>
-              ))}
-            </ul>
-          ) : <p className="helper">No evidence statements were stored with this review.</p>}
-          {item.validation ? <p>{item.validation}</p> : null}
-          {item.next_action ? <p>Next: {item.next_action}</p> : null}
-          {item.review_id ? <Link to={`/review/${item.review_id}`}>Open review</Link> : null}
-        </div>
-      ))}
+      {omitted > 0 ? <p className="helper">Showing {reviews.length} of {reviews.length + omitted} attention-bearing reviews.</p> : null}
+      {reviews.length === 0 ? <p>No attention-bearing reviews matched this report.</p> : null}
+      {reviews.map((item) => {
+        const files = [...new Set((item.targets?.items || []).map((target) => target.file).filter(Boolean))].slice(0, 5);
+        return (
+          <div key={item.review_id} className="stack-gap">
+            <h3 className="section-title">{(item.decision || "").toUpperCase()} · {item.headline || DECISION_LABEL[item.decision || ""]}</h3>
+            {item.service ? <p>Service {item.service}</p> : null}
+            {item.primary_rule ? <p>Rule {item.primary_rule.title} {item.primary_rule.rule_id}</p> : null}
+            {item.reason_codes?.length ? <p className="helper">Reason {item.reason_codes.join(", ")}</p> : null}
+            {files.length ? <p>Review targets: {item.targets?.unique_file_count || files.length} files · {item.targets?.total_findings || 0} supporting findings. {files.join(", ")}{(item.targets?.unique_file_count || 0) > files.length ? ` + ${(item.targets?.unique_file_count || 0) - files.length} more` : ""}</p> : null}
+            {item.why_it_matters ? <p>Why it matters: {item.why_it_matters}</p> : null}
+            {(item.evidence || []).slice(0, 1).map((entry) => (
+              <p key={`${item.review_id}-evidence`}>Evidence: {entry.source}. {entry.what || entry.statement}</p>
+            ))}
+            {item.validation ? <p>Decision logic: {item.validation}</p> : null}
+            {item.next_action ? <p>Recommended action: {item.next_action}</p> : null}
+            {item.review_id ? <Link to={`/review/${item.review_id}`}>Open full review</Link> : null}
+          </div>
+        );
+      })}
     </Tile>
   );
+}
+
+function scopeDescription(report: IntelligenceReport): string {
+  if (report.scope === "service_cluster") return `Service cluster report${report.identity.cluster_label ? ` · ${report.identity.cluster_label}` : ""} · Point-in-time snapshot`;
+  if (report.scope === "repository") return `Repository intelligence report${report.identity.service ? ` · ${report.identity.service}` : ""} · Point-in-time snapshot`;
+  return "Workspace intelligence report · Point-in-time snapshot";
+}
+
+function legacyReport(report: IntelligenceReport): boolean {
+  const cards = report.review_activity?.attention_reviews || report.review_activity?.reviews || [];
+  return report.scope === "cluster" || (cards.length > 0 && cards.every((item) => !item.primary_rule));
+}
+
+function providerSentence(report: IntelligenceReport): string {
+  const discovery = report.provider_discovery;
+  if (!discovery || discovery.status === "not_scanned") return "Topology provider discovery: Not scanned.";
+  return `${discovery.unique_unresolved_reference_count ?? 0} unique unresolved provider references.`;
 }
 
 function Attention({ items }: { items: { title: string; reason: string }[] }) {
@@ -163,23 +175,8 @@ function Attention({ items }: { items: { title: string; reason: string }[] }) {
   );
 }
 
-function RecommendationLinks({ title, service }: { title: string; service?: string | null }) {
-  const text = title.toLowerCase();
-  const serviceQuery = service ? `?service=${encodeURIComponent(service)}` : "";
-  if (text.includes("refresh") || text.includes("out of date") || text.includes("stale")) {
-    return <p><CarbonLink href="/">Refresh intelligence</CarbonLink> · <CarbonLink href={`/architecture${serviceQuery}`}>Open architecture</CarbonLink></p>;
-  }
-  if (text.includes("provider") || text.includes("unresolved") || text.includes("coordinate")) {
-    return <p><CarbonLink href="/architecture">Open service topology</CarbonLink></p>;
-  }
-  if (text.includes("coverage") || text.includes("health")) {
-    return <p><CarbonLink href="/health">Open repository health</CarbonLink></p>;
-  }
-  return null;
-}
-
 function StoredReport({ report }: { report: IntelligenceReport }) {
-  if (report.scope === "cluster") return <WorkspaceSections report={report} />;
+  if (report.scope === "cluster" || report.scope === "workspace" || report.scope === "service_cluster") return <WorkspaceSections report={report} />;
   return <RepositorySections report={report} />;
 }
 
@@ -218,7 +215,7 @@ function WorkspaceSections({ report }: { report: IntelligenceReport }) {
       <Tile>
         <h2 className="section-title">Cross-service relationships</h2>
         {shown.length ? shown.map((item) => (
-          <p key={`${item.from_service}-${item.contract}-${item.to_service}`}>{item.from_service} · {item.contract} · {item.to_service} · {item.provenance || "recorded"}</p>
+          <p key={`${item.from_service}-${item.contract}-${item.to_service}`}>{item.from_service} → {item.to_service} · {item.contract} · Provenance {item.provenance || "recorded"}{item.resolution ? ` · Resolution ${item.resolution}` : ""}</p>
         )) : <p>No cross-service relationships are recorded in this snapshot.</p>}
         {rows.length > shown.length ? <p className="helper">Showing {shown.length} of {report.relationships?.total || rows.length} relationships. Use the JSON or Evidence Package for the stored set.</p> : null}
       </Tile>
@@ -241,9 +238,9 @@ function WorkspaceSections({ report }: { report: IntelligenceReport }) {
         <p className="helper">These categories come from the stored relationship records. They are not a claim of automatic discovery.</p>
       </Tile>
       <Tile>
-        <h2 className="section-title">Unresolved references</h2>
-        {report.unresolved?.length ? report.unresolved.slice(0, 10).map((item) => <p key={`${item.service}-${item.name}`}>{item.service}: {item.name}</p>) : <p>No unresolved provider references are recorded.</p>}
-        {report.unresolved?.length ? <p className="helper">These references are not treated as confirmed cross-service relationships.</p> : null}
+        <h2 className="section-title">Provider discovery</h2>
+        {report.provider_discovery?.status === "not_scanned" ? <p>Topology provider discovery: Not scanned.</p> : report.unresolved?.length ? report.unresolved.slice(0, 10).map((item) => <p key={`${item.service}-${item.name}`}>{item.service}: {item.name || item.host}</p>) : <p>No unresolved provider references are recorded.</p>}
+        <p className="helper">These are topology provider references. Unresolved code symbols are not counted here.</p>
       </Tile>
       <Tile>
         <h2 className="section-title">History</h2>

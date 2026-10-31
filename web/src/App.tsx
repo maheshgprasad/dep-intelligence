@@ -165,7 +165,7 @@ export function App() {
         <HeaderName href="/" prefix="" onClick={follow}>
           Nami Trace
         </HeaderName>
-        <HeaderNavigation aria-label="Primary">
+        <HeaderNavigation aria-label="Primary" aria-hidden={menu || undefined}>
           <HeaderMenuItem href="/" isCurrentPage={location.pathname === "/"} onClick={follow}>Overview</HeaderMenuItem>
           <HeaderMenuItem href="/review" isCurrentPage={current("/review")} onClick={follow}>Review change</HeaderMenuItem>
           <HeaderMenuItem href="/impact" isCurrentPage={current("/impact")} onClick={follow}>Impact explorer</HeaderMenuItem>
@@ -176,8 +176,13 @@ export function App() {
             <HeaderMenuItem href="/research" isCurrentPage={current("/research")} onClick={follow}>Research</HeaderMenuItem>
           </HeaderMenu>
         </HeaderNavigation>
-        <SideNav aria-label="Primary" expanded={menu} isPersistent={false} onOverlayClick={() => setMenu(false)}>
+        {menu ? <SideNav aria-label="Primary" expanded isPersistent={false} onOverlayClick={() => setMenu(false)}>
           <SideNavItems>
+            <div className="sidenav-search">
+              <form role="search" aria-label="Search" onSubmit={(event) => { event.preventDefault(); setMenu(false); navigate(`/architecture?q=${encodeURIComponent(query)}`); }}>
+                <Search size="sm" labelText="Search symbols, files, classes, functions" placeholder="Search" closeButtonLabelText="Clear search" value={query} onChange={(event) => setQuery(event.target.value)} />
+              </form>
+            </div>
             <SideNavLink href="/" isActive={location.pathname === "/"} onClick={follow}>Overview</SideNavLink>
             <SideNavLink href="/review" isActive={current("/review")} onClick={follow}>Review change</SideNavLink>
             <SideNavLink href="/impact" isActive={current("/impact")} onClick={follow}>Impact explorer</SideNavLink>
@@ -188,7 +193,7 @@ export function App() {
               <SideNavMenuItem href="/research" isActive={current("/research")} onClick={follow}>Research</SideNavMenuItem>
             </SideNavMenu>
           </SideNavItems>
-        </SideNav>
+        </SideNav> : null}
         <HeaderGlobalBar>
           <form
             className="header-search"
@@ -245,10 +250,10 @@ export function App() {
               <div><dt>Structure</dt><dd>{readinessText(view.cluster)}</dd></div>
               <div><dt>Contracts</dt><dd>{readinessText(view.contracts)}</dd></div>
               <div><dt>History</dt><dd>{readinessText(view.history)}</dd></div>
-              <div><dt>Topology</dt><dd>{view.unresolved ? "Partial" : readinessText(view.cluster)}</dd></div>
-              <div><dt>Health</dt><dd>Not scanned</dd></div>
+              <div><dt>Confirmed calls</dt><dd>{snapshot?.intelligence.confirmed_calls ?? "—"}</dd></div>
+              <div><dt>Provider discovery</dt><dd>{snapshot?.intelligence.provider_discovery?.label || "Not scanned"}</dd></div>
+              <div><dt>Health</dt><dd>{healthLabel(snapshot)}</dd></div>
               <div><dt>Out of date services</dt><dd>{view.stale}</dd></div>
-              <div><dt>Unresolved references</dt><dd>{view.unresolved}</dd></div>
             </dl>
             <p className="helper">Last refreshed</p>
             <p>{view.refreshedAt}</p>
@@ -282,6 +287,15 @@ export function App() {
       </Content>
     </Theme>
   );
+}
+
+function healthLabel(state: AppState | null): string {
+  const health = state?.health;
+  if (!health) return "Unavailable";
+  const parts = [health.packages, health.security, health.tests];
+  if (parts.every((item) => item?.available)) return "Available";
+  if (parts.some((item) => item?.available)) return "Partial";
+  return "Not scanned";
 }
 
 function readinessText(value: string): string {

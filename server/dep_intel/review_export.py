@@ -17,6 +17,7 @@ from dep_intel.hybrid_impact import NRM_VERSION
 from dep_intel.review_models import NBG_VERSION
 from dep_intel.review_pdf import render_text_pdf
 from dep_intel.review_store import read_review, render_markdown, review_dir
+from dep_intel.path_hygiene import scrub_text
 from dep_intel.sources import redact
 from dep_intel.store import read_json, write_json
 
@@ -39,7 +40,7 @@ def export_json(output_dir: Path, review_id: str) -> dict[str, Any]:
     return payload
 
 
-EXPORT_RENDERER = "decision-logic-1"
+EXPORT_RENDERER = "path-hygiene-1"
 
 
 def ensure_export(output_dir: Path, review_id: str, kind: str) -> Path:
@@ -68,7 +69,7 @@ def ensure_export(output_dir: Path, review_id: str, kind: str) -> Path:
     if fresh and target.is_file():
         return target
     (cache / "report.json").write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    (cache / "report.md").write_text(render_markdown(report), encoding="utf-8")
+    (cache / "report.md").write_text(scrub_text(render_markdown(report)), encoding="utf-8")
     (cache / "report.pdf").write_bytes(render_text_pdf(pdf_lines(payload)))
     (cache / "evidence.zip").write_bytes(build_zip(review_id, payload, report))
     write_json(cache, "cache.json", {"token": token})
@@ -254,7 +255,7 @@ def build_zip(review_id: str, payload: dict[str, Any], report: dict[str, Any]) -
     root = f"nami-review-{review_id}"
     files = {
         f"{root}/report.pdf": render_text_pdf(pdf_lines(payload)),
-        f"{root}/report.md": render_markdown(report).encode("utf-8"),
+        f"{root}/report.md": scrub_text(render_markdown(report)).encode("utf-8"),
         f"{root}/report.json": _bytes(payload),
         f"{root}/evidence/evidence.json": _bytes(payload.get("evidence") or []),
         f"{root}/evidence/counter-evidence.json": _bytes(payload.get("counter_evidence") or []),
@@ -435,7 +436,7 @@ def _scrub(value: Any) -> Any:
     if isinstance(value, str):
         if ".env" in value or "worktrees" in value:
             return "[omitted]"
-        return redact(value)[:4000]
+        return scrub_text(redact(value))[:4000]
     if isinstance(value, list):
         return [_scrub(item) for item in value]
     if isinstance(value, dict):

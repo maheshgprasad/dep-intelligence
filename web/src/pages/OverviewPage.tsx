@@ -102,7 +102,7 @@ export function OverviewPage({
           <Tile>
             <p className="stat-label">Resolved relationships</p>
             <p className="stat-value">{relationTotal ?? "—"}</p>
-            <p className="helper">Contracts: {snapshot.cluster?.contract_count ?? 0}. Unresolved references: {snapshot.cluster?.unresolved_count ?? 0}.</p>
+            <p className="helper">Contracts: {snapshot.cluster?.contract_count ?? 0}. Confirmed calls: {snapshot.intelligence?.confirmed_calls ?? 0}. Provider discovery: {snapshot.intelligence?.provider_discovery?.label || "Not scanned"}.</p>
           </Tile>
         </Column>
         <Column sm={4} md={2} lg={4}>

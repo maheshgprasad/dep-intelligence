@@ -149,9 +149,31 @@ def snapshot() -> dict:
 @app.get("/api/app-state")
 def app_state() -> dict:
     from dep_intel.app_state import build_app_state
+    from dep_intel.reporting.collect import topology_for
+    from dep_intel.service_clusters import detect_service_clusters
 
     settings = Settings.load()
-    return build_app_state(settings, get_engine(settings).summary(), _running)
+    engine = get_engine(settings)
+    state = build_app_state(settings, engine.summary(), _running)
+    current = getattr(engine, "current", None)
+    snapshot = None
+    if callable(current):
+        try:
+            snapshot = current()
+        except Exception:
+            snapshot = None
+    groups = detect_service_clusters(snapshot) if snapshot is not None else {"clusters": [], "standalone": [], "confirmed_calls": 0}
+    discovery = topology_for(settings)
+    state["intelligence"]["confirmed_calls"] = groups["confirmed_calls"]
+    state["intelligence"]["service_cluster_count"] = len(groups["clusters"])
+    state["intelligence"]["standalone_count"] = len(groups["standalone"])
+    state["intelligence"]["provider_discovery"] = {
+        "status": discovery["status"],
+        "label": discovery["label"],
+        "resolved": discovery.get("resolved_count") or 0,
+        "unique_unresolved": discovery.get("unique_unresolved_reference_count") or 0,
+    }
+    return state
 
 
 @app.get("/api/repositories/{slug}/architecture")
@@ -161,7 +183,12 @@ def repository_architecture(slug: str) -> dict:
     payload = load_architecture(Settings.load(), slug)
     if payload is None:
         raise HTTPException(status_code=404, detail={"code": "unknown_repository"})
-    return payload
+    from dep_intel.path_hygiene import scrub_value
+
+    checkout = str(payload.pop("checkout", "") or "")
+    public = scrub_value(payload)
+    public["checkout_status"] = "available" if checkout else "unavailable"
+    return public
 
 
 @app.get("/api/repository-health/packages")
@@ -557,31 +584,34 @@ def _review_engine():
 @app.post("/api/review/change-view")
 async def review_change_view(body: ReviewRunBody) -> dict:
     engine = _review_engine()
-    return await asyncio.to_thread(engine.change_view, body.model_dump())
+    return await asyncio.to_thread(engine.change_view, _with_checkout(body.model_dump()))
 
 
 @app.get("/api/review/source-options")
 def review_source_options(repository: str = "") -> dict:
+    from dep_intel.repository_identity import resolve_repository_path
     from dep_intel.review_source_options import source_options
 
     settings = Settings.load()
-    repo = Path(repository)
-    if not repo.is_absolute():
-        repo = settings.root / repository
-    return source_options(repo, settings)
+    repo = resolve_repository_path(settings, repository) if repository else settings.root
+    payload = source_options(repo, settings)
+    payload["repository"] = repository
+    payload["checkout_status"] = "available" if repo.is_dir() else "unavailable"
+    return payload
 
 
 @app.get("/api/reviews")
 def reviews_list(limit: int = 20) -> dict:
+    from dep_intel.path_hygiene import scrub_value
     from dep_intel.review_store import list_reviews
 
-    return {"reviews": list_reviews(Settings.load().output_dir, limit)}
+    return {"reviews": scrub_value(list_reviews(Settings.load().output_dir, limit))}
 
 
 @app.post("/api/review/run")
 async def review_run(body: ReviewRunBody) -> dict:
     engine = _review_engine()
-    payload = body.model_dump()
+    payload = _with_checkout(body.model_dump())
     if payload.get("mode") in {"exact", "auto"}:
         cluster = get_engine(Settings.load())
         review_id = uuid.uuid4().hex
@@ -603,10 +633,11 @@ async def review_run(body: ReviewRunBody) -> dict:
 
 @app.get("/api/review/config")
 def review_config(repository: str = "") -> dict:
+    from dep_intel.repository_identity import resolve_repository_path
     from dep_intel.review_engine import public_config
 
     settings = Settings.load()
-    repo = (settings.root / repository) if repository else settings.root
+    repo = resolve_repository_path(settings, repository) if repository else settings.root
     return public_config(repo, settings)
 
 
@@ -617,7 +648,9 @@ def review_get(review_id: str) -> dict:
     stored = read_review(Settings.load().output_dir, review_id)
     if stored is None:
         raise HTTPException(status_code=404, detail={"code": "review_not_found"})
-    return stored
+    from dep_intel.path_hygiene import scrub_value
+
+    return scrub_value(stored)
 
 
 @app.get("/api/review/{review_id}/report")
@@ -737,16 +770,17 @@ def cluster_job_cancel(job_id: str) -> dict:
 class IntelligenceReportBody(BaseModel):
     scope: str
     service: str = ""
+    cluster_id: str = ""
     graph_version: str = ""
     refresh: bool = False
 
 
 @app.post("/api/reports")
 async def create_intelligence_report(body: IntelligenceReportBody) -> dict:
-    return await asyncio.to_thread(_create_intelligence_report, body.scope, body.service, body.graph_version, body.refresh)
+    return await asyncio.to_thread(_create_intelligence_report, body.scope, body.service, body.graph_version, body.refresh, body.cluster_id)
 
 
-def _create_intelligence_report(scope: str, service: str, graph_version: str, refresh: bool) -> dict:
+def _create_intelligence_report(scope: str, service: str, graph_version: str, refresh: bool, cluster_id: str = "") -> dict:
     from dep_intel.reporting.builder import ReportError, generate_report
 
     settings = Settings.load()
@@ -759,7 +793,7 @@ def _create_intelligence_report(scope: str, service: str, graph_version: str, re
             raise HTTPException(status_code=409, detail={"code": "graph_version_mismatch", "graph_version": refreshed.get("version"), "requested": graph_version})
     snapshot = engine.current()
     try:
-        document = generate_report(settings, snapshot, scope, service, graph_version)
+        document = generate_report(settings, snapshot, scope, service, graph_version, cluster_id)
     except ReportError as exc:
         raise HTTPException(status_code=409, detail={"code": "report_unavailable", "message": str(exc)}) from exc
     except KeyError as exc:
@@ -771,6 +805,51 @@ def _create_intelligence_report(scope: str, service: str, graph_version: str, re
         "generated_at": document["generated_at"],
         "graph_version": document["reproducibility"]["graph_version"],
         "readiness": (document.get("executive_summary") or {}).get("readiness"),
+    }
+
+
+def _with_checkout(payload: dict) -> dict:
+    from dep_intel.repository_identity import resolve_repository_path
+
+    source = dict(payload.get("source") or {})
+    requested = str(source.get("repository") or "")
+    if not requested:
+        return payload
+    settings = Settings.load()
+    resolved = resolve_repository_path(settings, requested)
+    if resolved.is_dir():
+        source["repository"] = str(resolved)
+    return {**payload, "source": source}
+
+
+@app.get("/api/service-clusters")
+def service_clusters() -> dict:
+    from dep_intel.reporting.collect import topology_for
+    from dep_intel.service_clusters import detect_service_clusters
+
+    settings = Settings.load()
+    snapshot = get_engine(settings).current()
+    groups = detect_service_clusters(snapshot) if snapshot is not None else {"clusters": [], "standalone": [], "confirmed_calls": 0}
+    discovery = topology_for(settings)
+    return {
+        "clusters": [
+            {
+                "cluster_id": item["cluster_id"],
+                "label": item["label"],
+                "service_count": item["service_count"],
+                "relationship_count": item["relationship_count"],
+                "services": item["services"],
+            }
+            for item in groups["clusters"]
+        ],
+        "standalone": groups["standalone"],
+        "confirmed_calls": groups["confirmed_calls"],
+        "provider_discovery": {
+            "status": discovery["status"],
+            "label": discovery["label"],
+            "resolved": discovery.get("resolved_count") or 0,
+            "unique_unresolved": discovery.get("unique_unresolved_reference_count") or 0,
+        },
     }
 
 
@@ -789,9 +868,7 @@ def get_intelligence_report(report_id: str) -> dict:
     document = read_report(settings.output_dir, report_id)
     if document is None:
         raise HTTPException(status_code=404, detail={"code": "report_not_found"})
-    from dep_intel.reporting.collect import with_review_explanations
-
-    return with_review_explanations(settings, document)
+    return document
 
 
 def _intelligence_export(report_id: str, kind: str, media_type: str) -> FileResponse:

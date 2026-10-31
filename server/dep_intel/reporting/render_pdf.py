@@ -36,7 +36,7 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
     summary = document.get("executive_summary") or {}
     scope = document.get("scope")
     canvas.title(str(summary.get("headline") or "Intelligence report"))
-    canvas.muted("Workspace intelligence report" if scope == "cluster" else "Repository intelligence report")
+    canvas.muted({"cluster": "Workspace intelligence report", "workspace": "Workspace intelligence report", "service_cluster": "Service cluster intelligence report"}.get(str(scope), "Repository intelligence report"))
     canvas.status_line("Readiness", str(summary.get("readiness_label") or "Partial"), str(summary.get("readiness") or ""))
     canvas.gap(4)
     canvas.paragraph(str(summary.get("summary") or ""))
@@ -52,7 +52,7 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
         item = status.get(key) or {}
         canvas.status_line(_STATUS_NAMES[key], str(item.get("label") or "Unavailable"), str(item.get("status") or ""))
 
-    if scope == "cluster":
+    if scope in {"cluster", "workspace", "service_cluster"}:
         _cluster(canvas, document)
     else:
         _repository(canvas, document)
@@ -106,7 +106,7 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
     canvas.kv("Cross-service relationships", workspace.get("relationship_count"))
     canvas.kv("Contracts", workspace.get("contract_count"))
     canvas.kv("Out of date", workspace.get("graph_stale"))
-    canvas.kv("Unresolved references", workspace.get("unresolved_count"))
+    canvas.kv("Unresolved provider references", workspace.get("unresolved_count"))
 
     canvas.section("Service catalogue")
     services = document.get("services") or []
@@ -287,28 +287,41 @@ def _reviews(canvas: _Canvas, activity: dict[str, Any]) -> None:
     canvas.kv("Block", counts.get("block", 0))
     canvas.kv("Incomplete", counts.get("incomplete", 0))
     canvas.muted(str(activity.get("note") or "Review counts describe Nami Gate outcomes and are not a software-quality score."))
-    reviews = activity.get("reviews") or []
-    if not reviews:
-        canvas.muted("No stored reviews matched this report.")
+    reviews = activity.get("attention_reviews")
+    if reviews is None:
+        reviews = [item for item in (activity.get("reviews") or []) if item.get("decision") != "pass"]
+    shown = list(reviews)[:10]
+    total = int(activity.get("detail_included") or 0) + int(activity.get("detail_omitted") or 0) or len(reviews)
+    if total > len(shown):
+        canvas.muted(f"Showing {len(shown)} of {total} attention-bearing reviews.")
+    if not shown:
+        canvas.muted("No attention-bearing reviews matched this report.")
         return
-    for item in reviews:
+    for item in shown:
         decision = str(item.get("decision") or "unknown").upper()
         title = item.get("headline") or item.get("service") or item.get("review_id") or "Review"
         canvas.paragraph(f"{decision}. {title}")
-        if item.get("what_happened"):
-            canvas.muted(str(item["what_happened"]))
+        rule = item.get("primary_rule") or {}
+        if rule:
+            canvas.muted(f"Rule: {rule.get('title') or ''} {rule.get('rule_id') or ''}".strip())
+        targets = item.get("targets") or {}
+        files = list(dict.fromkeys(entry.get("file") for entry in (targets.get("items") or []) if entry.get("file")))[:5]
+        if files:
+            extra = max(0, int(targets.get("unique_file_count") or 0) - len(files))
+            suffix = f" + {extra} more" if extra else ""
+            canvas.muted(f"Review targets: {targets.get('unique_file_count') or len(files)} files, {targets.get('total_findings') or 0} supporting findings. " + ", ".join(str(path) for path in files) + suffix)
         if item.get("why_it_matters"):
             canvas.muted(f"Why it matters: {item['why_it_matters']}")
         evidence = item.get("evidence") or []
         if evidence:
-            for entry in evidence:
-                canvas.bullet(f"{entry.get('source') or 'Stored evidence'}: {entry.get('what') or ''}")
-        else:
-            canvas.muted("No evidence statements were stored with this review.")
-        if item.get("validation"):
-            canvas.muted(str(item["validation"]))
+            entry = evidence[0]
+            canvas.bullet(f"{entry.get('source') or 'Stored evidence'}: {entry.get('what') or entry.get('statement') or ''}")
         if item.get("next_action"):
-            canvas.muted(f"Next: {item['next_action']}")
+            canvas.muted(f"Recommended action: {item['next_action']}")
+        if item.get("validation"):
+            canvas.muted(f"Decision logic: {item['validation']}")
+        if item.get("review_id"):
+            canvas.muted(f"Review ID: {item['review_id']}")
 
 
 def _observations(canvas: _Canvas, document: dict[str, Any]) -> None:

@@ -6,10 +6,12 @@ import { createIntelligenceReport } from "../api";
 export function GenerateReportButton({
   scope,
   service = "",
+  clusterId = "",
   staleCount = 0,
 }: {
-  scope: "cluster" | "repository";
+  scope: "workspace" | "service_cluster" | "repository" | "cluster";
   service?: string;
+  clusterId?: string;
   staleCount?: number;
 }) {
   const navigate = useNavigate();
@@ -20,7 +22,7 @@ export function GenerateReportButton({
     setBusy(refresh ? "Refreshing published intelligence" : "Collecting current intelligence");
     setError("");
     try {
-      const report = await createIntelligenceReport({ scope, service, refresh });
+      const report = await createIntelligenceReport({ scope, service, cluster_id: clusterId, refresh });
       navigate(`/reports/${report.report_id}`);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "The report could not be generated.");
@@ -29,7 +31,7 @@ export function GenerateReportButton({
     }
   }
 
-  const label = scope === "cluster" ? "Workspace report" : `Repository report${service ? ` · ${service}` : ""}`;
+  const label = scope === "repository" ? `Repository report${service ? ` · ${service}` : ""}` : scope === "service_cluster" ? "Service cluster report" : "Workspace report";
   return (
     <div className="stack-gap">
       <p className="helper">{label}. Reports use the published snapshot and do not rerun Boundary Gate or Nami Rank.</p>
@@ -37,7 +39,7 @@ export function GenerateReportButton({
         <InlineNotification kind="warning" title="Current intelligence is out of date" subtitle={`${staleCount} service${staleCount === 1 ? " is" : "s are"} out of date. Generate from the current snapshot, or refresh intelligence first.`} lowContrast hideCloseButton />
       ) : null}
       <div className="button-row">
-        <Button kind="primary" size="sm" disabled={Boolean(busy) || (scope === "repository" && !service)} onClick={() => void generate(false)}>Generate from current intelligence</Button>
+        <Button kind="primary" size="sm" disabled={Boolean(busy) || (scope === "repository" && !service) || (scope === "service_cluster" && !clusterId)} onClick={() => void generate(false)}>Generate from current intelligence</Button>
         <Button kind="ghost" size="sm" disabled={Boolean(busy)} onClick={() => void generate(true)}>Refresh intelligence first</Button>
       </div>
       {busy ? <InlineLoading description={busy} status="active" /> : null}

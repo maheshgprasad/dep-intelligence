@@ -40,7 +40,7 @@ def test_repository_report_records_identity_contracts_and_hash(tmp_path: Path) -
 
 def test_cluster_report_counts_services_relationships_and_revisions(tmp_path: Path) -> None:
     document = generate_report(_settings(tmp_path), _snapshot(user_quality="stale"), "cluster")
-    assert document["scope"] == "cluster"
+    assert document["scope"] == "workspace"
     assert document["workspace"]["service_count"] == 2
     assert document["workspace"]["relationship_count"] == 1
     assert document["workspace"]["contract_count"] == 1
@@ -59,7 +59,7 @@ def test_generation_does_not_refresh_rank_or_gate(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr("dep_intel.review_gate.decide_gate", forbidden)
     monkeypatch.setattr("dep_intel.hybrid_impact.fuse_candidate", forbidden, raising=False)
     document = generate_report(_settings(tmp_path), _snapshot(), "cluster")
-    assert document["scope"] == "cluster"
+    assert document["scope"] == "workspace"
 
 
 def test_missing_history_is_unavailable_not_a_crash(tmp_path: Path) -> None:
@@ -209,7 +209,7 @@ def test_api_generate_uses_the_current_snapshot_without_refresh(tmp_path: Path, 
     response = client.post("/api/reports", json={"scope": "cluster"})
     assert response.status_code == 200
     body = response.json()
-    assert body["scope"] == "cluster"
+    assert body["scope"] == "workspace"
     assert body["graph_version"] == "g-current"
     mismatch = client.post("/api/reports", json={"scope": "cluster", "graph_version": "other"})
     assert mismatch.status_code == 409

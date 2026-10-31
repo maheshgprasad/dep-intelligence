@@ -8,14 +8,15 @@ from dep_intel.config import Settings
 from dep_intel.graph_models import Snapshot
 from dep_intel.reporting.collect import (
     architecture_of,
+    code_symbol_count,
     contracts_of,
     directions,
-    health_for,
+    health_for_repository,
     history_for,
     label,
     relationships,
     reviews_for,
-    unresolved_of,
+    topology_for,
 )
 from dep_intel.reporting.service_summary import service_summary
 
@@ -26,21 +27,21 @@ def build_repository_document(settings: Settings, snapshot: Snapshot, service_id
     part = snapshot.partitions[service_id]
     relation_payload = relationships(snapshot, service_id)
     rows = relation_payload["relationships"]
-    history = history_for(settings, part.repository)
-    health = health_for(settings)
-    reviews = reviews_for(settings, service=service_id, repository=part.repository)
+    history = history_for(settings, part.repository, service_id=service_id)
+    health = health_for_repository(settings, part.repository, service_id)
+    reviews = reviews_for(settings, service=service_id, repository=part.repository, snapshot=snapshot)
     architecture = architecture_of(settings, snapshot, service_id)
     contracts = contracts_of(snapshot, service_id, rows)
     linked = directions(service_id, rows)
-    unresolved = unresolved_of(snapshot, service_id)
+    topology = topology_for(settings, {service_id})
     summary = service_summary(settings, snapshot, service_id, rows, history, health)
     structural = "stale" if part.quality != "ok" or part.error else "current"
     health_status = _health_status(health)
     readiness = _readiness(structural, history["status"], health_status)
-    inferences = _inferences(summary, history, health, unresolved, contracts, linked)
-    recommendations = _recommendations(part, history, health, unresolved, contracts)
-    limitations = _limitations(part, history, health, unresolved, relation_payload)
-    narrative = _narrative(summary, structural, history, health_status, unresolved)
+    inferences = _inferences(summary, history, health, topology, contracts, linked)
+    recommendations = _recommendations(part, history, health, topology, contracts)
+    limitations = _limitations(part, history, health, topology, relation_payload)
+    narrative = _narrative(summary, structural, history, health_status, topology)
     return {
         "scope": "repository",
         "identity": {
@@ -70,13 +71,26 @@ def build_repository_document(settings: Settings, snapshot: Snapshot, service_id
         "service": summary,
         "architecture": architecture,
         "contracts": contracts,
-        "relationships": {**linked, "total": relation_payload["total"], "truncated": relation_payload["truncated"], "included": relation_payload["included"]},
+        "relationships": {
+            "upstream": linked["upstream"][:100],
+            "downstream": linked["downstream"][:100],
+            "total": relation_payload["total"],
+            "truncated": relation_payload["truncated"],
+            "included": relation_payload["included"],
+            "provenance": relation_payload["provenance"],
+            "resolution": relation_payload["resolution"],
+        },
         "history": history,
         "health": health,
         "review_activity": reviews,
         "inferences": inferences,
         "recommendations": recommendations,
-        "intelligence_gaps": [item["statement"] for item in inferences if item["type"] in {"stale_graph", "no_history", "missing_coverage", "unresolved_provider"}],
+        "provider_discovery": topology,
+        "code_graph_diagnostics": {
+            "unresolved_symbol_count": code_symbol_count(snapshot, service_id),
+            "note": "Code-graph unresolved symbols are not unresolved service providers.",
+        },
+        "intelligence_gaps": [item["statement"] for item in inferences if item["type"] in {"stale_graph", "no_history", "missing_coverage", "unresolved_provider", "topology_not_scanned"}],
         "limitations": limitations,
     }
 
@@ -100,7 +114,7 @@ def _readiness(structural: str, history: str, health_status: str) -> str:
     return "complete"
 
 
-def _narrative(summary: dict[str, Any], structural: str, history: dict[str, Any], health_status: str, unresolved: list[dict[str, Any]]) -> str:
+def _narrative(summary: dict[str, Any], structural: str, history: dict[str, Any], health_status: str, topology: dict[str, Any]) -> str:
     parts = [
         f"{summary['symbols']} code symbols.",
         f"{summary['internal_relationships']} internal dependency relationships.",
@@ -108,17 +122,19 @@ def _narrative(summary: dict[str, Any], structural: str, history: dict[str, Any]
         f"{summary['downstream']} downstream consumers.",
         f"{summary['upstream']} upstream service dependencies.",
     ]
-    if unresolved:
-        parts.append(f"{len(unresolved)} provider references remain unresolved.")
+    if topology.get("status") == "not_scanned":
+        parts.append("Topology provider discovery: Not scanned.")
+    elif topology.get("unique_unresolved_reference_count"):
+        parts.append(f"{topology['unique_unresolved_reference_count']} unique provider references remain unresolved.")
     else:
-        parts.append("No unresolved provider mapping is recorded for this service.")
+        parts.append("No unresolved provider references were recorded for this service.")
     parts.append("Historical evidence is available." if history["status"] == "available" else "Historical evidence is not available.")
     parts.append(f"Repository health data is {label(health_status).lower()}.")
     parts.append(f"Structural intelligence is {label(structural).lower()}.")
     return " ".join(parts)
 
 
-def _inferences(summary, history, health, unresolved, contracts, linked) -> list[dict[str, Any]]:
+def _inferences(summary, history, health, topology, contracts, linked) -> list[dict[str, Any]]:
     items = []
     if summary["downstream"]:
         items.append({"type": "cross_service_dependency", "statement": f"This service has {summary['downstream']} known downstream consumers.", "evidence": ["relationships"]})
@@ -131,8 +147,12 @@ def _inferences(summary, history, health, unresolved, contracts, linked) -> list
         items.append({"type": "stale_graph", "statement": "The structural graph for this service is out of date.", "evidence": ["graph"]})
     if health["coverage"]["status"] == "not_scanned":
         items.append({"type": "missing_coverage", "statement": "Coverage data has not been generated for this repository.", "evidence": ["health"]})
-    if unresolved:
-        items.append({"type": "unresolved_provider", "statement": f"{len(unresolved)} provider references remain unresolved.", "evidence": ["topology"]})
+    if health["packages"]["status"] == "workspace_only":
+        items.append({"type": "workspace_health_only", "statement": "Workspace-wide health data is available, but a repository-specific breakdown is not recorded.", "evidence": ["health"]})
+    if topology.get("status") == "not_scanned":
+        items.append({"type": "topology_not_scanned", "statement": "Topology provider discovery: Not scanned.", "evidence": ["topology"]})
+    elif topology.get("unique_unresolved_reference_count"):
+        items.append({"type": "unresolved_provider", "statement": f"{topology['unique_unresolved_reference_count']} unique provider references remain unresolved.", "evidence": ["topology"]})
     if summary["downstream"] >= 2:
         items.append({"type": "high_dependency_concentration", "statement": "This service has a wide confirmed downstream reach.", "evidence": ["relationships"]})
     if linked["upstream"] or linked["downstream"]:
@@ -148,12 +168,12 @@ def _inferences(summary, history, health, unresolved, contracts, linked) -> list
     return deduped[:8]
 
 
-def _recommendations(part, history, health, unresolved, contracts) -> list[dict[str, Any]]:
+def _recommendations(part, history, health, topology, contracts) -> list[dict[str, Any]]:
     items = []
     if part.quality != "ok" or part.error:
         items.append({"title": f"Refresh {part.service_id} intelligence", "reason": "The structural graph is out of date or incomplete.", "service": part.service_id})
-    if unresolved:
-        items.append({"title": "Resolve unresolved provider references", "reason": f"{len(unresolved)} provider references are not mapped to an analyzed service.", "service": part.service_id})
+    if topology.get("status") != "not_scanned" and topology.get("unique_unresolved_reference_count"):
+        items.append({"title": "Resolve unresolved provider references", "reason": f"{topology['unique_unresolved_reference_count']} unique provider references are not mapped to an analyzed service.", "service": part.service_id})
     if health["coverage"]["status"] == "not_scanned":
         items.append({"title": "Generate coverage", "reason": "Coverage has not been scanned, so test-readiness is unknown.", "service": part.service_id})
     for contract in contracts["provided"]:
@@ -166,7 +186,7 @@ def _recommendations(part, history, health, unresolved, contracts) -> list[dict[
     return items[:6]
 
 
-def _limitations(part, history, health, unresolved, relation_payload) -> list[str]:
+def _limitations(part, history, health, topology, relation_payload) -> list[str]:
     items = [
         "This report describes published intelligence. It is not a Boundary Gate decision.",
         "Historical change association is not a structural dependency.",
@@ -180,8 +200,12 @@ def _limitations(part, history, health, unresolved, relation_payload) -> list[st
         items.append("Coverage has not been generated.")
     if health["security"]["status"] == "not_scanned":
         items.append("A security scan has not been stored.")
-    if unresolved:
-        items.append(f"{len(unresolved)} provider references could not be resolved.")
+    if topology.get("status") == "not_scanned":
+        items.append("Topology provider discovery: Not scanned.")
+    elif topology.get("unique_unresolved_reference_count"):
+        items.append(f"{topology['unique_unresolved_reference_count']} unique provider references could not be resolved.")
+    if health["packages"]["status"] == "workspace_only":
+        items.append("Workspace-wide health data is available, but a repository-specific breakdown is not recorded.")
     if relation_payload.get("truncated"):
         items.append("Detailed relationship rows were truncated. Use the evidence package for the included bounded set.")
     if part.error:
