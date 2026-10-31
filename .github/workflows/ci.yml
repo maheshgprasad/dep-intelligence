@@ -192,28 +192,28 @@ jobs:
       - name: Download backend results
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backend-test-results
           path: output/ci
       - name: Download semantic summary
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: semantic-summary
           path: output/ci
       - name: Download frontend summary
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-summary
           path: output/ci
       - name: Download report smoke
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: report-smoke
           path: output/ci
