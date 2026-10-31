@@ -1,0 +1,7 @@
+{
+  "measured_line_coverage_percent": 73.98,
+  "backend_line_coverage_min": 73.4,
+  "allowed_drop_percentage_points": 0.5,
+  "coverage_tolerance_percentage_points": 0.5,
+  "note": "Measured with branch coverage enabled after the semantic-contract suite: line-rate 0.7398 (9359 of 12650 statements) and branch-rate 0.6167. The floor is that line rate minus about half a percentage point. The earlier measurement on 2235101, before these tests, was line-rate 0.7377. Coverage measures executed lines. It does not establish semantic correctness. Do not lower backend_line_coverage_min to make a pull request pass without explaining the removal of executed behavior."
+}
