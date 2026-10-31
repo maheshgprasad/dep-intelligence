@@ -67,6 +67,28 @@ export function alignmentLabel(value: string | undefined): string {
   return ALIGNMENT_LABELS[value] ?? value;
 }
 
+export const VALIDATION_STATUS: Record<string, string> = {
+  validated: "Validated",
+  validated_with_limitations: "Validated with limitations",
+  failed: "Validation failed",
+};
+
+export const VALIDATION_HELP: Record<string, string> = {
+  validated: "Nami independently reproduced the Gate result from the stored evidence and rule requirements.",
+  validated_with_limitations: "The Gate result was reproduced, but one or more optional validation checks could not be completed.",
+  failed: "The independent validator could not justify or reproduce the stored Gate decision.",
+};
+
+export function validationLabel(status: string | undefined): string {
+  if (!status) return "Validation not recorded";
+  return VALIDATION_STATUS[status] ?? status;
+}
+
+export function validationHelp(status: string | undefined): string {
+  if (!status) return "";
+  return VALIDATION_HELP[status] ?? "";
+}
+
 export function sourceLabel(value: string | undefined): string {
   if (!value) return "Source not recorded";
   return SOURCE_LABELS[value] ?? value;

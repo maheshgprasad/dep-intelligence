@@ -8,7 +8,7 @@ Nami Trace can report three scopes.
 | Repository | What do we know about this service, and where is that view incomplete? | `nami.intelligence.report` |
 | Cluster | How are the services connected, and where is workspace intelligence incomplete? | `nami.intelligence.report` |
 
-A repository or cluster report is not a Boundary Gate decision. It does not return pass, warn, block, or incomplete. Review counts inside the report are historical gate outcomes, not a quality score.
+A repository or cluster report is not a Boundary Gate decision. It does not return pass, warn, block, or incomplete. Review counts inside the report are historical gate outcomes, not a quality score. Gate validation and commentary belong to a change review. They do not replace this report.
 
 ## Point in time
 

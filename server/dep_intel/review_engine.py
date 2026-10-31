@@ -23,7 +23,10 @@ from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
 from dep_intel.impact import analyze
 from dep_intel.review_context import collect_context
 from dep_intel.review_evidence import apply_evidence_gate
+from dep_intel.review_commentary import attach_commentary
 from dep_intel.review_explain import attach_explanation
+from dep_intel.review_gate_rules import VALIDATOR_VERSION
+from dep_intel.review_gate_validation import attach_gate_validation
 from dep_intel.review_sufficiency import apply_claim_sufficiency
 from dep_intel.review_feedback import record_feedback
 from dep_intel.review_findings import build_findings
@@ -114,6 +117,8 @@ class ReviewEngine:
         log.info("change_view.completed")
         cache_key = _cache_key(resolved, config, active_snapshot.version if active_snapshot is not None else "", mode, verify, model_enabled)
         cached = _read_cache(self.settings.output_dir, cache_key)
+        if cached is not None and "gate_validation" not in cached:
+            cached = None
         if cached is not None and resolved.get("kind") not in {"working_tree", "staged"}:
             cached = {**cached, "cache": {"hit": True, "key": cache_key}}
             self._event("review_completed", {"review_id": cached.get("review_id"), "decision": (cached.get("gate") or {}).get("decision"), "cache": True})
@@ -185,6 +190,7 @@ class ReviewEngine:
             as_of,
             requested_mode=requested_mode,
             resolved_mode=mode,
+            cancelled=cancelled,
         )
         public_change = {key: value for key, value in change.items() if key != "_files"}
         write_review(self.settings.output_dir, review_id, {
@@ -397,7 +403,7 @@ class ReviewEngine:
         gate["decision"] = "incomplete"
         gate["evidence_complete"] = False
         timings["total_ms"] = _ms(started)
-        report = _report(review_id, change, {"ranked_candidates": [], "affected_services": []}, [], gate, [], {"items": []}, errors, timings, {"config_hash": ""}, "", requested_mode, None, requested_mode=requested_mode, resolved_mode=requested_mode)
+        report = _report(review_id, change, {"ranked_candidates": [], "affected_services": []}, [], gate, [], {"items": []}, errors, timings, {"config_hash": ""}, "", requested_mode, None, requested_mode=requested_mode, resolved_mode=requested_mode, pre_gate_abort=True)
         write_review(self.settings.output_dir, review_id, {"manifest.json": _manifest(review_id, report, {}, ""), "report.json": report, "report.md": render_markdown(report)})
         self._event("review_failed", {"review_id": review_id, "decision": "incomplete"})
         return report
@@ -580,7 +586,7 @@ def _merge_candidate(merged: dict[tuple[str, str], dict[str, Any]], candidate: d
         row["paths"] = [((candidate.get("structural") or {}).get("path") or [])] + list(row.get("paths") or [])[:3]
 
 
-def _report(review_id: str, change: dict, impact: dict, policies: list, gate: dict, verification: list, context: dict, diagnostics: list, timings: dict, config: dict, model_summary: str, mode: str, as_of: str | None, requested_mode: str | None = None, resolved_mode: str | None = None) -> dict[str, Any]:
+def _report(review_id: str, change: dict, impact: dict, policies: list, gate: dict, verification: list, context: dict, diagnostics: list, timings: dict, config: dict, model_summary: str, mode: str, as_of: str | None, requested_mode: str | None = None, resolved_mode: str | None = None, *, pre_gate_abort: bool = False, cancelled: bool = False) -> dict[str, Any]:
     files = change.get("changed_files") or []
     summary = {
         "text": _summary_text(change, gate, impact),
@@ -622,8 +628,11 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
         "performance": {key: round(value, 1) for key, value in timings.items()},
         "score_note": SCORE_NOTE,
         "cache": {"hit": False},
+        "review_control": {"pre_gate_abort": pre_gate_abort, "cancelled": cancelled},
     }
-    return attach_explanation(body, config)
+    body = attach_explanation(body, config)
+    body = attach_gate_validation(body, config)
+    return attach_commentary(body)
 
 
 def _summary_text(change: dict, gate: dict, impact: dict) -> str:
@@ -693,6 +702,7 @@ def _cache_key(resolved: dict, config: dict, graph_version: str, mode: str, veri
         "mode": mode,
         "verify": verify,
         "model": model_enabled,
+        "validator": VALIDATOR_VERSION,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
 

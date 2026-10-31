@@ -1,0 +1,105 @@
+[
+  {
+    "name": "consumed-contract-removal",
+    "expected_decision": "block",
+    "expected_rules": [
+      "BG-CONTRACT-001"
+    ]
+  },
+  {
+    "name": "contract-removal-without-consumer",
+    "expected_decision": "warn",
+    "expected_rules": []
+  },
+  {
+    "name": "body-only-handler-change",
+    "expected_decision": "warn",
+    "expected_rules": [
+      "BG-IMPACT-001"
+    ]
+  },
+  {
+    "name": "temporal-only-target",
+    "expected_decision": "warn",
+    "expected_rules": [
+      "BG-TEMPORAL-001"
+    ]
+  },
+  {
+    "name": "llm-only-concern",
+    "expected_decision": "warn",
+    "expected_rules": [
+      "BG-AI-001"
+    ]
+  },
+  {
+    "name": "required-verification-failed",
+    "expected_decision": "block",
+    "expected_rules": [
+      "BG-VERIFY-001"
+    ]
+  },
+  {
+    "name": "required-verification-passed",
+    "expected_decision": "pass",
+    "expected_rules": []
+  },
+  {
+    "name": "verified-policy-violation",
+    "expected_decision": "block",
+    "expected_rules": [
+      "BG-POLICY-001"
+    ]
+  },
+  {
+    "name": "verified-critical-policy",
+    "expected_decision": "block",
+    "expected_rules": [
+      "BG-CRITICAL-001",
+      "BG-POLICY-001"
+    ]
+  },
+  {
+    "name": "stale-graph-strict",
+    "expected_decision": "incomplete",
+    "expected_rules": [
+      "BG-GRAPH-001"
+    ]
+  },
+  {
+    "name": "stale-graph-non-strict",
+    "expected_decision": "warn",
+    "expected_rules": []
+  },
+  {
+    "name": "counter-evidence-suppressing-contract-removal",
+    "expected_decision": "pass",
+    "expected_rules": []
+  },
+  {
+    "name": "clean-safe-change",
+    "expected_decision": "pass",
+    "expected_rules": []
+  },
+  {
+    "name": "required-verification-unavailable",
+    "expected_decision": "incomplete",
+    "expected_rules": [
+      "BG-EVIDENCE-001"
+    ]
+  },
+  {
+    "name": "high-rank-review-target",
+    "expected_decision": "warn",
+    "expected_rules": [
+      "BG-IMPACT-001"
+    ]
+  },
+  {
+    "name": "unavailable-graph-strict",
+    "expected_decision": "incomplete",
+    "expected_rules": [
+      "BG-GRAPH-001"
+    ]
+  }
+]
