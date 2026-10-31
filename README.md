@@ -1,5 +1,9 @@
 # Nami Trace
 
+[![CI](https://github.com/maheshgprasad/dep-intelligence/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maheshgprasad/dep-intelligence/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/maheshgprasad/dep-intelligence/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/maheshgprasad/dep-intelligence/actions/workflows/codeql.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+
 Cross-repository dependency intelligence. The dashboard is a React app on [Carbon](https://carbondesignsystem.com/). Analysis is the same Python process. Cursor, Claude, and IBM Bob call that service over MCP.
 
 The behavior is taken from the notes in [Docs/spec](Docs/spec). This tree is a new implementation of that spec, not the earlier Express app.
@@ -72,3 +76,20 @@ server/.venv/bin/python scripts/demo-boundary-gate.py
 ```
 
 Client setup: [Docs/AGENT_CLIENTS.md](Docs/AGENT_CLIENTS.md).
+
+## Quality and validation
+
+Every change is validated by GitHub Actions.
+
+- Backend unit and integration tests with branch coverage
+- Nami semantic-contract regression suite
+- Frontend component tests and the TypeScript production build
+- Workspace, Service Cluster, and Repository report smoke tests
+- Change Intelligence export smoke tests
+- Nightly Gate validation corpus and end-to-end demonstrations
+
+Open the latest CI run for the exact test count, coverage, and validation metrics. Those numbers are produced per commit and are not copied into this file. Coverage measures executed lines. It does not establish semantic correctness.
+
+Nami Trace uses automated CI to protect its implementation and semantic invariants on every change. The validation suite verifies deterministic system behavior and labelled fixtures; it does not claim production-outcome accuracy.
+
+See [Docs/CI.md](Docs/CI.md) for local reproduction and validation semantics.

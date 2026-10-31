@@ -1,0 +1,231 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nami-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./server[dev]"
+      - name: Test and measure coverage
+        run: |
+          mkdir -p output/ci
+          pytest server/tests \
+            -q \
+            --junitxml=output/ci/backend-junit.xml \
+            --cov=dep_intel \
+            --cov-branch \
+            --cov-report=term-missing \
+            --cov-report=xml:output/ci/coverage.xml \
+            --cov-report=html:output/ci/coverage-html
+          python scripts/check_coverage.py output/ci/coverage.xml .github/quality-baseline.json
+      - name: Upload backend results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: |
+            output/ci/backend-junit.xml
+            output/ci/coverage.xml
+            output/ci/coverage-html/
+          retention-days: 14
+          if-no-files-found: warn
+
+  semantic:
+    name: Nami semantic contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./server[dev]"
+      - name: Run semantic contract
+        run: |
+          mkdir -p output/ci
+          pytest server/tests -m semantic_contract -q --junitxml=output/ci/semantic-junit.xml
+          python scripts/ci_summary.py semantic output/ci/semantic-junit.xml output/ci/semantic-summary.json
+      - name: Upload semantic summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-summary
+          path: |
+            output/ci/semantic-junit.xml
+            output/ci/semantic-summary.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        working-directory: web
+        run: |
+          mkdir -p ../output/ci
+          npm ci
+      - name: Component tests
+        id: tests
+        working-directory: web
+        run: npm run test:ci
+      - name: Production build
+        id: build
+        working-directory: web
+        run: npm run build
+      - name: Record frontend summary
+        if: always()
+        run: |
+          mkdir -p output/ci
+          FRONTEND_TEST_RESULT="${{ steps.tests.outcome }}" FRONTEND_BUILD_RESULT="${{ steps.build.outcome }}" python3 scripts/ci_summary.py frontend output/ci/frontend-summary.json
+      - name: Upload frontend results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-summary
+          path: |
+            output/ci/frontend-summary.json
+            output/ci/vitest.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  reports:
+    name: Report and export smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./server[dev]"
+      - name: Generate fixture reports
+        run: |
+          mkdir -p output/ci
+          python scripts/ci_report_smoke.py --dest output/ci
+      - name: Upload smoke summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-smoke
+          path: output/ci/report-smoke.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Upload sample reports
+        if: always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || failure())
+        uses: actions/upload-artifact@v4
+        with:
+          name: nami-sample-reports
+          path: output/ci/samples/
+          retention-days: 14
+          if-no-files-found: warn
+
+  required:
+    name: Nami required checks
+    if: always()
+    needs: [backend, semantic, frontend, reports]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every upstream check
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          SEMANTIC: ${{ needs.semantic.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          REPORTS: ${{ needs.reports.result }}
+        run: |
+          echo "Backend test suite: $BACKEND"
+          echo "Nami semantic contract: $SEMANTIC"
+          echo "Frontend checks: $FRONTEND"
+          echo "Report and export smoke: $REPORTS"
+          test "$BACKEND" = "success"
+          test "$SEMANTIC" = "success"
+          test "$FRONTEND" = "success"
+          test "$REPORTS" = "success"
+
+  summary:
+    name: CI quality summary
+    if: always()
+    needs: [backend, semantic, frontend, reports, required]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download backend results
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-test-results
+          path: output/ci
+      - name: Download semantic summary
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: semantic-summary
+          path: output/ci
+      - name: Download frontend summary
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-summary
+          path: output/ci
+      - name: Download report smoke
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: report-smoke
+          path: output/ci
+      - name: Write job summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_BACKEND: ${{ needs.backend.result }}
+          JOB_SEMANTIC: ${{ needs.semantic.result }}
+          JOB_FRONTEND: ${{ needs.frontend.result }}
+          JOB_REPORTS: ${{ needs.reports.result }}
+          JOB_REQUIRED: ${{ needs.required.result }}
+        run: |
+          mkdir -p output/ci
+          python scripts/ci_summary.py summarize output/ci

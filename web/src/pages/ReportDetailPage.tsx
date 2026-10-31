@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Accordion, AccordionItem, InlineLoading, InlineNotification, StructuredListBody, StructuredListCell, StructuredListRow, StructuredListWrapper, Tile } from "@carbon/react";
-import { getIntelligenceReport, type IntelligenceReport, type ReportReviewCard } from "../api";
+import { getIntelligenceReport, type IntelligenceReport } from "../api";
+import { evidenceLine, externalTargetNote, legacySummary, providerDiscoveryText, rankingLine, scopeDescription, validationLines } from "../reportPresentation";
 import { IntelligenceExportMenu } from "../components/IntelligenceExportMenu";
 import { PageHeader } from "../components/PageHeader";
 
@@ -59,7 +60,7 @@ export function ReportDetailPage() {
       {(report.scope === "cluster" || report.scope === "workspace" || report.scope === "service_cluster") && report.workspace ? (
         <Tile>
           <h2 className="section-title">{report.scope === "service_cluster" ? "Service cluster" : "Workspace"}</h2>
-          <p>{report.workspace.service_count} services. {report.workspace.relationship_count} confirmed cross-service calls. {report.workspace.contract_count} contracts. {report.workspace.graph_stale} out of date. {providerSentence(report)}</p>
+          <p>{report.workspace.service_count} services. {report.workspace.relationship_count} confirmed cross-service calls. {report.workspace.contract_count} contracts. {report.workspace.graph_stale} out of date. {providerDiscoveryText(report.provider_discovery)}</p>
           {report.scope === "service_cluster" ? (
             <>
               <p>Cluster {report.identity.cluster_label || "Connected service group"}. Member services {report.identity.services?.length ?? report.workspace.service_count}. Confirmed internal calls {report.workspace.relationship_count}.</p>
@@ -152,13 +153,13 @@ function ReviewActivity({ activity }: { activity: IntelligenceReport["review_act
             {files.length ? <p>Review targets: {item.targets?.unique_file_count || files.length} files · {item.targets?.total_findings || 0} supporting findings. {files.join(", ")}{(item.targets?.unique_file_count || 0) > files.length ? ` + ${(item.targets?.unique_file_count || 0) - files.length} more` : ""}</p> : null}
             {item.why_it_matters ? <p>Why it matters: {item.why_it_matters}</p> : null}
             {(item.evidence || []).slice(0, 1).map((entry) => (
-              <p key={`${item.review_id}-evidence`}>Evidence: {entry.source}. {entry.what || entry.statement}</p>
+              <p key={`${item.review_id}-evidence`}>{evidenceLine(entry)}</p>
             ))}
-            {item.ranking_context?.statement ? <p>Ranking context: {item.ranking_context.source || "Nami Rank"}. {item.ranking_context.statement}</p> : null}
+            {rankingLine(item.ranking_context) ? <p>{rankingLine(item.ranking_context)}</p> : null}
             {item.cross_cluster_targets?.length ? (
               <>
                 <p>External review targets: {item.cross_cluster_targets.join(", ")}</p>
-                <p className="helper">These services are outside the selected Service Cluster. Their appearance here comes from the stored review and does not change cluster membership.</p>
+                <p className="helper">{externalTargetNote(item.cross_cluster_targets)}</p>
               </>
             ) : null}
             {validationLines(item).map((line) => <p key={line}>{line}</p>)}
@@ -169,41 +170,6 @@ function ReviewActivity({ activity }: { activity: IntelligenceReport["review_act
       })}
     </Tile>
   );
-}
-
-function scopeDescription(report: IntelligenceReport): string {
-  if (report.scope === "service_cluster") return `Service cluster report${report.identity.cluster_label ? ` · ${report.identity.cluster_label}` : ""} · Point-in-time snapshot`;
-  if (report.scope === "repository") return `Repository intelligence report${report.identity.service ? ` · ${report.identity.service}` : ""} · Point-in-time snapshot`;
-  return "Workspace intelligence report · Point-in-time snapshot";
-}
-
-function legacySummary(report: IntelligenceReport): boolean {
-  return !report.review_activity?.summary_version;
-}
-
-function validationLines(item: ReportReviewCard): string[] {
-  const labels: Record<string, string> = {
-    validated: "Validated",
-    validated_with_limitations: "Validated with limitations",
-    failed: "Validation failed",
-    not_available: "Not available",
-    unavailable: "Unavailable",
-  };
-  const status = item.validation_status || item.validation_detail?.status;
-  if (status && labels[status]) {
-    const lines = [`Decision logic: ${labels[status]}`];
-    if (item.validation_detail?.note) lines.push(item.validation_detail.note);
-    return lines;
-  }
-  const raw = item.validation || "";
-  if (!raw) return [];
-  return [raw.toLowerCase().startsWith("decision logic") ? raw : `Decision logic: ${raw}`];
-}
-
-function providerSentence(report: IntelligenceReport): string {
-  const discovery = report.provider_discovery;
-  if (!discovery || discovery.status === "not_scanned") return "Topology provider discovery: Not scanned.";
-  return `${discovery.unique_unresolved_reference_count ?? 0} unique unresolved provider references.`;
 }
 
 function Attention({ items }: { items: { title: string; reason: string }[] }) {
@@ -282,7 +248,8 @@ function WorkspaceSections({ report }: { report: IntelligenceReport }) {
       </Tile>
       <Tile>
         <h2 className="section-title">Provider discovery</h2>
-        {report.provider_discovery?.status === "not_scanned" ? <p>Topology provider discovery: Not scanned.</p> : report.unresolved?.length ? report.unresolved.slice(0, 10).map((item) => <p key={`${item.service}-${item.name}`}>{item.service}: {item.name || item.host}</p>) : <p>No unresolved provider references are recorded.</p>}
+        <p>{providerDiscoveryText(report.provider_discovery)}</p>
+        {report.provider_discovery?.status !== "not_scanned" && report.unresolved?.length ? report.unresolved.slice(0, 10).map((item) => <p key={`${item.service}-${item.name}`}>{item.service}: {item.name || item.host}</p>) : null}
         <p className="helper">These are topology provider references. Unresolved code symbols are not counted here.</p>
       </Tile>
       <Tile>
