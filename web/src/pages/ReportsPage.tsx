@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button, ContentSwitcher, Dropdown, Switch } from "@carbon/react";
 import { getServiceClusters, listIntelligenceReports, type AppState, type IntelligenceReportSummary, type ServiceClusterSummary } from "../api";
 import { GenerateReportButton } from "../components/GenerateReportButton";
+import { reportTarget, reportType } from "../reportPresentation";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -91,15 +92,4 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
       />
     </div>
   );
-}
-
-function reportType(scope: string): string {
-  if (scope === "cluster" || scope === "workspace") return "Workspace report";
-  if (scope === "service_cluster") return "Service cluster report";
-  return "Repository report";
-}
-
-function reportTarget(item: IntelligenceReportSummary): string {
-  if (item.scope === "cluster" || item.scope === "workspace") return "Entire workspace";
-  return item.label || item.service || "—";
 }

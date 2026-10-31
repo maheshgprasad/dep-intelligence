@@ -5,6 +5,7 @@ server/.venv/
 node_modules/
 web/dist/
 output/
+# output/ci/ holds generated JUnit, coverage, and sample reports. It stays untracked.
 __pycache__/
 *.pyc
 .coverage

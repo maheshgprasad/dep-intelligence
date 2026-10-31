@@ -34,3 +34,19 @@ where = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "semantic_contract: protects Nami architectural and research invariants",
+  "reporting: report and export behavior",
+  "gate: Boundary Gate behavior",
+  "integration: cross-module deterministic integration tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["dep_intel"]
+# Production modules stay in the measurement. These omissions are caches only.
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

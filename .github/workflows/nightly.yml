@@ -1,0 +1,104 @@
+name: Nightly
+
+on:
+  schedule:
+    # 02:15 UTC every day. This is not a pull-request check.
+    - cron: "15 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: Python compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - name: Test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./server[dev]"
+          pytest server/tests -q
+
+  demos:
+    name: Demos and Gate corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./server[dev]"
+          pip install 'code-review-graph>=2.3.8,<2.4'
+      - name: Run demonstrations
+        run: |
+          python scripts/demo-cross-repo-impact.py
+          python scripts/demo-hybrid-impact.py
+          python scripts/demo-boundary-gate.py
+          python scripts/demo-evidence-gate.py
+          python scripts/demo-gate-validation.py
+          python scripts/demo-intelligence-report.py
+      - name: Evaluate the Gate corpus
+        run: python scripts/evaluate-gate.py
+      - name: Corpus summary
+        run: python scripts/ci_summary.py nightly output/gate-validation/latest.json
+      - name: Upload Gate corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-validation-corpus
+          path: output/gate-validation/latest.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Upload demo reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-demo-reports
+          path: |
+            output/reports/**/exports/report.pdf
+            output/reports/**/exports/report.md
+            output/reports/**/exports/report.json
+            output/demo-intelligence-report/**
+            output/demo-report-scope/**
+          retention-days: 14
+          if-no-files-found: warn
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Audit Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./server[dev]" pip-audit
+          pip-audit
+      - name: Audit npm dependencies
+        working-directory: web
+        run: npm audit --audit-level=high
