@@ -71,6 +71,16 @@ Required actions are the way to stop a block or complete missing evidence. A con
 
 The checklist reports `passed`, `failed`, `warning`, `not_evaluated`, or `unavailable` for dependency evidence, contract compatibility, required verification, and policy. A check is `not_evaluated` when that input was not configured or not run. The report does not invent a passing verification.
 
+## Evidence categories
+
+| Category | What it can support | Examples |
+| --- | --- | --- |
+| Hard, deterministic | A blocking proof, when the rule's other requirements are met | Code diff, code graph, cluster graph, OpenAPI, verification command, project policy |
+| Supporting | Ranking or historical context | Nami Rank, repository history |
+| Advisory | Wording only | Model suggestions and the later commentary |
+
+Nami Rank is ranking evidence. History is observational evidence. A model suggestion is advisory. Commentary is presentation: it is not a finding, it does not pass through the evidence gate, and it cannot change a grade or a decision.
+
 ## What Nami Rank does here
 
 Nami Rank orders downstream files from current structure and historical change evidence. The review can say a file is a review target. It does not treat the rank as a reason to block.

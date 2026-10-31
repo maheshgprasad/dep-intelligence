@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button, Column, ComboBox, Dropdown, Grid, InlineNotification, NumberInput, TextInput } from "@carbon/react";
-import { clusterCatalog, nrmCapabilities, runHybridImpact, type AppState, type HybridImpactResponse } from "../api";
+import { clusterCatalog, gateValidationCorpus, nrmCapabilities, runHybridImpact, type AppState, type GateValidationCorpus, type HybridImpactResponse } from "../api";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { PageHeader } from "../components/PageHeader";
 import { relativePath, symbolName } from "../labels";
@@ -14,6 +14,7 @@ export function ResearchPage({ snapshot }: { snapshot: AppState | null }) {
   const [files, setFiles] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [result, setResult] = useState<HybridImpactResponse | null>(null);
+  const [gateCorpus, setGateCorpus] = useState<GateValidationCorpus | null>(null);
   const services = snapshot?.cluster?.services?.map((item) => item.id) ?? [];
   const service = params.get("service") || services[0] || "";
   const file = params.get("file") || "";
@@ -30,6 +31,7 @@ export function ResearchPage({ snapshot }: { snapshot: AppState | null }) {
 
   useEffect(() => {
     void nrmCapabilities().then(setCapabilities).catch(() => setError("Research capabilities could not be loaded."));
+    void gateValidationCorpus().then(setGateCorpus).catch(() => setGateCorpus(null));
   }, []);
 
   useEffect(() => {
@@ -158,7 +160,37 @@ export function ResearchPage({ snapshot }: { snapshot: AppState | null }) {
           />
         </>
       ) : null}
+      {gateCorpus ? <GateCorpusSummary corpus={gateCorpus} /> : null}
     </div>
+  );
+}
+
+function GateCorpusSummary({ corpus }: { corpus: GateValidationCorpus }) {
+  const metrics = corpus.metrics;
+  const rates = [
+    ["Decision accuracy", metrics.decision_accuracy],
+    ["False-block rate", metrics.false_block_rate],
+    ["False-pass rate", metrics.false_pass_rate],
+    ["Invariant pass rate", metrics.invariant_pass_rate],
+    ["Replay reproducibility", metrics.replay_reproducibility_rate],
+  ] as const;
+  return (
+    <section className="stack-gap">
+      <h2>Boundary Gate validation</h2>
+      <p className="helper">Offline corpus for this checkout. It is separate from the validation of a single review.</p>
+      <p className="helper">Scenarios {corpus.scenario_count}. Validator {corpus.validator_version}.</p>
+      <Grid>
+        {rates.map(([label, value]) => (
+          <Column key={label} sm={4} md={2} lg={3}>
+            <p className="stat-label">{label}</p>
+            <p className="stat-value">{value.toFixed(3)}</p>
+          </Column>
+        ))}
+      </Grid>
+      <p className="helper">
+        Per-class F1: {Object.entries(metrics.per_class).map(([label, item]) => `${label} ${item.f1.toFixed(3)}`).join(", ")}.
+      </p>
+    </section>
   );
 }
 

@@ -125,13 +125,18 @@ def canonical_export(report: dict[str, Any], manifest: dict[str, Any] | None = N
             "items": later,
         },
         "copy_summary": report.get("copy_summary"),
+        "gate_validation": report.get("gate_validation") or {},
+        "commentary": _public_commentary(report.get("commentary") or {}),
         "reproducibility": {
             "review_id": report.get("review_id"),
             "base_sha": change.get("base_sha"),
             "head_sha": change.get("head_sha"),
             "graph_version": change.get("graph_version"),
             "config_hash": meta.get("config_hash"),
+            "gate_input_hash": ((report.get("gate_validation") or {}).get("reproducibility") or {}).get("gate_input_hash") or "",
+            "gate_input_hash_note": "Integrity fingerprint of the deterministic Gate inputs. It excludes commentary and is not a digital signature.",
             "report_hash": "",
+            "report_hash_note": "Integrity fingerprint of this export, including commentary. It is not a digital signature.",
         },
     }
     scrubbed = _scrub(payload)
@@ -159,20 +164,40 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
         assessment.get("headline") or "",
         assessment.get("summary") or "",
         f"Can this change proceed? {decision}",
-        f"Next action: {assessment.get('recommended_next_step') or ''}",
         "",
-        "Gate decision",
-        f"Decision: {decision}",
+        "Nami explanation",
+    ]
+    commentary = payload.get("commentary") or {}
+    if commentary:
+        lines.extend([
+            commentary.get("headline") or "",
+            commentary.get("summary") or "",
+            "Why this matters",
+            commentary.get("why_it_matters") or "",
+            "What to do next",
+            commentary.get("next_action") or "",
+            commentary.get("validation_comment") or "",
+        ])
+    else:
+        lines.append("No explanation was recorded.")
+    lines.extend([
+        "",
+        "Required actions",
+    ])
+    required = payload.get("required_actions") or []
+    lines.extend([f"- {item.get('title')}: {item.get('description')}" for item in required] or ["None."])
+    lines.extend(["", "Gate Decision Validation"])
+    lines.extend(_validation_lines(payload.get("gate_validation") or {}))
+    lines.extend([
+        "",
+        "Enforcement",
         f"Enforcement: {enforcement.get('enforcement_mode') or 'advisory'}",
         f"Workflow prevented: {'Yes' if enforcement.get('workflow_prevented') else 'No'}",
         "",
         "Checklist",
-    ]
+    ])
     for item in payload.get("gate_checklist") or []:
         lines.append(f"- {item.get('label')}: {item.get('status')}")
-    lines.extend(["", "Required actions"])
-    required = payload.get("required_actions") or []
-    lines.extend([f"- {item.get('title')}: {item.get('description')}" for item in required] or ["None."])
     lines.extend(["", "Recommended actions"])
     recommended = payload.get("recommended_actions") or []
     lines.extend([f"- {item.get('title')}: {item.get('description')}" for item in recommended] or ["None."])
@@ -204,7 +229,9 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     lines.extend([
         "",
         "Reproducibility",
-        "This fingerprint covers the canonical JSON export. It is not a digital signature.",
+        "Gate input fingerprint. Integrity fingerprint, not digital signature.",
+        str((payload.get("reproducibility") or {}).get("gate_input_hash") or ""),
+        "Report fingerprint. This covers the export, including commentary. It is not a digital signature.",
         str((payload.get("reproducibility") or {}).get("report_hash") or ""),
     ])
     feedback = (payload.get("feedback") or {}).get("items") or []
@@ -234,6 +261,11 @@ def build_zip(review_id: str, payload: dict[str, Any], report: dict[str, Any]) -
         f"{root}/gate/actions.json": _bytes({"required": payload.get("required_actions"), "recommended": payload.get("recommended_actions")}),
         f"{root}/verification/verification.json": _bytes(payload.get("verification") or []),
         f"{root}/change/change-view.json": _bytes({"identity": payload.get("identity"), "contracts": payload.get("contract_changes")}),
+        f"{root}/validation/gate-validation.json": _bytes(payload.get("gate_validation") or {}),
+        f"{root}/validation/invariants.json": _bytes((payload.get("gate_validation") or {}).get("invariants") or {}),
+        f"{root}/validation/counterfactuals.json": _bytes((payload.get("gate_validation") or {}).get("counterfactuals") or {}),
+        f"{root}/validation/reproducibility.json": _bytes((payload.get("gate_validation") or {}).get("reproducibility") or {}),
+        f"{root}/commentary/commentary.json": _bytes(payload.get("commentary") or {}),
         f"{root}/metadata/reproducibility.json": _bytes(payload.get("reproducibility") or {}),
         f"{root}/metadata/manifest.json": _bytes({"files": sorted(str(name) for name in [])}),
     }
@@ -246,6 +278,78 @@ def build_zip(review_id: str, payload: dict[str, Any], report: dict[str, Any]) -
                 continue
             archive.writestr(name, files[name])
     return buffer.getvalue()
+
+
+def _public_commentary(commentary: dict[str, Any]) -> dict[str, Any]:
+    if not commentary:
+        return {}
+    kept = {
+        "headline": commentary.get("headline") or "",
+        "summary": commentary.get("summary") or "",
+        "why_it_matters": commentary.get("why_it_matters") or "",
+        "next_action": commentary.get("next_action") or "",
+        "evidence_comment": commentary.get("evidence_comment") or "",
+        "validation_comment": commentary.get("validation_comment") or "",
+        "limitation_note": commentary.get("limitation_note") or "",
+        "advisory": True,
+        "source": commentary.get("source") or "",
+        "mode": commentary.get("mode") or "",
+        "purpose": commentary.get("purpose") or "commentary",
+        "provider": commentary.get("provider") or "",
+        "model": commentary.get("model") or "",
+        "generated_at": commentary.get("generated_at") or commentary.get("commentary_generated_at") or "",
+    }
+    if commentary.get("model_diagnostic"):
+        kept["model_diagnostic"] = commentary.get("model_diagnostic")
+    return kept
+
+
+def _validation_lines(validation: dict[str, Any]) -> list[str]:
+    if not validation:
+        return ["Validation was not recorded."]
+    labels = {
+        "validated": "VALIDATED",
+        "validated_with_limitations": "VALIDATED WITH LIMITATIONS",
+        "failed": "VALIDATION FAILED",
+    }
+    status = labels.get(str(validation.get("status") or ""), str(validation.get("status") or ""))
+    observed = str(validation.get("observed_decision") or "").upper()
+    expected = str(validation.get("expected_decision") or "").upper()
+    match = "Confirmed" if validation.get("decision_match") else "Not confirmed"
+    lines = [
+        f"Validation status: {status}",
+        f"Observed decision: {observed}",
+        f"Independent replay: {expected}",
+        f"Decision consistency: {match}",
+        validation.get("summary") or "",
+    ]
+    for rule in validation.get("rule_validation") or []:
+        if rule.get("status") != "validated":
+            continue
+        lines.append(f"Triggered rule: {rule.get('rule_id')} {rule.get('title')}")
+        lines.append("Evidence requirements")
+        for item in rule.get("requirements") or []:
+            mark = "Yes" if item.get("status") == "satisfied" else "No"
+            lines.append(f"- {mark}. {item.get('label') or item.get('requirement')}")
+        if rule.get("evidence_grade"):
+            lines.append(f"- Evidence grade {rule.get('evidence_grade')}")
+        if rule.get("counter_evidence_status") == "none_decisive":
+            lines.append("- No decisive counter-evidence")
+        elif rule.get("counter_evidence_status") == "decisive_contradiction":
+            lines.append("- Decisive counter-evidence was recorded")
+    invariants = validation.get("invariants") or {}
+    counterfactuals = validation.get("counterfactuals") or {}
+    lines.append(f"Safety checks: {invariants.get('passed', 0)} / {invariants.get('total', 0)} passed")
+    if counterfactuals.get("total"):
+        lines.append(f"Counterfactual checks: {counterfactuals.get('passed', 0)} / {counterfactuals.get('total', 0)} passed")
+    else:
+        lines.append("Counterfactual checks: none applied to the triggered rules")
+    fingerprint = (validation.get("reproducibility") or {}).get("gate_input_hash") or ""
+    lines.append(f"Gate input fingerprint: {fingerprint}")
+    lines.append("Integrity fingerprint, not digital signature.")
+    for item in validation.get("limitations") or []:
+        lines.append(f"Limitation: {item}")
+    return lines
 
 
 def _public_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

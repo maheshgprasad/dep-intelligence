@@ -158,6 +158,46 @@ def render_markdown(report: dict[str, Any]) -> str:
             kind = "Required" if item.get("required") else "Recommended"
             lines.append(f"- {kind}: {item.get('title')}. {item.get('description')}")
         lines.append("")
+    commentary = report.get("commentary") or {}
+    if commentary:
+        lines.extend([
+            "## Nami explanation",
+            "",
+            commentary.get("headline") or "",
+            "",
+            commentary.get("summary") or "",
+            "",
+            f"Why it matters: {commentary.get('why_it_matters') or ''}",
+            "",
+            f"Next action: {commentary.get('next_action') or ''}",
+            "",
+            f"Validation comment: {commentary.get('validation_comment') or ''}",
+            "",
+        ])
+    validation = report.get("gate_validation") or {}
+    if validation:
+        lines.extend([
+            "## Gate decision validation",
+            "",
+            f"Validation status: {validation.get('status') or ''}",
+            f"Observed decision: {validation.get('observed_decision') or ''}",
+            f"Expected decision: {validation.get('expected_decision') or ''}",
+            "",
+            "Triggered validated rules:",
+        ])
+        validated_rules = [item for item in validation.get("rule_validation") or [] if item.get("status") == "validated"]
+        lines.extend([f"- {item.get('rule_id')}: {item.get('title')}" for item in validated_rules] or ["None."])
+        invariants = validation.get("invariants") or {}
+        counterfactuals = validation.get("counterfactuals") or {}
+        fingerprint = (validation.get("reproducibility") or {}).get("gate_input_hash") or ""
+        lines.extend([
+            "",
+            f"Safety invariants: {invariants.get('passed', 0)} / {invariants.get('total', 0)} passed",
+            f"Counterfactuals: {counterfactuals.get('passed', 0)} / {counterfactuals.get('total', 0)} passed",
+            f"Reproducibility: {fingerprint}",
+            "The gate input fingerprint covers deterministic decision inputs. It is not a digital signature and it does not include commentary.",
+            "",
+        ])
     lines.extend(["", "## Evidence limitations", ""])
     for item in report.get("limitations") or []:
         lines.append(f"- {item}")

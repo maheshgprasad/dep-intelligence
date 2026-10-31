@@ -273,6 +273,13 @@ export type HybridImpactResponse = {
   limitations: string[];
 };
 
+export async function gateValidationCorpus(): Promise<GateValidationCorpus | null> {
+  const response = await fetch("/api/research/gate-validation");
+  if (response.status === 404) return null;
+  if (!response.ok) return null;
+  return response.json() as Promise<GateValidationCorpus>;
+}
+
 export async function nrmCapabilities(): Promise<{
   module_version: string;
   temporal_providers: { id: string; available: boolean; reason?: string; quality?: string }[];
@@ -392,6 +399,94 @@ export type DecisionRule = {
   blocks: boolean;
 };
 
+export type GateValidationRequirement = {
+  requirement: string;
+  label?: string;
+  status: string;
+  evidence_refs: string[];
+};
+
+export type GateValidationRule = {
+  rule_id: string;
+  title: string;
+  expected_decision: string;
+  status: string;
+  requirements: GateValidationRequirement[];
+  evidence_grade: string;
+  counter_evidence_status: string;
+};
+
+export type GateInvariant = {
+  invariant_id: string;
+  title: string;
+  status: string;
+};
+
+export type GateCounterfactual = {
+  counterfactual_id: string;
+  case_id?: string;
+  rule_id: string;
+  change: string;
+  expected: string;
+  observed: string;
+  status: string;
+};
+
+export type GateValidation = {
+  status: "validated" | "validated_with_limitations" | "failed" | string;
+  summary: string;
+  validator_version: string;
+  observed_decision: string;
+  expected_decision: string;
+  decision_match: boolean;
+  rule_validation: GateValidationRule[];
+  invariants: { total: number; passed: number; failed: number; items: GateInvariant[] };
+  counterfactuals: { total: number; passed: number; failed: number; items: GateCounterfactual[] };
+  reproducibility: {
+    gate_input_hash: string;
+    validator_version: string;
+    graph_version?: string;
+    base_sha?: string;
+    head_sha?: string;
+    note?: string;
+  };
+  limitations: string[];
+};
+
+export type ReviewCommentary = {
+  headline: string;
+  summary: string;
+  why_it_matters: string;
+  next_action: string;
+  evidence_comment: string;
+  validation_comment: string;
+  limitation_note: string;
+  advisory: boolean;
+  source: string;
+  mode: string;
+  provider: string;
+  model: string;
+  generated_at: string;
+  purpose?: string;
+};
+
+export type GateValidationCorpus = {
+  schema: string;
+  schema_version: number;
+  scenario_count: number;
+  validator_version: string;
+  metrics: {
+    decision_accuracy: number;
+    false_block_rate: number;
+    false_pass_rate: number;
+    rule_activation_accuracy: number;
+    evidence_traceability_coverage: number;
+    invariant_pass_rate: number;
+    replay_reproducibility_rate: number;
+    per_class: Record<string, { precision: number; recall: number; f1: number; support: number }>;
+  };
+};
+
 export type DecisionPresentation = {
   decision: string;
   heading: string;
@@ -475,6 +570,8 @@ export type ReviewReport = {
   enforcement?: ReviewEnforcement;
   decision_presentation?: DecisionPresentation;
   copy_summary?: string;
+  gate_validation?: GateValidation;
+  commentary?: ReviewCommentary;
 };
 
 export async function reviewConfig(repository = ""): Promise<{ model_configured: boolean; policies: { id: string; severity: string; check: string }[]; diagnostics: { message: string }[]; score_note: string; verification?: { commands?: string[] } }> {

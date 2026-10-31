@@ -25,6 +25,8 @@ import { DecisionReason } from "../components/DecisionReason";
 import { EvidenceList } from "../components/EvidenceList";
 import { ExportMenu } from "../components/ExportMenu";
 import { GateChecklist } from "../components/GateChecklist";
+import { GateValidationSummary } from "../components/GateValidationSummary";
+import { NamiCommentary } from "../components/NamiCommentary";
 import { FocusedImpactPath } from "../components/FocusedImpactPath";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
@@ -153,6 +155,8 @@ export function ReviewDetailPage() {
         }
       />
       <AssessmentSummary report={report} />
+      <NamiCommentary report={report} />
+      <GateValidationSummary validation={report.gate_validation} />
       <ActionList actions={report.actions ?? []} />
       <DecisionReason rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <GateChecklist items={report.gate_checklist ?? []} />

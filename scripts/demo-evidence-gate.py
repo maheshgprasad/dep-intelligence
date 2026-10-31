@@ -57,6 +57,8 @@ def main() -> int:
     package = ensure_export(output, report["review_id"], "zip")
     rule = next(item for item in report["gate"]["decision_rules"] if item["rule_id"] == "BG-CONTRACT-001")
     inference = next(item for item in report["inferences"] if item["type"] == "consumer_compatibility_break")
+    validation = report["gate_validation"]
+    commentary = report["commentary"]
     print(f"Decision: {report['gate']['decision']}")
     print(f"Assessment: {report['assessment']['headline']}")
     print(f"Inference: {inference['inference_id']} {inference['type']}")
@@ -66,9 +68,27 @@ def main() -> int:
         if action["required"]:
             print(f"Required: {action['title']}")
     print(f"Enforcement: {report['enforcement']['enforcement_mode']} workflow_prevented={report['enforcement']['workflow_prevented']}")
+    print(f"Validator: {str(validation['status']).replace('_', ' ').upper()}")
+    print(f"Observed: {validation['observed_decision']}")
+    print(f"Independent replay: {validation['expected_decision']}")
+    proven = next(item for item in validation["rule_validation"] if item["rule_id"] == "BG-CONTRACT-001")
+    print(f"Rule proof: {proven['rule_id']} {proven['status']}")
+    for item in proven["requirements"]:
+        print(f"  {item['status']}: {item['label']} {', '.join(item['evidence_refs'])}")
+    print(f"Invariants: {validation['invariants']['passed']}/{validation['invariants']['total']}")
+    print(f"Counterfactuals: {validation['counterfactuals']['passed']}/{validation['counterfactuals']['total']}")
+    print(f"Gate input fingerprint: {validation['reproducibility']['gate_input_hash']}")
+    print("Commentary:")
+    print(commentary["headline"])
+    print(commentary["summary"])
+    print(commentary["next_action"])
     print(f"PDF: {pdf}")
     print(f"Package: {package}")
-    return 0 if report["gate"]["decision"] == "block" else 1
+    pdf_text = pdf.read_bytes()
+    required = [b"Decision", b"Nami explanation", b"Required", b"Gate Decision Validation", b"BG-CONTRACT-001", b"Evidence", b"Safety checks", b"Counterfactual", b"Reproducibility"]
+    if report["gate"]["decision"] != "block" or validation["status"] != "validated" or any(piece not in pdf_text for piece in required):
+        return 1
+    return 0
 
 
 def _candidate() -> dict:

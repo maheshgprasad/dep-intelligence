@@ -89,6 +89,14 @@ Nami Rank still only orders downstream files. A high rank, temporal-only evidenc
 
 Stale structural evidence for a consumed-contract claim is downgraded, so it is not a verified block. Strict graph mode still returns INCOMPLETE before that claim can block. Enforcement mode (`advisory`, `merge_gate`, `deployment_gate`) is recorded on the report and does not change the gate decision. The CLI keeps its existing exit codes unless `--enforcement` is set.
 
+## Gate validation
+
+After the decision and its explanation are stored, an independent validator replays the conditions above from the stored findings, verification, alignment, and gate configuration. It does not call the gate implementation again, and it does not change pass, warn, block, or incomplete.
+
+Gate validation is observational and cannot alter the Gate decision.
+
+A mismatch, a blocking rule that lacks its required hard evidence, or a failed safety invariant stays visible as validation failed. Optional model commentary is written after that check and can only describe the stored result. Details: [GATE_VALIDATION.md](GATE_VALIDATION.md).
+
 Details: [REVIEW_EVIDENCE.md](REVIEW_EVIDENCE.md) and [EXPORTS.md](EXPORTS.md).
 
 ## Limitations

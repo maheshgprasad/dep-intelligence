@@ -650,6 +650,18 @@ class ImpactSummaryBody(BaseModel):
     ranked_candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
+@app.get("/api/research/gate-validation")
+def research_gate_validation() -> dict:
+    """Latest offline Boundary Gate validation corpus. Absent until evaluate-gate.py has run."""
+    path = Settings.load().output_dir / "gate-validation" / "latest.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"code": "not_found"})
+    payload = read_json(path.parent, path.name)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=404, detail={"code": "not_found"})
+    return payload
+
+
 @app.post("/api/cluster/impact-summary")
 def impact_summary(body: ImpactSummaryBody) -> dict:
     from dep_intel.review_explain import summarize_impact
