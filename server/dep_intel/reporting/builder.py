@@ -75,11 +75,22 @@ def generate_report(
         },
     }
     document["reproducibility"]["report_hash"] = fingerprint(document)
+    identity = body.get("identity") or {}
+    if body["scope"] == "repository":
+        manifest_service = service or identity.get("service") or None
+        manifest_cluster = None
+    elif body["scope"] == "service_cluster":
+        manifest_service = None
+        manifest_cluster = identity.get("cluster_id") or cluster_id or None
+    else:
+        manifest_service = None
+        manifest_cluster = None
     manifest = {
         "report_id": report_id,
         "scope": body["scope"],
-        "service_id": service or body.get("identity", {}).get("cluster_id") or None,
-        "label": (body.get("identity") or {}).get("cluster_label") or "",
+        "service_id": manifest_service,
+        "cluster_id": manifest_cluster,
+        "label": identity.get("cluster_label") or "",
         "requested_scope": requested,
         "graph_version": snapshot.version,
         "created_at": generated_at,

@@ -34,8 +34,9 @@ def summarize_reviews(
     rows: list[dict[str, Any]],
     *,
     members: set[str] | None = None,
+    known: set[str] | None = None,
 ) -> dict[str, Any]:
-    summaries = [summarize_review(settings_output, row, members=members) for row in rows]
+    summaries = [summarize_review(settings_output, row, members=members, known=known) for row in rows]
     counts = {"pass": 0, "warn": 0, "block": 0, "incomplete": 0}
     for item in summaries:
         decision = str(item.get("decision") or "").lower()
@@ -55,11 +56,12 @@ def summarize_reviews(
         "reviews": attention[:50],
         "included": len(recent),
         "explained": len(attention),
-        "note": "Review counts describe Nami Gate outcomes and are not a software-quality score. Detailed cards are the attention-bearing reviews.",
+        "summary_version": 2,
+        "note": "Counts include all stored reviews that matched this report scope at generation time. Review counts describe Nami Gate outcomes and are not a software-quality score.",
     }
 
 
-def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str] | None = None) -> dict[str, Any]:
+def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str] | None = None, known: set[str] | None = None) -> dict[str, Any]:
     report = read_review(output_dir, str(row.get("review_id") or "")) or {}
     commentary = report.get("commentary") if isinstance(report.get("commentary"), dict) else {}
     assessment = report.get("assessment") if isinstance(report.get("assessment"), dict) else {}
@@ -69,7 +71,7 @@ def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str]
     primary = _primary(rules, decision)
     reason_codes = [str(item) for item in (gate.get("reason_codes") or []) if item][:12]
     targets = _targets(report)
-    evidence = _evidence(report, primary)
+    evidence, ranking = _evidence(report, primary)
     why, action = _why_and_action(decision, primary, commentary, assessment, targets)
     validation = _validation(report, commentary)
     repository = _safe_repository(str(row.get("repository") or ""))
@@ -86,6 +88,7 @@ def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str]
         "targets": targets,
         "evidence_summary": evidence,
         "evidence": [evidence] if evidence.get("statement") else [],
+        "ranking_context": ranking,
         "what_happened": _plain(commentary.get("summary") or assessment.get("summary") or _happened(decision, primary, targets)),
         "why_it_matters": why,
         "next_action": action,
@@ -93,7 +96,7 @@ def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str]
         "validation": validation["sentence"],
         "validation_detail": validation,
     }
-    outside = _outside(report, members)
+    outside = _outside(report, members, known)
     if outside:
         card["cross_cluster_targets"] = outside
         card["cross_cluster_note"] = "Cross-cluster review target"
@@ -222,9 +225,11 @@ def _targets(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _evidence(report: dict[str, Any], primary: dict[str, Any] | None) -> dict[str, str]:
+def _evidence(report: dict[str, Any], primary: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, str] | None]:
     rule_id = str((primary or {}).get("rule_id") or "")
     catalog = [item for item in (report.get("evidence_catalog") or []) if isinstance(item, dict)]
+    if "TEMPORAL" in rule_id:
+        return _temporal_evidence(catalog)
     preferred = _preferred_sources(rule_id)
     chosen = None
     for source in preferred:
@@ -239,20 +244,48 @@ def _evidence(report: dict[str, Any], primary: dict[str, Any] | None) -> dict[st
             if item.get("statement") or item.get("summary"):
                 chosen = item
                 break
-    if chosen is None and "TEMPORAL" in rule_id:
-        return {
-            "source": "Repository history",
-            "statement": "Repository history identified the files as temporal review targets.",
-            "origin": "temporal_only",
-            "grade": "",
-        }
     if chosen is None:
-        return {"source": "", "statement": "", "origin": "", "grade": ""}
+        return {"source": "", "statement": "", "origin": "", "grade": ""}, None
+    return _stored_evidence(chosen), None
+
+
+def _temporal_evidence(catalog: list[dict[str, Any]]) -> tuple[dict[str, str], dict[str, str] | None]:
+    """History is the evidence. Nami Rank, when present, is only ranking context."""
+    history = _catalog_item(catalog, "git_history")
+    ranked = _catalog_item(catalog, "NRM")
+    if history:
+        return _stored_evidence(history), {
+            "source": "Nami Rank",
+            "statement": "Nami Rank prioritized this review target using the stored temporal evidence.",
+        }
+    if ranked:
+        evidence = _stored_evidence(ranked)
+        evidence["source"] = "Temporal association evidence"
+        return evidence, {
+            "source": "Nami Rank",
+            "statement": "Nami Rank prioritized this target using the stored temporal signal.",
+        }
     return {
-        "source": _SOURCES.get(str(chosen.get("source") or ""), "Stored evidence"),
-        "statement": _plain(chosen.get("statement") or chosen.get("summary") or ""),
-        "origin": str(chosen.get("source") or ""),
-        "grade": str(chosen.get("evidence_grade") or ""),
+        "source": "Temporal association evidence",
+        "statement": "This is a historical association. It is not a blocking condition. This evidence alone does not confirm a current structural dependency.",
+        "origin": "temporal_only",
+        "grade": "",
+    }, None
+
+
+def _catalog_item(catalog: list[dict[str, Any]], source: str) -> dict[str, Any] | None:
+    for item in catalog:
+        if str(item.get("source") or "") == source and (item.get("statement") or item.get("summary")):
+            return item
+    return None
+
+
+def _stored_evidence(item: dict[str, Any]) -> dict[str, str]:
+    return {
+        "source": _SOURCES.get(str(item.get("source") or ""), "Stored evidence"),
+        "statement": _plain(item.get("statement") or item.get("summary") or ""),
+        "origin": str(item.get("source") or ""),
+        "grade": str(item.get("evidence_grade") or ""),
     }
 
 
@@ -260,7 +293,7 @@ def _preferred_sources(rule_id: str) -> tuple[str, ...]:
     if rule_id.startswith("BG-CONTRACT"):
         return ("OpenAPI", "cluster_graph", "diff")
     if "TEMPORAL" in rule_id:
-        return ("git_history", "NRM")
+        return ("git_history",)
     if rule_id.startswith("BG-VERIFY"):
         return ("verification_command",)
     if rule_id.startswith("BG-POLICY"):
@@ -281,8 +314,10 @@ def _why_and_action(
     action = _plain(commentary.get("next_action") or assessment.get("recommended_next_step") or "")
     rule_id = str((primary or {}).get("rule_id") or "")
     if "TEMPORAL" in rule_id:
+        if "not a blocker" not in why.lower():
+            why = f"Historical association is not a blocker. {why}".strip()
         if _TEMPORAL not in why:
-            why = _TEMPORAL
+            why = f"{why} {_TEMPORAL}".strip()
         if not action:
             action = _file_action(targets)
     if decision in {"warn", "block", "incomplete"}:
@@ -364,12 +399,62 @@ def _file_action(targets: dict[str, Any]) -> str:
     return f"Review {files[0]} and {len(files) - 1} other files before deployment."
 
 
-def _outside(report: dict[str, Any], members: set[str] | None) -> list[str]:
+def _outside(report: dict[str, Any], members: set[str] | None, known: set[str] | None = None) -> list[str]:
+    """Services named by the stored review that are outside this cluster. Membership is unchanged."""
     if not members:
         return []
+    inside = set(members)
+    if known:
+        inside.update(known)
+    names: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text and text not in inside and text not in names:
+            names.append(text)
+
     impact = report.get("impact") if isinstance(report.get("impact"), dict) else {}
-    names = [str(item) for item in (impact.get("affected_services") or []) if item and str(item) not in members]
+    for item in impact.get("affected_services") or []:
+        add(item)
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    candidates = impact.get("ranked_candidates") if isinstance(impact.get("ranked_candidates"), list) else []
+    change = report.get("change") if isinstance(report.get("change"), dict) else {}
+    contracts = change.get("contract_changes") if isinstance(change.get("contract_changes"), list) else []
+    for item in [*findings, *candidates, *contracts]:
+        if not isinstance(item, dict):
+            continue
+        add(item.get("service_id") or item.get("service") or item.get("to_service"))
+        for consumer in item.get("consumers") or []:
+            if isinstance(consumer, dict):
+                add(consumer.get("service_id") or consumer.get("service"))
+            else:
+                add(consumer)
     return names[:8]
+
+
+def human_validation_lines(item: dict[str, Any]) -> list[str]:
+    """Short decision-logic label. The stored validation sentence stays available."""
+    detail = item.get("validation_detail") if isinstance(item.get("validation_detail"), dict) else {}
+    status = str(item.get("validation_status") or detail.get("status") or "")
+    labels = {
+        "validated": "Validated",
+        "validated_with_limitations": "Validated with limitations",
+        "failed": "Validation failed",
+        "not_available": "Not available",
+        "unavailable": "Unavailable",
+    }
+    if status in labels:
+        lines = [f"Decision logic: {labels[status]}"]
+        note = str(detail.get("note") or "").strip()
+        if note:
+            lines.append(note)
+        return lines
+    raw = str(item.get("validation") or "").strip()
+    if not raw:
+        return []
+    if raw.lower().startswith("decision logic"):
+        return [raw]
+    return [f"Decision logic: {raw}"]
 
 
 def _safe_repository(repository: str) -> str:

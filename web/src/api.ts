@@ -640,6 +640,7 @@ export type IntelligenceReportSummary = {
   report_id: string;
   scope: string;
   service: string | null;
+  cluster_id?: string | null;
   label?: string;
   generated_at: string;
   graph_version: string;
@@ -656,6 +657,11 @@ export type ReportReviewCard = {
   why_it_matters?: string;
   next_action?: string;
   validation?: string;
+  validation_status?: string;
+  validation_detail?: { status?: string; label?: string; note?: string };
+  cross_cluster_targets?: string[];
+  cross_cluster_note?: string;
+  ranking_context?: { source?: string; statement?: string };
   evidence?: { source?: string; what?: string; statement?: string }[];
   primary_rule?: { rule_id?: string; title?: string; decision?: string } | null;
   reason_codes?: string[];
@@ -692,6 +698,7 @@ export type IntelligenceReport = {
     counts?: { pass?: number; warn?: number; block?: number; incomplete?: number };
     detail_included?: number;
     detail_omitted?: number;
+    summary_version?: number;
     attention_reviews?: ReportReviewCard[];
     reviews?: ReportReviewCard[];
   };

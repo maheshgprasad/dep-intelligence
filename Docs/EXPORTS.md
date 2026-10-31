@@ -66,6 +66,8 @@ Impact Explorer can download the ranked candidate table as JSON, CSV, or Markdow
 
 Workspace, service cluster, and repository reports use schema `nami.intelligence.report`, version 1. A stored `cluster` scope is a workspace report. Review exports stay on `nami.review.export`. Exports are rendered from the stored document. They do not query newer reviews or rerun the Gate. Absolute checkout paths are removed from review exports. Repository-relative paths stay.
 
+PDF and Markdown are bounded human-readable views of that stored document. JSON and the evidence package retain the machine-readable report. A human export may cap rows, and it still preserves the report's scope, membership, review counts, and limitations. Opening or exporting an older report does not insert newer fields into the stored JSON.
+
 | Format | Endpoint |
 | --- | --- |
 | JSON | `GET /api/reports/{id}/export/json` |

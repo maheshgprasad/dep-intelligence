@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from dep_intel.reporting.review_summary import human_validation_lines
+
+INTERPRETATION = "Workspace, Service Cluster, and Repository readiness describe intelligence completeness. They are not Boundary Gate decisions."
+_COUNT_NOTE = "Counts include all stored reviews that matched this report scope at generation time."
+
 PAGE_W = 612
 PAGE_H = 792
 MARGIN = 48
@@ -60,7 +65,7 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
     canvas.section("How to interpret this report")
     canvas.bullet("Dependency reach is not a probability of failure.")
     canvas.bullet("Historical change association does not prove a structural dependency.")
-    canvas.bullet("Workspace and repository readiness is not a Boundary Gate decision.")
+    canvas.bullet(INTERPRETATION)
     canvas.bullet("Missing or unscanned data is reported separately from clean results.")
     canvas.section("Limitations")
     limitations = [str(item) for item in document.get("limitations") or []]
@@ -79,6 +84,8 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
     canvas.kv("Report", document.get("report_id"))
     canvas.kv("Graph version", repro.get("graph_version"))
     canvas.kv("Generated", repro.get("generated_at") or generated)
+    if identity.get("cluster_id"):
+        canvas.kv("Service cluster ID", identity.get("cluster_id"))
     if identity.get("service"):
         canvas.kv("Service", identity.get("service"))
     if identity.get("repository_sha"):
@@ -100,13 +107,41 @@ def _attention(canvas: _Canvas, document: dict[str, Any]) -> None:
 
 def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
     workspace = document.get("workspace") or {}
-    canvas.section("Workspace")
-    canvas.kv("Services", workspace.get("service_count"))
-    canvas.kv("Repositories", workspace.get("repository_count"))
-    canvas.kv("Cross-service relationships", workspace.get("relationship_count"))
-    canvas.kv("Contracts", workspace.get("contract_count"))
-    canvas.kv("Out of date", workspace.get("graph_stale"))
-    canvas.kv("Unresolved provider references", workspace.get("unresolved_count"))
+    identity = document.get("identity") or {}
+    service_cluster = document.get("scope") == "service_cluster"
+    if service_cluster:
+        canvas.section("Service cluster")
+        canvas.paragraph(str(identity.get("cluster_label") or "Connected service group"))
+        canvas.kv("Member services", workspace.get("service_count"))
+        canvas.kv("Confirmed internal calls", workspace.get("relationship_count"))
+        canvas.paragraph("This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.")
+        members = [str(item) for item in (identity.get("services") or []) if item]
+        if members:
+            canvas.section("Cluster membership")
+            shown = members[:30]
+            for name in shown:
+                canvas.bullet(name)
+            extra = len(members) - len(shown)
+            if extra:
+                canvas.muted(f"+ {extra} additional member services")
+    else:
+        canvas.section("Workspace overview")
+        canvas.kv("Services", workspace.get("service_count"))
+        canvas.kv("Repositories", workspace.get("repository_count"))
+        canvas.kv("Confirmed cross-service calls", workspace.get("relationship_count"))
+        canvas.kv("Contracts", workspace.get("contract_count"))
+        canvas.kv("Out of date", workspace.get("graph_stale"))
+        groups = ((document.get("service_clusters") or {}).get("items") or [])
+        if groups:
+            canvas.section("Detected service clusters")
+            for item in groups:
+                canvas.bullet(f"{item.get('label') or 'Connected service group'}. {item.get('service_count')} services. {item.get('relationship_count')} confirmed calls.")
+        standalone = document.get("standalone") or []
+        if standalone:
+            canvas.section("Standalone repositories")
+            canvas.paragraph("A standalone repository or service has no confirmed cross-service relationship in this stored snapshot.")
+            for item in standalone:
+                canvas.bullet(str(item.get("service_id") or item.get("service") or ""))
 
     canvas.section("Service catalogue")
     services = document.get("services") or []
@@ -131,7 +166,7 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
     else:
         canvas.muted("No services are in the published snapshot.")
 
-    canvas.section("Cross-service relationships")
+    canvas.section("Internal cross-service relationships" if service_cluster else "Cross-service relationships")
     relation = document.get("relationships") or {}
     rows = relation.get("items") or []
     shown, note = _cap(rows)
@@ -158,7 +193,7 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
         canvas.section("Relationship provenance")
         for key, count in provenance.items():
             canvas.kv(str(key), count)
-        canvas.muted("Provenance counts come from stored relationship records.")
+        canvas.muted("These counts describe stored relationship evidence. They do not imply that every relationship was automatically discovered.")
 
     canvas.section("Contracts")
     table = (document.get("contracts") or {}).get("table") or []
@@ -253,6 +288,7 @@ def _repository(canvas: _Canvas, document: dict[str, Any]) -> None:
 
 
 def _common_tail(canvas: _Canvas, document: dict[str, Any]) -> None:
+    _provider(canvas, document)
     history = document.get("history") or {}
     canvas.section("History")
     canvas.status_line("History", str(history.get("label") or "Unavailable"), str(history.get("status") or ""))
@@ -263,6 +299,32 @@ def _common_tail(canvas: _Canvas, document: dict[str, Any]) -> None:
     _health(canvas, document.get("health") or {})
     _reviews(canvas, document.get("review_activity") or {})
     _observations(canvas, document)
+
+
+def _provider(canvas: _Canvas, document: dict[str, Any]) -> None:
+    discovery = document.get("provider_discovery")
+    if not isinstance(discovery, dict) or not discovery:
+        return
+    canvas.section("Provider discovery")
+    if discovery.get("status") == "not_scanned":
+        canvas.paragraph("Not scanned")
+        return
+    canvas.kv("Status", discovery.get("label") or "Completed")
+    canvas.kv("Unique unresolved references", discovery.get("unique_unresolved_reference_count"))
+    canvas.kv("Unresolved observations", discovery.get("unresolved_observation_count"))
+    canvas.muted("Provider discovery is separate from the confirmed service graph.")
+
+
+def _why_text(item: dict[str, Any]) -> str:
+    why = str(item.get("why_it_matters") or "")
+    rule = str((item.get("primary_rule") or {}).get("rule_id") or "")
+    if "TEMPORAL" not in rule:
+        return why
+    if "not a blocker" not in why.lower():
+        why = f"Historical association is not a blocker. {why}".strip()
+    if "does not confirm a current structural dependency" not in why.lower():
+        why = f"{why} This evidence alone does not confirm a current structural dependency.".strip()
+    return why
 
 
 def _health(canvas: _Canvas, health: dict[str, Any]) -> None:
@@ -280,13 +342,17 @@ def _health(canvas: _Canvas, health: dict[str, Any]) -> None:
 
 
 def _reviews(canvas: _Canvas, activity: dict[str, Any]) -> None:
-    canvas.section("Recent reviews")
+    canvas.section("Review activity")
     counts = activity.get("counts") or {}
     canvas.kv("Pass", counts.get("pass", 0))
     canvas.kv("Warn", counts.get("warn", 0))
     canvas.kv("Block", counts.get("block", 0))
     canvas.kv("Incomplete", counts.get("incomplete", 0))
-    canvas.muted(str(activity.get("note") or "Review counts describe Nami Gate outcomes and are not a software-quality score."))
+    note = str(activity.get("note") or "Review counts describe Nami Gate outcomes and are not a software-quality score.")
+    if _COUNT_NOTE not in note:
+        note = f"{_COUNT_NOTE} {note}"
+    canvas.muted(note)
+    canvas.paragraph("Reviews requiring attention")
     reviews = activity.get("attention_reviews")
     if reviews is None:
         reviews = [item for item in (activity.get("reviews") or []) if item.get("decision") != "pass"]
@@ -311,15 +377,22 @@ def _reviews(canvas: _Canvas, activity: dict[str, Any]) -> None:
             suffix = f" + {extra} more" if extra else ""
             canvas.muted(f"Review targets: {targets.get('unique_file_count') or len(files)} files, {targets.get('total_findings') or 0} supporting findings. " + ", ".join(str(path) for path in files) + suffix)
         if item.get("why_it_matters"):
-            canvas.muted(f"Why it matters: {item['why_it_matters']}")
+            canvas.muted(f"Why it matters: {_why_text(item)}")
         evidence = item.get("evidence") or []
         if evidence:
             entry = evidence[0]
-            canvas.bullet(f"{entry.get('source') or 'Stored evidence'}: {entry.get('what') or entry.get('statement') or ''}")
+            canvas.bullet(f"Evidence: {entry.get('source') or 'Stored evidence'}. {entry.get('what') or entry.get('statement') or ''}")
+        ranking = item.get("ranking_context") or {}
+        if ranking.get("statement"):
+            canvas.muted(f"Ranking context: {ranking.get('source') or 'Nami Rank'}. {ranking.get('statement')}")
+        outside = [str(name) for name in (item.get("cross_cluster_targets") or []) if name]
+        if outside:
+            canvas.muted("External review targets: " + ", ".join(outside))
+            canvas.muted("These targets are outside this Service Cluster.")
         if item.get("next_action"):
             canvas.muted(f"Recommended action: {item['next_action']}")
-        if item.get("validation"):
-            canvas.muted(f"Decision logic: {item['validation']}")
+        for line in human_validation_lines(item):
+            canvas.muted(line)
         if item.get("review_id"):
             canvas.muted(f"Review ID: {item['review_id']}")
 
@@ -337,13 +410,6 @@ def _observations(canvas: _Canvas, document: dict[str, Any]) -> None:
         canvas.section("Intelligence gaps")
         for item in gaps:
             canvas.bullet(str(item))
-    canvas.section("Recommendations")
-    recommendations = document.get("recommendations") or []
-    if recommendations:
-        for item in recommendations:
-            canvas.bullet(f"{item.get('title')}. {item.get('reason')}")
-    else:
-        canvas.muted("No recommendations were recorded.")
 
 
 def _links(canvas: _Canvas, rows: list[dict[str, Any]], field: str, _verb: str) -> None:
