@@ -13,7 +13,7 @@
     "@carbon/icons-react": "^11.91.0",
     "@carbon/react": "^1.119.0",
     "@ibm/plex": "^6.4.1",
-    "react": "^18.3.1",
+    "react": "^19.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.1"
   },
@@ -21,7 +21,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
-    "@types/react": "^18.3.18",
+    "@types/react": "^19.3.0",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^24.1.3",
