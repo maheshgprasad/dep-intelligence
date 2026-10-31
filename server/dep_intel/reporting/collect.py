@@ -219,7 +219,8 @@ def reviews_for(
     rows = list_reviews(settings.output_dir, limit=None)
     tokens = _scope_tokens(settings, snapshot, members, service, repository)
     matched = rows if not tokens else [row for row in rows if _review_matches(row, tokens, set())]
-    return summarize_reviews(settings.output_dir, matched, members=members)
+    known = tokens if members is not None else None
+    return summarize_reviews(settings.output_dir, matched, members=members, known=known)
 
 
 def _scope_tokens(

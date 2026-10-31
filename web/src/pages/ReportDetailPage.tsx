@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Accordion, AccordionItem, InlineLoading, InlineNotification, StructuredListBody, StructuredListCell, StructuredListRow, StructuredListWrapper, Tile } from "@carbon/react";
-import { getIntelligenceReport, type IntelligenceReport } from "../api";
+import { getIntelligenceReport, type IntelligenceReport, type ReportReviewCard } from "../api";
 import { IntelligenceExportMenu } from "../components/IntelligenceExportMenu";
 import { PageHeader } from "../components/PageHeader";
 
@@ -40,7 +40,8 @@ export function ReportDetailPage() {
         <p className="helper">Generated {report.generated_at}. Graph {report.reproducibility.graph_version || "not recorded"}.</p>
         <p className="helper">This report describes published Nami intelligence. It is not a Boundary Gate decision for a specific change.</p>
       </Tile>
-      {legacyReport(report) ? <p className="helper">This legacy report was generated before enriched review explanations were stored.</p> : null}
+      {legacySummary(report) ? <p className="helper">This report was generated before enriched review summaries were stored.</p> : null}
+      {report.scope === "cluster" ? <p className="helper">This stored report uses the legacy scope name cluster. That name means Workspace.</p> : null}
       <Attention items={report.recommendations || []} />
       <Tile>
         <h2 className="section-title">Intelligence status</h2>
@@ -59,12 +60,28 @@ export function ReportDetailPage() {
         <Tile>
           <h2 className="section-title">{report.scope === "service_cluster" ? "Service cluster" : "Workspace"}</h2>
           <p>{report.workspace.service_count} services. {report.workspace.relationship_count} confirmed cross-service calls. {report.workspace.contract_count} contracts. {report.workspace.graph_stale} out of date. {providerSentence(report)}</p>
-          {report.service_clusters?.items?.length ? (
-            <ul className="action-list">
-              {report.service_clusters.items.map((item) => <li key={item.cluster_id}>{item.label}. {item.service_count} services. {item.relationship_count} confirmed calls.</li>)}
-            </ul>
+          {report.scope === "service_cluster" ? (
+            <>
+              <p>Cluster {report.identity.cluster_label || "Connected service group"}. Member services {report.identity.services?.length ?? report.workspace.service_count}. Confirmed internal calls {report.workspace.relationship_count}.</p>
+              <p className="helper">This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.</p>
+              {report.identity.services?.length ? <p>Cluster membership: {report.identity.services.join(", ")}</p> : null}
+            </>
           ) : null}
-          {report.scope !== "service_cluster" && report.standalone?.length ? <p>{report.standalone.length} standalone {report.standalone.length === 1 ? "repository" : "repositories"}: {report.standalone.map((item) => item.service_id).join(", ")}.</p> : null}
+          {report.scope !== "service_cluster" && report.service_clusters?.items?.length ? (
+            <>
+              <h3 className="section-title">Detected service clusters</h3>
+              <ul className="action-list">
+                {report.service_clusters.items.map((item) => <li key={item.cluster_id}>{item.label}. {item.service_count} services. {item.relationship_count} confirmed calls.</li>)}
+              </ul>
+            </>
+          ) : null}
+          {report.scope !== "service_cluster" && report.standalone?.length ? (
+            <>
+              <h3 className="section-title">Standalone repositories</h3>
+              <p>{report.standalone.map((item) => item.service_id).join(", ")}</p>
+              <p className="helper">A standalone repository or service has no confirmed cross-service relationship in this stored snapshot.</p>
+            </>
+          ) : null}
         </Tile>
       ) : null}
       <StoredReport report={report} />
@@ -84,7 +101,7 @@ export function ReportDetailPage() {
         <ul className="action-list">
           <li>Dependency reach is not a probability of failure.</li>
           <li>Historical change association does not prove a structural dependency.</li>
-          <li>Workspace and repository readiness is not a Boundary Gate decision.</li>
+          <li>Workspace, Service Cluster, and Repository readiness describe intelligence completeness. They are not Boundary Gate decisions.</li>
           <li>Missing or unscanned data is reported separately from clean results.</li>
         </ul>
       </Tile>
@@ -118,9 +135,10 @@ function ReviewActivity({ activity }: { activity: IntelligenceReport["review_act
   const omitted = activity?.detail_omitted || 0;
   return (
     <Tile>
-      <h2 className="section-title">Reviews that need attention</h2>
+      <h2 className="section-title">Review activity</h2>
       <p>Pass {counts.pass ?? 0}. Warn {counts.warn ?? 0}. Block {counts.block ?? 0}. Incomplete {counts.incomplete ?? 0}.</p>
-      <p className="helper">{activity?.note || "Review counts describe Nami Gate outcomes and are not a software-quality score."}</p>
+      <p className="helper">{activity?.note || "Counts include all stored reviews that matched this report scope at generation time."}</p>
+      <h3 className="section-title">Reviews requiring attention</h3>
       {omitted > 0 ? <p className="helper">Showing {reviews.length} of {reviews.length + omitted} attention-bearing reviews.</p> : null}
       {reviews.length === 0 ? <p>No attention-bearing reviews matched this report.</p> : null}
       {reviews.map((item) => {
@@ -136,7 +154,14 @@ function ReviewActivity({ activity }: { activity: IntelligenceReport["review_act
             {(item.evidence || []).slice(0, 1).map((entry) => (
               <p key={`${item.review_id}-evidence`}>Evidence: {entry.source}. {entry.what || entry.statement}</p>
             ))}
-            {item.validation ? <p>Decision logic: {item.validation}</p> : null}
+            {item.ranking_context?.statement ? <p>Ranking context: {item.ranking_context.source || "Nami Rank"}. {item.ranking_context.statement}</p> : null}
+            {item.cross_cluster_targets?.length ? (
+              <>
+                <p>External review targets: {item.cross_cluster_targets.join(", ")}</p>
+                <p className="helper">These services are outside the selected Service Cluster. Their appearance here comes from the stored review and does not change cluster membership.</p>
+              </>
+            ) : null}
+            {validationLines(item).map((line) => <p key={line}>{line}</p>)}
             {item.next_action ? <p>Recommended action: {item.next_action}</p> : null}
             {item.review_id ? <Link to={`/review/${item.review_id}`}>Open full review</Link> : null}
           </div>
@@ -152,9 +177,27 @@ function scopeDescription(report: IntelligenceReport): string {
   return "Workspace intelligence report · Point-in-time snapshot";
 }
 
-function legacyReport(report: IntelligenceReport): boolean {
-  const cards = report.review_activity?.attention_reviews || report.review_activity?.reviews || [];
-  return report.scope === "cluster" || (cards.length > 0 && cards.every((item) => !item.primary_rule));
+function legacySummary(report: IntelligenceReport): boolean {
+  return !report.review_activity?.summary_version;
+}
+
+function validationLines(item: ReportReviewCard): string[] {
+  const labels: Record<string, string> = {
+    validated: "Validated",
+    validated_with_limitations: "Validated with limitations",
+    failed: "Validation failed",
+    not_available: "Not available",
+    unavailable: "Unavailable",
+  };
+  const status = item.validation_status || item.validation_detail?.status;
+  if (status && labels[status]) {
+    const lines = [`Decision logic: ${labels[status]}`];
+    if (item.validation_detail?.note) lines.push(item.validation_detail.note);
+    return lines;
+  }
+  const raw = item.validation || "";
+  if (!raw) return [];
+  return [raw.toLowerCase().startsWith("decision logic") ? raw : `Decision logic: ${raw}`];
 }
 
 function providerSentence(report: IntelligenceReport): string {
@@ -213,7 +256,7 @@ function WorkspaceSections({ report }: { report: IntelligenceReport }) {
         ) : <p>No services are recorded in this snapshot.</p>}
       </Tile>
       <Tile>
-        <h2 className="section-title">Cross-service relationships</h2>
+        <h2 className="section-title">{report.scope === "service_cluster" ? "Internal cross-service relationships" : "Cross-service relationships"}</h2>
         {shown.length ? shown.map((item) => (
           <p key={`${item.from_service}-${item.contract}-${item.to_service}`}>{item.from_service} → {item.to_service} · {item.contract} · Provenance {item.provenance || "recorded"}{item.resolution ? ` · Resolution ${item.resolution}` : ""}</p>
         )) : <p>No cross-service relationships are recorded in this snapshot.</p>}

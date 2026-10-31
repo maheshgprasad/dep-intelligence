@@ -18,8 +18,9 @@ from dep_intel.path_hygiene import scrub_text
 from dep_intel.reporting.builder import generate_report
 from dep_intel.reporting.collect import history_for, relationships
 from dep_intel.reporting.render_markdown import render_markdown
+from dep_intel.reporting.render_pdf import render_report_pdf
 from dep_intel.reporting.review_summary import summarize_review
-from dep_intel.reporting.store import read_report
+from dep_intel.reporting.store import list_reports, read_manifest, read_report
 from dep_intel.review_export import ensure_export
 from dep_intel.service_clusters import cluster_id_for, detect_service_clusters
 from dep_intel.store import write_json
@@ -334,6 +335,218 @@ def test_absolute_paths_are_removed_from_review_exports(tmp_path: Path) -> None:
     assert "app/main.py" == scrub_text("app/main.py")
 
 
+def test_human_exports_distinguish_workspace_and_service_cluster(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    snapshot = _chain_snapshot()
+    groups = detect_service_clusters(snapshot)
+    workspace = generate_report(settings, snapshot, "workspace")
+    cluster = generate_report(settings, snapshot, "service_cluster", cluster_id=groups["clusters"][0]["cluster_id"])
+    label = groups["clusters"][0]["label"]
+    workspace_md = render_markdown(workspace)
+    workspace_pdf = render_report_pdf(workspace)
+    cluster_md = render_markdown(cluster)
+    cluster_pdf = render_report_pdf(cluster)
+    for text in (workspace_md, workspace_pdf.decode("latin-1")):
+        assert "Detected service clusters" in text
+        assert "Standalone repositories" in text
+        assert label in text
+        assert "tooling-repo" in text
+        assert "auth-service" in text
+    assert "Workspace overview" in workspace_md
+    assert b"Workspace overview" in workspace_pdf
+    for text in (cluster_md, cluster_pdf.decode("latin-1")):
+        assert "Service cluster" in text
+        assert label in text
+        assert groups["clusters"][0]["cluster_id"] in text
+        assert "Cluster membership" in text
+        assert "auth-service" in text
+        assert "user-service" in text
+        assert "reporting-service" in text
+    assert "Workspace overview" not in cluster_md
+    assert b"Workspace overview" not in cluster_pdf
+    assert "tooling-repo" not in cluster_md
+    assert "tooling-repo" not in cluster_pdf.decode("latin-1")
+    membership = cluster_md.split("## Cluster membership", 1)[1].split("##", 1)[0]
+    assert "tooling-repo" not in membership
+    assert "intelligence completeness" in cluster_md
+    assert b"intelligence completeness" in cluster_pdf
+    assert workspace["review_activity"]["summary_version"] == 2
+    assert cluster["review_activity"]["summary_version"] == 2
+
+
+def test_cross_cluster_review_target_stays_outside_membership(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    snapshot = _two_cluster_snapshot()
+    groups = detect_service_clusters(snapshot)
+    alpha = next(item for item in groups["clusters"] if "alpha-auth" in item["services"])
+    _write_review(tmp_path, "outside", "warn", "alpha-auth", extra={
+        "impact": {"affected_services": ["beta-billing"]},
+        "gate": {"decision": "warn", "reason_codes": ["review_target"]},
+    })
+    document = generate_report(settings, snapshot, "service_cluster", cluster_id=alpha["cluster_id"])
+    card = document["review_activity"]["attention_reviews"][0]
+    assert card["cross_cluster_targets"] == ["beta-billing"]
+    assert document["identity"]["services"] == ["alpha-auth", "alpha-user"]
+    text = render_markdown(document)
+    pdf = render_report_pdf(document).decode("latin-1")
+    membership = text.split("## Cluster membership", 1)[1].split("##", 1)[0]
+    assert "beta-billing" not in membership
+    assert "External review targets" in text
+    assert "beta-billing" in text
+    assert "External review targets" in pdf
+    assert "beta-billing" in pdf
+    assert document["review_activity"]["counts"]["warn"] == 1
+
+
+def test_member_alias_is_not_called_an_external_target(tmp_path: Path) -> None:
+    _write_review(tmp_path, "alias", "warn", "alpha-auth", extra={
+        "impact": {"affected_services": ["alpha-auth", "graph-slug-auth", "beta-billing"]},
+        "gate": {"decision": "warn", "reason_codes": ["review_target"]},
+    })
+    card = summarize_review(
+        tmp_path,
+        {"review_id": "alias", "decision": "warn", "service": "alpha-auth", "repository": "alpha-auth"},
+        members={"alpha-auth", "alpha-user"},
+        known={"alpha-auth", "alpha-user", "graph-slug-auth"},
+    )
+    assert card["cross_cluster_targets"] == ["beta-billing"]
+
+
+def test_temporal_evidence_is_not_labelled_as_nami_rank(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    _write_review(tmp_path, "history", "warn", "user-service", extra={
+        "gate": {
+            "decision": "warn",
+            "reason_codes": ["temporal_only_review_target"],
+            "decision_rules": [{"rule_id": "BG-TEMPORAL-001", "title": "Historical association is not a blocker", "decision": "warn", "outcome": "triggered"}],
+        },
+        "findings": [{"service_id": "user-service", "file_path": "app/main.py", "claim": "Historical association."}],
+        "evidence_catalog": [
+            {"source": "git_history", "statement": "Repository history identified app/main.py."},
+            {"source": "NRM", "statement": "Nami Rank prioritized app/main.py."},
+        ],
+        "commentary": {},
+    })
+    history = generate_report(settings, _snapshot(), "repository", "user-service")
+    card = history["review_activity"]["attention_reviews"][0]
+    assert card["evidence_summary"]["source"] == "Repository history"
+    assert card["evidence_summary"]["origin"] == "git_history"
+    assert card["ranking_context"]["source"] == "Nami Rank"
+    text = render_markdown(history)
+    assert "Evidence: Repository history" in text
+    assert "Ranking context: Nami Rank" in text
+    assert "Evidence: Nami Rank" not in text
+    assert "does not confirm a current structural dependency" in text
+    assert "not a blocker" in text.lower()
+
+
+def test_nrm_only_temporal_evidence_stays_temporal(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    _write_review(tmp_path, "ranked", "warn", "user-service", extra={
+        "gate": {"decision": "warn", "reason_codes": ["temporal_only_review_target"]},
+        "findings": [{"service_id": "user-service", "file_path": "app/main.py"}],
+        "evidence_catalog": [{"source": "NRM", "statement": "Historically associated with the changed file, but not structurally reachable in the current graph."}],
+        "commentary": {},
+    })
+    document = generate_report(settings, _snapshot(), "repository", "user-service")
+    card = document["review_activity"]["attention_reviews"][0]
+    assert card["evidence_summary"]["source"] == "Temporal association evidence"
+    assert card["evidence_summary"]["origin"] == "NRM"
+    assert card["ranking_context"]["source"] == "Nami Rank"
+    text = render_markdown(document)
+    assert "Evidence: Temporal association evidence" in text
+    assert "Evidence: Nami Rank" not in text
+    assert "Ranking context: Nami Rank" in text
+    assert "does not confirm a current structural dependency" in text
+
+
+def test_recommendation_title_is_printed_once(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    snapshot = _snapshot()
+    snapshot.partitions["auth-service"].quality = "stale"
+    document = generate_report(settings, snapshot, "repository", "auth-service")
+    title = "Refresh auth-service intelligence"
+    assert any(item["title"] == title for item in document["recommendations"])
+    markdown = render_markdown(document)
+    pdf = render_report_pdf(document).decode("latin-1")
+    assert markdown.count(title) == 1
+    assert pdf.count(title) == 1
+    assert "## Review activity" in markdown
+    assert "## Recent reviews" not in markdown
+    assert b"Review activity" in render_report_pdf(document)
+    assert b"Recent reviews" not in render_report_pdf(document)
+
+
+def test_validation_label_is_not_repeated(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    _write_review(tmp_path, "checked", "warn", "user-service", extra={"gate_validation": {"status": "validated"}})
+    document = generate_report(settings, _snapshot(), "repository", "user-service")
+    text = render_markdown(document)
+    assert "Decision logic: Validated" in text
+    assert "Decision logic: Decision logic validated" not in text
+
+
+def test_manifest_keeps_service_and_cluster_identity_apart(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    snapshot = _chain_snapshot()
+    groups = detect_service_clusters(snapshot)
+    workspace = generate_report(settings, snapshot, "workspace")
+    cluster = generate_report(settings, snapshot, "service_cluster", cluster_id=groups["clusters"][0]["cluster_id"])
+    repository = generate_report(settings, snapshot, "repository", "tooling-repo")
+    workspace_manifest = read_manifest(tmp_path, workspace["report_id"])
+    cluster_manifest = read_manifest(tmp_path, cluster["report_id"])
+    repository_manifest = read_manifest(tmp_path, repository["report_id"])
+    assert workspace_manifest["service_id"] is None
+    assert workspace_manifest["cluster_id"] is None
+    assert cluster_manifest["service_id"] is None
+    assert cluster_manifest["cluster_id"] == groups["clusters"][0]["cluster_id"]
+    assert repository_manifest["service_id"] == "tooling-repo"
+    assert repository_manifest["cluster_id"] is None
+    (tmp_path / "reports" / "rpt-oldmanifest").mkdir(parents=True)
+    (tmp_path / "reports" / "rpt-oldmanifest" / "manifest.json").write_text(json.dumps({
+        "report_id": "rpt-oldmanifest",
+        "scope": "cluster",
+        "service_id": None,
+        "graph_version": "g",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }), encoding="utf-8")
+    listed = list_reports(tmp_path, limit=20)
+    old = next(item for item in listed if item["report_id"] == "rpt-oldmanifest")
+    assert old["cluster_id"] is None
+    assert old["scope"] == "cluster"
+
+
+def test_old_report_still_renders_without_new_fields() -> None:
+    document = {
+        "schema": "nami.intelligence.report",
+        "scope": "cluster",
+        "report_id": "rpt-old",
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "executive_summary": {"headline": "Old workspace", "summary": "Stored.", "readiness_label": "Partial"},
+        "intelligence_status": {},
+        "recommendations": [{"title": "Refresh auth-service intelligence", "reason": "Stored."}],
+        "identity": {},
+        "reproducibility": {},
+        "review_activity": {"counts": {"pass": 1, "warn": 0, "block": 0, "incomplete": 0}, "reviews": [{"decision": "warn", "headline": "Look", "validation": "Decision logic validation: Not available"}]},
+    }
+    text = render_markdown(document)
+    pdf = render_report_pdf(document)
+    assert "Workspace overview" in text
+    assert "Review activity" in text
+    assert "Decision logic: Decision logic validation: Not available" not in text
+    assert pdf.startswith(b"%PDF")
+    assert document.get("review_activity", {}).get("summary_version") is None
+
+
+def test_new_report_without_a_gate_rule_is_not_legacy_by_missing_rule(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    _write_review(tmp_path, "plain", "warn", "user-service", extra={"gate": {"decision": "warn", "reason_codes": ["review_target"]}})
+    document = generate_report(settings, _snapshot(), "repository", "user-service")
+    card = document["review_activity"]["attention_reviews"][0]
+    assert card["primary_rule"] is None
+    assert document["review_activity"]["summary_version"] == 2
+
+
 def _write_review(root: Path, review_id: str, decision: str, service: str, extra: dict | None = None) -> None:
     payload = {
         "review_id": review_id,
@@ -392,6 +605,48 @@ def _chain_snapshot(reverse: bool = False):
         contracts[target] = contract
     return index_snapshot(
         version="g-chain",
+        generated_at="2026-01-01T00:00:00+00:00",
+        partitions=partitions,
+        overlay={},
+        bridges=edges,
+        diagnostics=[],
+        fingerprints=[],
+    )
+
+
+def _two_cluster_snapshot():
+    pairs = [("alpha-auth", "alpha-user"), ("beta-billing", "beta-pay")]
+    partitions = {}
+    edges = []
+    services = ["alpha-auth", "alpha-user", "beta-billing", "beta-pay"]
+    for service in services:
+        partitions[service] = Partition(service_id=service, repository=service, workspace_head=f"head-{service}", quality="ok")
+    for source, target in pairs:
+        identity = f"http::GET:/{target}"
+        contract = GraphNode(
+            key=symbol_key(target, "", identity, HTTP_CONTRACT),
+            category=HTTP_CONTRACT,
+            service_id=target,
+            name=f"GET /{target}",
+            qualified_name=identity,
+            file_path="src/app.py",
+            kind=HTTP_CONTRACT,
+            metadata={"identity": identity},
+        )
+        caller = GraphNode(
+            key=symbol_key(source, "src/app.py", f"{source}::call", "Function"),
+            category="code_symbol",
+            service_id=source,
+            name="call",
+            qualified_name=f"{source}::call",
+            file_path="src/app.py",
+            kind="Function",
+        )
+        partitions[target].nodes[contract.key] = contract
+        partitions[source].nodes[caller.key] = caller
+        edges.append(GraphEdge(caller.key, contract.key, CONSUMES_HTTP, {"status": "declared", "resolution": "exact"}))
+    return index_snapshot(
+        version="g-two",
         generated_at="2026-01-01T00:00:00+00:00",
         partitions=partitions,
         overlay={},

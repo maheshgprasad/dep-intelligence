@@ -13,7 +13,11 @@ Legacy API value `"cluster"` is an alias for Workspace. A stored report whose sc
 
 Service Cluster is a Nami reporting and topology concept: a connected component of confirmed cross-service relationships. It is not a Kubernetes cluster. Membership uses confirmed contract calls only. Direction is ignored for connectivity and kept on each displayed call. A repository with no confirmed call is standalone. It stays in the workspace and can have its own repository report. It is not a one-node service cluster.
 
-A workspace, service cluster, or repository report is not a Boundary Gate decision. Review counts inside the report are historical gate outcomes, not a quality score. Gate validation and commentary belong to a change review. They do not replace this report.
+A workspace, service cluster, or repository report is not a Boundary Gate decision. Workspace, Service Cluster, and Repository readiness describe intelligence completeness. Review counts inside the report are historical gate outcomes, not a quality score. Gate validation and commentary belong to a change review. They do not replace this report.
+
+Workspace human exports list the detected service groups and the standalone repositories. A standalone repository has no confirmed cross-service relationship in that stored snapshot. Service Cluster human exports show the stored cluster label, cluster id, and membership. A review target outside that membership is an external review target. It does not add the service to the cluster.
+
+Nami Rank ranks stored evidence. It is not itself a structural dependency fact. When a warning comes from repository history, the human report names that history as the evidence and names Nami Rank only as ranking context.
 
 ## Point in time
 

@@ -117,10 +117,11 @@ def test_recent_reviews_include_why_evidence_and_validation(tmp_path: Path) -> N
     text = render_markdown(document)
     pdf = render_report_pdf(document)
     assert "Why it matters" in text
-    assert "not a Boundary Gate decision" in text
+    assert "intelligence completeness" in text
+    assert "Boundary Gate decisions" in text
     assert "What needs attention" in text
     assert b"Why it matters" in pdf
-    assert b"What needs attention" in pdf or b"not a Boundary Gate" in pdf
+    assert b"What needs attention" in pdf or b"intelligence completeness" in pdf
 
 
 def test_fingerprint_is_stable_until_content_changes() -> None:

@@ -65,10 +65,16 @@ def list_reports(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
             manifest = read_json(directory, "manifest.json")
             if not isinstance(manifest, dict) or not manifest.get("report_id"):
                 continue
+            scope = str(manifest.get("scope") or "")
+            service_id = manifest.get("service_id")
+            cluster_id = manifest.get("cluster_id")
+            if scope == "service_cluster" and not cluster_id and isinstance(service_id, str) and service_id.startswith("svc-cluster-"):
+                cluster_id = service_id
             rows.append({
                 "report_id": str(manifest.get("report_id")),
-                "scope": manifest.get("scope") or "",
-                "service": manifest.get("service_id"),
+                "scope": scope,
+                "service": service_id,
+                "cluster_id": cluster_id,
                 "label": manifest.get("label") or "",
                 "generated_at": manifest.get("created_at") or "",
                 "graph_version": manifest.get("graph_version") or "",
