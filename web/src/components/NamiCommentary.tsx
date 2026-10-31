@@ -33,8 +33,8 @@ export function NamiCommentary({ report }: { report: ReviewReport }) {
 }
 
 function evidenceLine(status: string | undefined): string {
-  if (status === "validated") return "Based on validated Nami evidence";
-  if (status === "validated_with_limitations") return "Based on Nami evidence; decision validation has limitations";
+  if (status === "validated") return "Generated from stored Nami evidence";
+  if (status === "validated_with_limitations") return "Generated from stored Nami evidence; decision validation has limitations";
   if (status === "failed") return "Generated from stored Nami evidence; decision validation failed";
   return "Generated from stored Nami evidence";
 }

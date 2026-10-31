@@ -9,9 +9,13 @@ from typing import Any
 from dep_intel.app_state import cross_service_relationships
 from dep_intel.config import Settings
 from dep_intel.graph_models import CODE_SYMBOL, EVENT_CONTRACT, GRPC_CONTRACT, HTTP_CONTRACT, UNRESOLVED, Snapshot
+from dep_intel.path_hygiene import scrub_text
 from dep_intel.reporting.models import STATUS_LABELS
-from dep_intel.review_store import list_reviews, read_review
+from dep_intel.reporting.review_summary import summarize_reviews
+from dep_intel.repository_identity import github_name, history_slug, load_index
+from dep_intel.review_store import list_reviews
 from dep_intel.store import read_json
+from dep_intel.topology.discovery import load_effective
 
 CONTRACTS = {HTTP_CONTRACT, GRPC_CONTRACT, EVENT_CONTRACT}
 _KIND = {HTTP_CONTRACT: "http", GRPC_CONTRACT: "grpc", EVENT_CONTRACT: "event"}
@@ -20,7 +24,7 @@ _PROVENANCE = {
     "extractor": "extracted",
     "declared": "declared",
     "manifest": "declared",
-    "openapi": "extracted",
+    "openapi": "OpenAPI",
     "generated": "generated",
     "override": "override",
     "manual": "override",
@@ -31,22 +35,39 @@ def label(status: str) -> str:
     return STATUS_LABELS.get(status, status.replace("_", " ").capitalize() if status else "Unavailable")
 
 
-def relationships(snapshot: Snapshot, service: str = "") -> dict[str, Any]:
-    payload = cross_service_relationships(snapshot, limit=200, service=service)
+def relationships(snapshot: Snapshot, service: str = "", members: set[str] | None = None) -> dict[str, Any]:
+    payload = cross_service_relationships(snapshot, limit=None, service=service)
     rows = []
     for item in payload.get("relationships") or []:
-        provenance = _provenance(item.get("evidence") or "", item.get("resolution") or "")
-        rows.append({**item, "provenance": provenance})
+        if members is not None and (item.get("from_service") not in members or item.get("to_service") not in members):
+            continue
+        provenance = _provenance(str(item.get("evidence") or ""))
+        rows.append({**item, "provenance": provenance, "resolution": item.get("resolution") or ""})
+    shown = rows[:100]
     return {
         "relationships": rows,
-        "total": payload.get("total") or 0,
-        "truncated": bool(payload.get("truncated")),
-        "included": len(rows),
+        "items": shown,
+        "total": len(rows),
+        "truncated": len(rows) > len(shown),
+        "included": len(shown),
+        "provenance": _counts(rows, "provenance"),
+        "resolution": _counts(rows, "resolution"),
     }
 
 
-def history_for(settings: Settings, repository: str) -> dict[str, Any]:
-    slug = _slug(settings, repository)
+def history_for(settings: Settings, repository: str = "", *, service_id: str = "") -> dict[str, Any]:
+    slug, mapping = history_slug(settings, service_id=service_id, repository=repository)
+    if not slug:
+        return {
+            "status": "unavailable",
+            "label": label("unavailable"),
+            "slug": "",
+            "commit_count": None,
+            "hotspots": [],
+            "cochange_coverage": None,
+            "temporal": "unavailable",
+            "note": f"History unavailable: {mapping}",
+        }
     cochange = read_json(settings.output_dir / "graphs" / slug, "cochange.json") if slug else None
     temporal = read_json(settings.output_dir / "graphs" / slug, "temporal_evidence.json") if slug else None
     if not isinstance(cochange, dict) or not cochange.get("commit_count"):
@@ -79,135 +100,199 @@ def history_for(settings: Settings, repository: str) -> dict[str, Any]:
 
 
 def health_for(settings: Settings) -> dict[str, Any]:
-    packages = read_json(settings.output_dir, "dep_matrix.json")
-    updates = read_json(settings.output_dir, "package_updates.json")
-    security = read_json(settings.output_dir, "vulnerabilities.json")
-    coverage = read_json(settings.output_dir, "test_coverage.json")
+    return _workspace_health(_load_health(settings))
+
+
+def health_for_repository(settings: Settings, repository: str, service_id: str = "") -> dict[str, Any]:
+    """Repository health when the artifact records that repository. Otherwise say so."""
+    data = _load_health(settings)
+    if not any(isinstance(item, dict) for item in data.values()):
+        return _workspace_health(data)
+    keys = {item for item in (repository, github_name(repository), service_id, Path(repository).name) if item}
+    matched = _filter_health(data, keys)
+    if matched is None:
+        note = "Workspace-wide health data is available, but a repository-specific breakdown is not recorded."
+        return {
+            "packages": {"status": "workspace_only", "label": "Workspace-wide", "detail": note, "finding_count": None},
+            "updates": {"status": "workspace_only", "label": "Workspace-wide", "detail": note, "finding_count": None},
+            "security": {"status": "workspace_only", "label": "Workspace-wide", "detail": note, "finding_count": None},
+            "coverage": {"status": "workspace_only", "label": "Workspace-wide", "detail": note, "finding_count": None},
+        }
+    return matched
+
+
+def _load_health(settings: Settings) -> dict[str, Any]:
     return {
-        "packages": _artifact(packages, "package inventory"),
-        "updates": _artifact(updates, "package update state"),
-        "security": _security(security),
-        "coverage": _artifact(coverage, "test coverage"),
+        "packages": read_json(settings.output_dir, "dep_matrix.json"),
+        "updates": read_json(settings.output_dir, "package_updates.json"),
+        "security": read_json(settings.output_dir, "vulnerabilities.json"),
+        "coverage": read_json(settings.output_dir, "test_coverage.json"),
     }
 
 
-def reviews_for(settings: Settings, service: str = "", repository: str = "", limit: int = 20) -> dict[str, Any]:
-    rows = list_reviews(settings.output_dir, limit=100)
-    needle_repo = Path(repository).name if repository else ""
-
-    def matches(row: dict[str, Any]) -> bool:
-        if service and row.get("service") == service:
-            return True
-        if needle_repo and needle_repo in str(row.get("repository") or ""):
-            return True
-        return not service and not repository
-
-    matched = [row for row in rows if matches(row)]
-    bounded = matched[:limit]
-    counts = {"pass": 0, "warn": 0, "block": 0, "incomplete": 0}
-    for row in bounded:
-        decision = str(row.get("decision") or "").lower()
-        if decision in counts:
-            counts[decision] += 1
-    explained = [_explain_review(settings, row) for row in bounded]
+def _workspace_health(data: dict[str, Any]) -> dict[str, Any]:
     return {
-        "total_considered": len(matched),
-        "included": len(bounded),
-        "explained": len(explained),
-        "counts": counts,
-        "reviews": explained,
-        "note": "Review counts describe Nami Gate outcomes and are not a software-quality score. Each review below states why that outcome was reached and which stored evidence supports it.",
+        "packages": _artifact(data.get("packages"), "package inventory"),
+        "updates": _artifact(data.get("updates"), "package update state"),
+        "security": _security(data.get("security")),
+        "coverage": _artifact(data.get("coverage"), "test coverage"),
     }
 
 
-_SOURCES = {
-    "diff": "Code change",
-    "CRG": "Code dependency graph",
-    "cluster_graph": "Cross-service dependency graph",
-    "OpenAPI": "API specification",
-    "git_history": "Repository history",
-    "verification_command": "Verification command",
-    "policy": "Project rule",
-    "NRM": "Nami Rank",
-    "LLM": "Model suggestion",
-}
-_VALIDATION = {
-    "validated": "Decision logic validated. The stored evidence and configured rules reproduced the same Gate result. This is not a proof of the production outcome.",
-    "validated_with_limitations": "Decision logic validated with limitations. The Gate result was reproduced, but an optional check could not be completed.",
-    "failed": "Decision validation failed. Do not rely on this decision until the mismatch is reviewed.",
-}
+def _filter_health(data: dict[str, Any], keys: set[str]) -> dict[str, Any] | None:
+    if not keys:
+        return None
+    packages = _section_for_repo(data.get("packages"), keys, ("repositories", "repos"))
+    security = _security_for_repo(data.get("security"), keys)
+    coverage = _section_for_repo(data.get("coverage"), keys, ("repositories", "repos"))
+    updates = _section_for_repo(data.get("updates"), keys, ("repositories", "repos"))
+    if packages is None and security is None and coverage is None and updates is None:
+        return None
+    note = "Counts are limited to stored records for this repository."
+    return {
+        "packages": packages or {"status": "not_scanned", "label": label("not_scanned"), "detail": "No repository package inventory was stored.", "finding_count": None},
+        "updates": updates or {"status": "not_scanned", "label": label("not_scanned"), "detail": "No repository update state was stored.", "finding_count": None},
+        "security": security or {"status": "not_scanned", "label": label("not_scanned"), "detail": "No repository security scan was stored.", "finding_count": None},
+        "coverage": coverage or {"status": "not_scanned", "label": label("not_scanned"), "detail": "No repository coverage artifact was stored.", "finding_count": None},
+        "note": note,
+    }
+
+
+def _section_for_repo(payload: Any, keys: set[str], containers: tuple[str, ...]) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    for name in containers:
+        section = payload.get(name)
+        if isinstance(section, dict):
+            for key, value in section.items():
+                if _key_matches(str(key), keys):
+                    if isinstance(value, list):
+                        count = len(value)
+                    elif isinstance(value, dict):
+                        count = len(value.get("packages") or value.get("files") or [])
+                    else:
+                        count = 1
+                    return {"status": "available", "label": label("available"), "detail": "A repository-specific artifact is stored.", "finding_count": count}
+        if isinstance(section, list):
+            matched = [item for item in section if isinstance(item, dict) and _key_matches(str(item.get("repository") or item.get("repo") or item.get("name") or ""), keys)]
+            if matched:
+                return {"status": "available", "label": label("available"), "detail": "A repository-specific artifact is stored.", "finding_count": len(matched)}
+    return None
+
+
+def _security_for_repo(payload: Any, keys: set[str]) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    findings = [item for item in payload.get("findings") or [] if isinstance(item, dict) and _key_matches(str(item.get("repo") or item.get("repository") or ""), keys)]
+    scanned = [item for item in payload.get("scanned") or [] if isinstance(item, dict) and _key_matches(str(item.get("repo") or item.get("repository") or ""), keys)]
+    if not findings and not scanned:
+        return None
+    return {
+        "status": "available",
+        "label": label("available"),
+        "detail": f"{len(findings)} findings are stored for this repository.",
+        "finding_count": len(findings),
+        "advisories": len([item for item in findings if item.get("id")]),
+        "hygiene": len([item for item in findings if not item.get("id")]),
+    }
+
+
+def _key_matches(value: str, keys: set[str]) -> bool:
+    if not value:
+        return False
+    if value in keys:
+        return True
+    named = github_name(value)
+    leaf = value.split("/")[-1]
+    return bool(named and named in keys) or leaf in keys
+
+
+def reviews_for(
+    settings: Settings,
+    service: str = "",
+    repository: str = "",
+    limit: int = 20,
+    members: set[str] | None = None,
+    snapshot: Snapshot | None = None,
+) -> dict[str, Any]:
+    del limit
+    rows = list_reviews(settings.output_dir, limit=None)
+    tokens = _scope_tokens(settings, snapshot, members, service, repository)
+    matched = rows if not tokens else [row for row in rows if _review_matches(row, tokens, set())]
+    return summarize_reviews(settings.output_dir, matched, members=members)
+
+
+def _scope_tokens(
+    settings: Settings,
+    snapshot: Snapshot | None,
+    members: set[str] | None,
+    service: str,
+    repository: str,
+) -> set[str]:
+    """Exact identities for a report scope, including the canonical graph slug."""
+    seeds = set(members or [])
+    if service:
+        seeds.add(service)
+    pairs: list[tuple[str, str]] = []
+    if snapshot is not None and seeds:
+        for service_id in sorted(seeds):
+            part = snapshot.partitions.get(service_id)
+            pairs.append((service_id, part.repository if part else ""))
+    elif service or repository:
+        pairs.append((service, repository))
+    if not pairs:
+        return set()
+    tokens: set[str] = set()
+    index = load_index(settings)
+    for service_id, repo in pairs:
+        tokens.add(service_id)
+        tokens.add(repo)
+        named = github_name(repo)
+        if named:
+            tokens.add(named)
+            tokens.add(named.split("/")[-1])
+        record = index.resolve(service_id=service_id, repository=repo, checkout=repo)
+        if record is None:
+            continue
+        tokens.update(item for item in (record.slug, record.name, record.service_id, record.repository) if item)
+        if record.checkout:
+            tokens.add(Path(record.checkout).name)
+    tokens.discard("")
+    return tokens
 
 
 def with_review_explanations(settings: Settings, document: dict[str, Any]) -> dict[str, Any]:
-    """Add why, evidence, and validation to review rows that only stored a count."""
-    activity = document.get("review_activity") if isinstance(document.get("review_activity"), dict) else {}
-    reviews = activity.get("reviews") if isinstance(activity.get("reviews"), list) else []
-    if reviews and all(isinstance(item, dict) and item.get("what_happened") for item in reviews):
-        return document
-    identity = document.get("identity") if isinstance(document.get("identity"), dict) else {}
-    if document.get("scope") == "repository":
-        refreshed = reviews_for(settings, service=str(identity.get("service") or ""), repository=str(identity.get("repository") or ""))
-    else:
-        refreshed = reviews_for(settings)
-    copy = dict(document)
-    copy["review_activity"] = refreshed
-    return copy
-
-
-def _explain_review(settings: Settings, row: dict[str, Any]) -> dict[str, Any]:
-    report = read_review(settings.output_dir, str(row.get("review_id") or "")) or {}
-    commentary = report.get("commentary") if isinstance(report.get("commentary"), dict) else {}
-    assessment = report.get("assessment") if isinstance(report.get("assessment"), dict) else {}
-    validation = report.get("gate_validation") if isinstance(report.get("gate_validation"), dict) else {}
-    status = str(validation.get("status") or "")
-    happened = _plain(commentary.get("summary") or assessment.get("summary") or "")
-    why = _plain(commentary.get("why_it_matters") or "")
-    if why == happened:
-        why = ""
-    if not happened and not why:
-        happened = "This stored review does not include an explanation of the Gate result."
-    evidence = []
-    catalog = report.get("evidence_catalog") if isinstance(report.get("evidence_catalog"), list) else []
-    for item in catalog:
-        if not isinstance(item, dict):
-            continue
-        statement = _plain(item.get("statement") or item.get("summary") or "")
-        if not statement:
-            continue
-        evidence.append({"source": _SOURCES.get(str(item.get("source") or ""), "Stored evidence"), "what": statement})
-        if len(evidence) >= 3:
-            break
-    if not evidence:
-        findings = report.get("findings") if isinstance(report.get("findings"), list) else []
-        for finding in findings:
-            if not isinstance(finding, dict):
-                continue
-            statement = _plain(finding.get("claim") or finding.get("title") or "")
-            if not statement:
-                continue
-            evidence.append({"source": _SOURCES.get(str(finding.get("source") or ""), "Stored evidence"), "what": statement})
-            if len(evidence) >= 3:
-                break
-    repository = str(row.get("repository") or "")
-    return {
-        "review_id": row.get("review_id"),
-        "decision": row.get("decision"),
-        "service": row.get("service"),
-        "repository": Path(repository).name if repository else "",
-        "completed_at": row.get("completed_at"),
-        "headline": _plain(commentary.get("headline") or assessment.get("headline") or ""),
-        "what_happened": happened,
-        "why_it_matters": why,
-        "next_action": _plain(commentary.get("next_action") or assessment.get("recommended_next_step") or ""),
-        "validation_status": status,
-        "validation": _plain(commentary.get("validation_comment") or _VALIDATION.get(status) or "Decision validation was not recorded for this stored review."),
-        "evidence": evidence,
-    }
+    """Stored reports are immutable. Explanations are written only when the report is generated."""
+    del settings
+    return document
 
 
 def _plain(value: Any) -> str:
-    text = re.sub(r"/(?:home|tmp|var|Users)/\S+", lambda match: Path(match.group(0)).name, str(value or ""))
-    return " ".join(text.split())[:400]
+    return " ".join(scrub_text(str(value or "")).split())[:400]
+
+
+def _review_matches(row: dict[str, Any], service_ids: set[str], repository_names: set[str]) -> bool:
+    if not service_ids and not repository_names:
+        return True
+    service = str(row.get("service") or "")
+    if service and service in service_ids:
+        return True
+    repository = str(row.get("repository") or "")
+    leaf = Path(repository).name
+    named = github_name(repository)
+    if leaf and (leaf in service_ids or leaf in repository_names):
+        return True
+    if named and (named in repository_names or named.split("/")[-1] in service_ids):
+        return True
+    return False
+
+
+def _counts(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        name = str(row.get(key) or "unknown")
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def architecture_of(settings: Settings, snapshot: Snapshot, service_id: str) -> dict[str, Any]:
@@ -283,20 +368,71 @@ def unresolved_of(snapshot: Snapshot, service_id: str = "") -> list[dict[str, An
     return rows
 
 
-def _provenance(status: str, resolution: str) -> str:
-    key = (resolution or status or "").strip().lower()
+def _provenance(status: str) -> str:
+    key = (status or "").strip().lower()
     return _PROVENANCE.get(key, key or "source extraction")
 
 
-def _slug(settings: Settings, repository: str) -> str:
-    name = Path(repository).name
-    graphs = read_json(settings.output_dir, "repo_graphs.json") or {}
-    for repo in graphs.get("repos") or []:
-        slug = str(repo.get("slug") or "")
-        checkout = str(repo.get("checkout") or repo.get("path") or "")
-        if slug == name or repo.get("name") == name or (name and name in checkout):
-            return slug
-    return name
+def _slug(settings: Settings, repository: str, service_id: str = "") -> str:
+    slug, _note = history_slug(settings, service_id=service_id, repository=repository)
+    return slug
+
+
+def topology_for(settings: Settings, members: set[str] | None = None) -> dict[str, Any]:
+    """Provider discovery captured once. Code-graph unresolved symbols are not included."""
+    payload = load_effective(settings)
+    if not isinstance(payload, dict):
+        return {
+            "status": "not_scanned",
+            "label": "Not scanned",
+            "unresolved_observation_count": 0,
+            "unique_unresolved_reference_count": 0,
+            "resolved_count": 0,
+            "items": [],
+            "note": "Topology provider discovery: Not scanned. Code-graph unresolved symbols are not provider references.",
+        }
+    rows = [item for item in (payload.get("unresolved") or []) if isinstance(item, dict)]
+    if members is not None:
+        rows = [item for item in rows if _topology_member(item, members)]
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for item in rows:
+        key = (
+            str(item.get("from") or item.get("service") or ""),
+            str(item.get("method") or ""),
+            str(item.get("path") or ""),
+            str(item.get("host") or ""),
+        )
+        current = grouped.get(key)
+        if current is None:
+            grouped[key] = {**item, "observations": 1, "service": key[0], "host": key[3], "name": key[3] or key[2]}
+        else:
+            current["observations"] = int(current.get("observations") or 1) + 1
+    items = sorted(grouped.values(), key=lambda item: (str(item.get("service") or ""), str(item.get("host") or ""), str(item.get("path") or "")))
+    unique = len(items)
+    resolved = len(payload.get("relationships") or [])
+    status = "complete" if unique == 0 else "partial"
+    return {
+        "status": status,
+        "label": label(status),
+        "unresolved_observation_count": len(rows),
+        "unique_unresolved_reference_count": unique,
+        "resolved_count": resolved,
+        "items": items[:50],
+        "note": "Unresolved provider references come from stored topology discovery.",
+    }
+
+
+def _topology_member(item: dict[str, Any], members: set[str]) -> bool:
+    source = str(item.get("from") or item.get("service") or "")
+    return source in members or source.split("/")[-1] in members
+
+
+def code_symbol_count(snapshot: Snapshot, service_id: str = "") -> int:
+    return sum(
+        1
+        for node in snapshot.nodes.values()
+        if node.category == UNRESOLVED and (not service_id or node.service_id == service_id)
+    )
 
 
 def crg_counts(settings: Settings, repository: str) -> dict[str, Any]:

@@ -48,8 +48,8 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const [params, setParams] = useSearchParams();
   const sourceId = params.get("source") || "working_tree";
   const source = SOURCES.find((item) => item.id === sourceId) ?? SOURCES[0];
-  const repos = (snapshot?.repositories ?? []).filter((repo) => repo.checkout);
-  const [repository, setRepository] = useState(params.get("repository") || repos[0]?.checkout || "");
+  const repos = (snapshot?.repositories ?? []).filter((repo) => repo.checkout_status !== "unavailable" && repo.slug);
+  const [repository, setRepository] = useState(params.get("repository") || repos[0]?.slug || "");
   const [commit, setCommit] = useState("");
   const [base, setBase] = useState("");
   const [head, setHead] = useState("");
@@ -65,7 +65,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const [preview, setPreview] = useState<{ files: number; symbols: number; contracts: number; alignment: string; notes: string[] } | null>(null);
   const [reviews, setReviews] = useState<Awaited<ReturnType<typeof recentReviews>>>([]);
 
-  const defaultRepository = repos[0]?.checkout || "";
+  const defaultRepository = repos[0]?.slug || "";
   useEffect(() => {
     if (!repository && defaultRepository) setRepository(defaultRepository);
   }, [repository, defaultRepository]);
@@ -178,10 +178,10 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
               titleText="Repository"
               placeholder="Choose a repository"
               items={repos}
-              selectedItem={repos.find((item) => item.checkout === repository) ?? null}
+              selectedItem={repos.find((item) => item.slug === repository) ?? null}
               itemToString={(item) => item?.name ?? ""}
               onChange={({ selectedItem }) => {
-                setRepository(selectedItem?.checkout ?? "");
+                setRepository(selectedItem?.slug ?? "");
                 setPreview(null);
               }}
             />

@@ -9,8 +9,9 @@ from typing import Any
 from dep_intel.config import Settings
 from dep_intel.graph_models import Snapshot
 from dep_intel.reporting.models import NAMI_TRACE_VERSION, SCHEMA, SCHEMA_VERSION
-from dep_intel.reporting.scopes.cluster import build_cluster_document
 from dep_intel.reporting.scopes.repository import build_repository_document
+from dep_intel.reporting.scopes.service_cluster import build_service_cluster_document
+from dep_intel.reporting.scopes.workspace import build_workspace_document
 from dep_intel.reporting.store import fingerprint, new_report_id, save_report
 
 log = logging.getLogger("nami.report")
@@ -26,6 +27,7 @@ def generate_report(
     scope: str,
     service: str = "",
     graph_version: str = "",
+    cluster_id: str = "",
 ) -> dict[str, Any]:
     if snapshot is None or not snapshot.version:
         raise ReportError("No published intelligence is available. Refresh intelligence before generating a report.")
@@ -34,8 +36,18 @@ def generate_report(
             f"Published intelligence is {snapshot.version}, not {graph_version}. "
             "The report was not generated from a different snapshot."
         )
+    requested = scope
     if scope == "cluster":
-        body = build_cluster_document(settings, snapshot)
+        scope = "workspace"
+    if scope == "workspace":
+        body = build_workspace_document(settings, snapshot)
+    elif scope == "service_cluster":
+        if not cluster_id:
+            raise ReportError("A service cluster report needs a cluster id.")
+        try:
+            body = build_service_cluster_document(settings, snapshot, cluster_id)
+        except KeyError as exc:
+            raise ReportError(f"Unknown service cluster {cluster_id}.") from exc
     elif scope == "repository":
         if not service:
             raise ReportError("A repository report needs a service.")
@@ -43,7 +55,8 @@ def generate_report(
             raise ReportError(f"Unknown service {service}.")
         body = build_repository_document(settings, snapshot, service)
     else:
-        raise ReportError("Scope must be cluster or repository.")
+        raise ReportError("Scope must be workspace, service_cluster, repository, or the legacy alias cluster.")
+    body["requested_scope"] = requested
     report_id = new_report_id()
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     document = {
@@ -64,8 +77,10 @@ def generate_report(
     document["reproducibility"]["report_hash"] = fingerprint(document)
     manifest = {
         "report_id": report_id,
-        "scope": scope,
-        "service_id": service or None,
+        "scope": body["scope"],
+        "service_id": service or body.get("identity", {}).get("cluster_id") or None,
+        "label": (body.get("identity") or {}).get("cluster_label") or "",
+        "requested_scope": requested,
         "graph_version": snapshot.version,
         "created_at": generated_at,
         "readiness": (document.get("executive_summary") or {}).get("readiness") or "",

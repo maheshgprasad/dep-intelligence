@@ -16,22 +16,13 @@ from dep_intel.review_export import _scrub
 from dep_intel.store import read_json, write_json
 
 log = logging.getLogger("nami.report")
-EXPORT_RENDERER = "white-2"
+EXPORT_RENDERER = "stored-1"
 
 
 def ensure_export(output_dir: Path, report_id: str, kind: str) -> Path:
     document = read_report(output_dir, report_id)
     if document is None:
         raise FileNotFoundError(report_id)
-    from dataclasses import replace
-
-    from dep_intel.config import Settings
-    from dep_intel.reporting.collect import with_review_explanations
-
-    settings = Settings.load()
-    if settings.output_dir != output_dir:
-        settings = replace(settings, output_dir=output_dir)
-    document = with_review_explanations(settings, document)
     names = {"json": "report.json", "pdf": "report.pdf", "markdown": "report.md", "zip": "evidence.zip"}
     if kind not in names:
         raise ValueError(kind)
@@ -70,8 +61,10 @@ def public_filename(output_dir: Path, report_id: str, kind: str) -> str:
 def build_zip(document: dict[str, Any], manifest: dict[str, Any]) -> bytes:
     scope = document.get("scope")
     report_id = str(document.get("report_id") or "report")
-    if scope == "cluster":
-        root = f"nami-cluster-report-{report_id}"
+    if scope in {"cluster", "workspace"}:
+        root = f"nami-workspace-report-{report_id}"
+    elif scope == "service_cluster":
+        root = f"nami-service-cluster-report-{report_id}"
     else:
         service = safe_service_name((document.get("identity") or {}).get("service"))
         root = f"nami-repository-{service}-{report_id}"

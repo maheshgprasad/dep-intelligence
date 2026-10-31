@@ -69,6 +69,7 @@ def list_reports(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
                 "report_id": str(manifest.get("report_id")),
                 "scope": manifest.get("scope") or "",
                 "service": manifest.get("service_id"),
+                "label": manifest.get("label") or "",
                 "generated_at": manifest.get("created_at") or "",
                 "graph_version": manifest.get("graph_version") or "",
                 "readiness": manifest.get("readiness") or "",
@@ -93,8 +94,11 @@ def safe_service_name(service: str | None) -> str:
 
 def export_filename(document: dict[str, Any], kind: str) -> str:
     short = str(document.get("report_id") or "")[:12].replace("rpt-", "")[:8]
-    if document.get("scope") == "cluster":
-        stem = f"nami-cluster-report-{short}"
+    scope = document.get("scope")
+    if scope in {"cluster", "workspace"}:
+        stem = f"nami-workspace-report-{short}"
+    elif scope == "service_cluster":
+        stem = f"nami-service-cluster-report-{short}"
     else:
         service = safe_service_name((document.get("identity") or {}).get("service"))
         stem = f"nami-{service}-report-{short}"

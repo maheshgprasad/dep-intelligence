@@ -127,7 +127,9 @@ def test_relationships_are_cross_service_contracts_only() -> None:
     assert rows[0]["evidence"] == "extracted"
     assert rows[0]["resolution"] == "exact"
     assert payload["total"] == 1
-    assert payload["clusters"] == [{"services": ["auth-service", "user-service"], "relationships": 1}]
+    assert payload["clusters"][0]["services"] == ["auth-service", "user-service"]
+    assert payload["clusters"][0]["relationships"] == 1
+    assert str(payload["clusters"][0]["cluster_id"]).startswith("svc-cluster-")
     assert payload["individuals"] == ["report-job"]
 
 

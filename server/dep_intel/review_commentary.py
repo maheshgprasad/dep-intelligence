@@ -81,6 +81,10 @@ def build_commentary(report: dict[str, Any], provider: Any | None = None) -> dic
     if validation.get("status") == "failed":
         text = _failure_copy()
         return _pack(text, report, source="deterministic", mode="deterministic_fallback", provider_name="none", model="", diagnostic="validation_failed")
+    rule_ids = [str(item.get("rule_id") or "") for item in payload.get("triggered_rules") or []]
+    if payload.get("decision") == "warn" and rule_ids == ["BG-TEMPORAL-001"]:
+        text = fallback_commentary(payload)
+        return _pack(text, report, source="deterministic", mode="deterministic_fallback", provider_name="none", model="", diagnostic="")
     chosen = provider if provider is not None else provider_from_env()
     model_name = str(getattr(chosen, "model", "") or "")
     provider_name = str(getattr(chosen, "name", "none") or "none")
@@ -213,6 +217,15 @@ def validate_commentary(text: dict[str, Any], payload: dict[str, Any], validatio
     return True, ""
 
 
+def _temporal_files(payload: dict[str, Any]) -> list[str]:
+    files = []
+    for item in payload.get("evidence") or []:
+        path = str(item.get("file_path") or "").strip()
+        if path and path not in files and not path.startswith("/") and "\\" not in path:
+            files.append(path)
+    return files[:5]
+
+
 def fallback_commentary(payload: dict[str, Any]) -> dict[str, str]:
     decision = str(payload.get("decision") or "incomplete")
     validation = payload.get("gate_validation") or {}
@@ -276,12 +289,15 @@ def fallback_commentary(payload: dict[str, Any]) -> dict[str, str]:
             "evidence_comment": "The warning is supported by current dependency evidence.",
         }
     elif decision == "warn" and "BG-TEMPORAL-001" in rules:
+        files = _temporal_files(payload)
+        named = files[0] if len(files) == 1 else f"{files[0]} and {len(files) - 1} other files" if files else ""
         text = {
             "headline": "Historical association needs review",
-            "summary": "Nami found a historical association and no verified breaking contract.",
-            "why_it_matters": "Repository history is observational evidence, not a confirmed dependency.",
-            "next_action": "Review the associated change before treating it as a dependency.",
-            "evidence_comment": "The warning uses repository history, which is not a blocking proof.",
+            "summary": "This is a historical association. It is not a blocking condition.",
+            "why_it_matters": "This evidence alone does not confirm a current structural dependency."
+            + (f" The associated file is {named}." if named else ""),
+            "next_action": f"Review {named} before deployment." if named else "Review the associated files before deployment.",
+            "evidence_comment": f"Repository history identified {files[0]} as a temporal review target." if files else "Repository history identified the associated files as temporal review targets.",
         }
     elif decision == "pass":
         text = {

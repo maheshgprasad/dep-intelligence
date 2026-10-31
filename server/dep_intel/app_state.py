@@ -28,10 +28,11 @@ def build_app_state(settings: Settings, summary: dict[str, Any] | None, running:
     history_missing: list[str] = []
     for repo in graphs.get("repos") or []:
         slug = str(repo.get("slug") or "")
+        checkout = str(repo.get("checkout") or repo.get("path") or "")
         repositories.append({
             "slug": slug,
             "name": repo.get("name") or slug,
-            "checkout": repo.get("checkout") or repo.get("path") or "",
+            "checkout_status": "available" if checkout and Path(checkout).is_dir() else "unavailable",
             "error": repo.get("error"),
         })
         cochange = read_json(settings.output_dir / "graphs" / slug, "cochange.json") if slug else None
@@ -148,51 +149,37 @@ def service_catalog(snapshot: Snapshot | None, service: str) -> dict[str, Any]:
     }
 
 
-def cross_service_relationships(snapshot: Snapshot | None, *, limit: int = 50, service: str = "", kind: str = "") -> dict[str, Any]:
+def cross_service_relationships(snapshot: Snapshot | None, *, limit: int | None = 50, service: str = "", kind: str = "") -> dict[str, Any]:
     if snapshot is None:
         return {"relationships": [], "total": 0, "truncated": False, "clusters": [], "individuals": []}
-    rows = []
-    for edge in snapshot.edges:
-        relation_kind = CROSS_RELATIONS.get(edge.relation)
-        if relation_kind is None:
-            continue
-        if kind and relation_kind != kind:
-            continue
-        source = snapshot.nodes.get(edge.source)
-        target = snapshot.nodes.get(edge.target)
-        if source is None or target is None:
-            continue
-        caller, contract = _caller_and_contract(edge.relation, source, target)
-        if caller is None or contract is None or caller.service_id == contract.service_id:
-            continue
-        if service and service not in {caller.service_id, contract.service_id}:
-            continue
-        file = caller.file_path or str(edge.evidence.get("file") or "")
-        if file.startswith("/") or ".." in Path(file).parts:
-            file = ""
-        rows.append({
-            "from_service": caller.service_id,
-            "to_service": contract.service_id,
-            "kind": relation_kind,
-            "contract_id": contract.key,
-            "contract": contract.name or contract.qualified_name,
-            "contract_identity": str(contract.metadata.get("identity") or contract.qualified_name or ""),
-            "caller_symbol": caller.name or "",
-            "caller_file": file,
-            "caller_line": caller.line_start,
-            "caller_qualified": caller.qualified_name or "",
-            "evidence": str(edge.evidence.get("status") or ""),
-            "resolution": str(edge.evidence.get("resolution") or ""),
-        })
-    rows.sort(key=lambda item: (item["from_service"], item["to_service"], item["kind"], item["contract"], item["caller_symbol"]))
-    clusters, individuals = _relationship_groups(snapshot, rows)
-    bounded = max(1, min(int(limit or 50), 200))
+    from dep_intel.service_clusters import confirmed_relationships, detect_service_clusters
+
+    all_rows = confirmed_relationships(snapshot)
+    groups = detect_service_clusters(snapshot, all_rows)
+    rows = all_rows
+    if service:
+        rows = [item for item in rows if service in {item["from_service"], item["to_service"]}]
+    if kind:
+        rows = [item for item in rows if item["kind"] == kind]
+    if limit is None:
+        shown = rows
+    else:
+        bounded = max(1, min(int(limit or 50), 200))
+        shown = rows[:bounded]
     return {
-        "relationships": rows[:bounded],
+        "relationships": shown,
         "total": len(rows),
-        "truncated": len(rows) > bounded,
-        "clusters": clusters,
-        "individuals": individuals,
+        "truncated": len(rows) > len(shown),
+        "clusters": [
+            {
+                "services": item["services"],
+                "relationships": item["relationship_count"],
+                "cluster_id": item["cluster_id"],
+                "label": item["label"],
+            }
+            for item in groups["clusters"]
+        ],
+        "individuals": [item["service_id"] for item in groups["standalone"]],
     }
 
 

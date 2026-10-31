@@ -640,10 +640,26 @@ export type IntelligenceReportSummary = {
   report_id: string;
   scope: string;
   service: string | null;
+  label?: string;
   generated_at: string;
   graph_version: string;
   readiness?: string;
   readiness_label?: string;
+};
+
+export type ReportReviewCard = {
+  review_id?: string;
+  decision?: string;
+  service?: string;
+  headline?: string;
+  what_happened?: string;
+  why_it_matters?: string;
+  next_action?: string;
+  validation?: string;
+  evidence?: { source?: string; what?: string; statement?: string }[];
+  primary_rule?: { rule_id?: string; title?: string; decision?: string } | null;
+  reason_codes?: string[];
+  targets?: { total_findings?: number; unique_file_count?: number; items?: { file?: string; service?: string; contract?: string }[]; omitted?: number };
 };
 
 export type IntelligenceReport = {
@@ -657,6 +673,9 @@ export type IntelligenceReport = {
     repository?: string;
     repository_sha?: string | null;
     graph_version?: string;
+    cluster_id?: string;
+    cluster_label?: string;
+    services?: string[];
     revision_vector?: Record<string, { workspace_head?: string | null }>;
   };
   executive_summary: { headline?: string; summary?: string; readiness?: string; readiness_label?: string };
@@ -671,22 +690,18 @@ export type IntelligenceReport = {
     included?: number;
     explained?: number;
     counts?: { pass?: number; warn?: number; block?: number; incomplete?: number };
-    reviews?: {
-      review_id?: string;
-      decision?: string;
-      service?: string;
-      headline?: string;
-      what_happened?: string;
-      why_it_matters?: string;
-      next_action?: string;
-      validation?: string;
-      evidence?: { source?: string; what?: string }[];
-    }[];
+    detail_included?: number;
+    detail_omitted?: number;
+    attention_reviews?: ReportReviewCard[];
+    reviews?: ReportReviewCard[];
   };
   services?: { service: string; repository?: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number; symbols?: number; provides?: number; error?: string }[];
   workspace?: { repository_count?: number; service_count: number; relationship_count: number; contract_count: number; graph_stale: number; unresolved_count: number; history_ready: number };
+  service_clusters?: { count: number; items: ServiceClusterSummary[] };
+  standalone?: { service_id: string; repository?: string }[];
+  provider_discovery?: { status?: string; label?: string; unresolved_observation_count?: number; unique_unresolved_reference_count?: number; note?: string };
   relationships?: {
-    items?: { from_service?: string; to_service?: string; contract?: string; kind?: string; provenance?: string }[];
+    items?: { from_service?: string; to_service?: string; contract?: string; kind?: string; provenance?: string; resolution?: string }[];
     upstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string }[];
     downstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string }[];
     total?: number;
@@ -707,12 +722,26 @@ export type IntelligenceReport = {
   };
   history?: { status?: string; label?: string; missing?: string[]; note?: string; ready?: number };
   health?: Record<string, { status?: string; label?: string; detail?: string }>;
-  unresolved?: { service?: string; name?: string }[];
+  unresolved?: { service?: string; name?: string; host?: string }[];
   architecture?: { files?: number; symbols?: number; internal_relationships?: number; status?: string };
   service?: { service?: string; repository?: string; symbols?: number; provides?: number; downstream?: number; upstream?: number; graph_label?: string; history_label?: string };
 };
 
-export async function createIntelligenceReport(body: { scope: "cluster" | "repository"; service?: string; graph_version?: string; refresh?: boolean }): Promise<{ report_id: string; scope: string; graph_version: string; readiness?: string }> {
+export type ServiceClusterSummary = {
+  cluster_id: string;
+  label: string;
+  service_count: number;
+  relationship_count: number;
+  services: string[];
+};
+
+export async function getServiceClusters(): Promise<{ clusters: ServiceClusterSummary[]; standalone: { service_id: string }[] }> {
+  const response = await fetch("/api/service-clusters");
+  if (!response.ok) return { clusters: [], standalone: [] };
+  return response.json();
+}
+
+export async function createIntelligenceReport(body: { scope: "workspace" | "service_cluster" | "repository" | "cluster"; service?: string; cluster_id?: string; graph_version?: string; refresh?: boolean }): Promise<{ report_id: string; scope: string; graph_version: string; readiness?: string }> {
   const response = await fetch("/api/reports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -796,7 +825,7 @@ export async function refreshCluster(): Promise<{ job_id: string; status: string
 export type AppState = {
   schema_version: number;
   running: boolean;
-  repositories: { slug: string; name: string; checkout: string; error: string | null }[];
+  repositories: { slug: string; name: string; checkout?: string; checkout_status?: string; error: string | null }[];
   cluster: ClusterSummary;
   intelligence: {
     overall: string;
@@ -806,6 +835,10 @@ export type AppState = {
     stale_services: string[];
     unresolved: number;
     refreshed_at: string | null;
+    confirmed_calls?: number;
+    service_cluster_count?: number;
+    standalone_count?: number;
+    provider_discovery?: { status: string; label: string; resolved: number; unique_unresolved: number };
   };
   health: {
     packages: { available: boolean; updated_at: string | null };

@@ -22,9 +22,22 @@ body {
 .page-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 1rem;
   margin-bottom: 1.5rem;
+}
+
+.page-actions,
+.page-head .button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-width: 100%;
+}
+
+.sidenav-search {
+  padding: 1rem 1rem 0;
 }
 
 .page-head h1 {
@@ -290,6 +303,24 @@ body {
 
   .header-search {
     display: none;
+  }
+
+  .page-head {
+    flex-direction: column;
+  }
+
+  .page-head h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .cds--data-table-container,
+  .cds--data-table-content {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  body {
+    overflow-x: hidden;
   }
 
   .detail-list div {

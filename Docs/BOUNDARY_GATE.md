@@ -19,7 +19,7 @@ Change source → Change View → structural impact and temporal evidence
     → pass / warn / block / incomplete
 ```
 
-REST, MCP, and `scripts/review-change.py` call `ReviewEngine`. Fast mode reuses the published cluster snapshot. Exact mode can build a private CRG partition under `output/reviews/<id>/worktrees/` and does not publish that partition as the cluster snapshot.
+REST, MCP, and `scripts/review-change.py` call `ReviewEngine`. Fast mode reuses the published cluster snapshot. Exact mode can build a private CRG partition under `output/reviews/<id>/worktrees/` and does not publish that partition as the cluster snapshot. A temporal warning is a historical association. It is not a blocking condition, and that evidence alone does not confirm a current structural dependency. Decision-logic validation checks rule consistency. It does not prove a production outcome.
 
 ## Change View
 

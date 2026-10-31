@@ -7,8 +7,9 @@ from typing import Any
 
 def render_markdown(document: dict[str, Any]) -> str:
     scope = document.get("scope")
+    title = {"cluster": "Workspace", "workspace": "Workspace", "service_cluster": "Service Cluster", "repository": "Repository"}.get(str(scope), "Intelligence")
     lines = [
-        f"# Nami Trace {'Workspace' if scope == 'cluster' else 'Repository'} Intelligence Report",
+        f"# Nami Trace {title} Intelligence Report",
         "",
         document.get("executive_summary", {}).get("headline") or "",
         "",
@@ -39,10 +40,7 @@ def render_markdown(document: dict[str, Any]) -> str:
         lines.extend(["", "## Intelligence gaps", ""])
         for item in document["intelligence_gaps"]:
             lines.append(f"- {item}")
-    lines.extend(["", "## Recommendations", ""])
-    for item in document.get("recommendations") or []:
-        lines.append(f"- {item.get('title')}. {item.get('reason')}")
-    if scope == "cluster":
+    if scope in {"cluster", "workspace", "service_cluster"}:
         lines.extend(["", "## Services", "", "| Service | Graph | History | Health | Downstream |", "| --- | --- | --- | --- | --- |"])
         for service in document.get("services") or []:
             lines.append(
@@ -76,35 +74,48 @@ def render_markdown(document: dict[str, Any]) -> str:
         activity.get("note") or "Review counts describe Nami Gate outcomes and are not a software-quality score.",
         "",
     ])
-    reviews = activity.get("reviews") or []
-    if not reviews:
-        lines.append("No stored reviews matched this report.")
-    for item in reviews:
+    reviews = activity.get("attention_reviews")
+    if reviews is None:
+        reviews = [item for item in (activity.get("reviews") or []) if item.get("decision") != "pass"]
+    total = int(activity.get("detail_included") or 0) + int(activity.get("detail_omitted") or 0) or len(reviews)
+    shown = list(reviews)[:10]
+    if total > len(shown):
+        lines.append(f"Showing {len(shown)} of {total} attention-bearing reviews.")
+        lines.append("")
+    if not shown:
+        lines.append("No attention-bearing reviews matched this report.")
+    for item in shown:
         decision = str(item.get("decision") or "unknown").upper()
         lines.append(f"### {decision}. {item.get('headline') or item.get('service') or item.get('review_id')}")
         lines.append("")
-        if item.get("what_happened"):
-            lines.append(item["what_happened"])
+        rule = item.get("primary_rule") or {}
+        if rule:
+            lines.append(f"Rule: {rule.get('title') or 'Stored rule'} {rule.get('rule_id') or ''}".strip())
             lines.append("")
+        if item.get("service"):
+            lines.append(f"Service: {item.get('service')}")
+        targets = (item.get("targets") or {})
+        files = list(dict.fromkeys(entry.get("file") for entry in (targets.get("items") or []) if entry.get("file")))[:5]
+        if files or targets.get("total_findings"):
+            lines.append(f"Review targets: {targets.get('unique_file_count') or len(files)} files · {targets.get('total_findings') or 0} supporting findings")
+            for path in files:
+                lines.append(f"- {path}")
+            omitted = max(0, int(targets.get("unique_file_count") or 0) - len(files))
+            if omitted:
+                lines.append(f"- + {omitted} more")
         if item.get("why_it_matters"):
             lines.append(f"Why it matters: {item['why_it_matters']}")
-            lines.append("")
         evidence = item.get("evidence") or []
         if evidence:
-            lines.append("Evidence:")
-            lines.append("")
-            for entry in evidence:
-                lines.append(f"- {entry.get('source') or 'Stored evidence'}: {entry.get('what') or ''}")
-            lines.append("")
-        else:
-            lines.append("No evidence statements were stored with this review.")
-            lines.append("")
-        if item.get("validation"):
-            lines.append(item["validation"])
-            lines.append("")
+            entry = evidence[0]
+            lines.append(f"Evidence: {entry.get('source') or 'Stored evidence'}. {entry.get('what') or entry.get('statement') or ''}")
         if item.get("next_action"):
-            lines.append(f"Next: {item['next_action']}")
-            lines.append("")
+            lines.append(f"Recommended action: {item['next_action']}")
+        if item.get("validation"):
+            lines.append(f"Decision logic: {item['validation']}")
+        if item.get("review_id"):
+            lines.append(f"Review ID: {item['review_id']}")
+        lines.append("")
     lines.extend([
         "",
         "## How to interpret this report",
