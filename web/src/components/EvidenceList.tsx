@@ -16,7 +16,7 @@ export function EvidenceList({
     <section className="stack-gap">
       <h2 className="section-title">Evidence summary</h2>
       {evidence.slice(0, 8).map((item) => (
-        <Tile key={item.evidence_id}>
+        <Tile key={item.evidence_id} id={`evidence-${item.evidence_id}`}>
           <p className="section-title">{item.statement}</p>
           <dl className="detail-list">
             <div><dt>Source</dt><dd>{item.source_label || sourceLabel(item.source)}</dd></div>

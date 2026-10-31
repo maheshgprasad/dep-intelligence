@@ -642,6 +642,8 @@ export type IntelligenceReportSummary = {
   service: string | null;
   generated_at: string;
   graph_version: string;
+  readiness?: string;
+  readiness_label?: string;
 };
 
 export type IntelligenceReport = {
@@ -664,8 +666,50 @@ export type IntelligenceReport = {
   intelligence_gaps?: string[];
   limitations: string[];
   reproducibility: { report_hash?: string; graph_version?: string; generated_at?: string; note?: string };
-  services?: { service: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number }[];
-  workspace?: { service_count: number; relationship_count: number; contract_count: number; graph_stale: number; unresolved_count: number; history_ready: number };
+  review_activity?: {
+    note?: string;
+    included?: number;
+    explained?: number;
+    counts?: { pass?: number; warn?: number; block?: number; incomplete?: number };
+    reviews?: {
+      review_id?: string;
+      decision?: string;
+      service?: string;
+      headline?: string;
+      what_happened?: string;
+      why_it_matters?: string;
+      next_action?: string;
+      validation?: string;
+      evidence?: { source?: string; what?: string }[];
+    }[];
+  };
+  services?: { service: string; repository?: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number; symbols?: number; provides?: number; error?: string }[];
+  workspace?: { repository_count?: number; service_count: number; relationship_count: number; contract_count: number; graph_stale: number; unresolved_count: number; history_ready: number };
+  relationships?: {
+    items?: { from_service?: string; to_service?: string; contract?: string; kind?: string; provenance?: string }[];
+    upstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string }[];
+    downstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string }[];
+    total?: number;
+    included?: number;
+    truncated?: boolean;
+    provenance?: Record<string, number>;
+  };
+  contracts?: {
+    table?: { provider: string; contract: string; kind?: string; consumers: string[] }[];
+    provided?: { name: string; kind?: string; consumers?: string[] }[];
+    consumed?: { name?: string; provider?: string; provenance?: string }[];
+  };
+  concentration?: {
+    widest_downstream?: { service: string; count: number } | null;
+    most_upstream?: { service: string; count: number } | null;
+    widest_contract?: { provider: string; contract: string; consumers: number } | null;
+    note?: string;
+  };
+  history?: { status?: string; label?: string; missing?: string[]; note?: string; ready?: number };
+  health?: Record<string, { status?: string; label?: string; detail?: string }>;
+  unresolved?: { service?: string; name?: string }[];
+  architecture?: { files?: number; symbols?: number; internal_relationships?: number; status?: string };
+  service?: { service?: string; repository?: string; symbols?: number; provides?: number; downstream?: number; upstream?: number; graph_label?: string; history_label?: string };
 };
 
 export async function createIntelligenceReport(body: { scope: "cluster" | "repository"; service?: string; graph_version?: string; refresh?: boolean }): Promise<{ report_id: string; scope: string; graph_version: string; readiness?: string }> {

@@ -16,6 +16,13 @@ export function AssessmentSummary({ report }: { report: ReviewReport }) {
   const Icon = ICONS[decision as keyof typeof ICONS] ?? Incomplete;
   const assessment = report.assessment;
   const enforcement = report.enforcement;
+  const actions = report.actions ?? [];
+  const required = actions.some((item) => item.required);
+  const next = actions.length
+    ? required
+      ? "Resolve the required action below."
+      : "See the recommended follow-up below."
+    : assessment?.recommended_next_step || copy.note;
   return (
     <Tile className="decision-hero">
       <div className="decision-kicker">
@@ -23,15 +30,19 @@ export function AssessmentSummary({ report }: { report: ReviewReport }) {
         <Tag type={decision === "pass" ? "green" : decision === "block" ? "red" : decision === "incomplete" ? "gray" : "warm-gray"}>{copy.label}</Tag>
         <span>{copy.heading}</span>
       </div>
-      <h2>{assessment?.headline || copy.heading}</h2>
+      <h2>{copy.heading}</h2>
       <p>{assessment?.summary || copy.note}</p>
-      <p className="section-title">Recommended next step</p>
-      <p>{assessment?.recommended_next_step || copy.note}</p>
-      {enforcement ? (
-        <p className="helper">
-          Gate decision {enforcement.gate_decision.toUpperCase()}. Enforcement {enforcement.enforcement_mode}. Workflow prevented: {enforcement.workflow_prevented ? "Yes" : "No"}.
-        </p>
-      ) : null}
+      <p className="section-title">{required ? "Next step" : "Recommended next step"}</p>
+      <p>{next}</p>
+      {enforcement ? <p className="helper">{enforcementText(enforcement.enforcement_mode, enforcement.workflow_prevented)}</p> : null}
     </Tile>
   );
+}
+
+function enforcementText(mode: string, prevented: boolean): string {
+  const name = mode.replaceAll("_", " ");
+  if (prevented) {
+    return `Enforcement: ${name}. This change cannot proceed through the configured workflow until the required action is resolved.`;
+  }
+  return `Enforcement: ${name}. The workflow is not automatically prevented.`;
 }

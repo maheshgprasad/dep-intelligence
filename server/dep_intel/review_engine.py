@@ -25,6 +25,7 @@ from dep_intel.review_context import collect_context
 from dep_intel.review_evidence import apply_evidence_gate
 from dep_intel.review_commentary import attach_commentary
 from dep_intel.review_explain import attach_explanation
+from dep_intel.review_commentary import COMMENTARY_VERSION
 from dep_intel.review_gate_rules import VALIDATOR_VERSION
 from dep_intel.review_gate_validation import attach_gate_validation
 from dep_intel.review_sufficiency import apply_claim_sufficiency
@@ -703,6 +704,7 @@ def _cache_key(resolved: dict, config: dict, graph_version: str, mode: str, veri
         "verify": verify,
         "model": model_enabled,
         "validator": VALIDATOR_VERSION,
+        "commentary": COMMENTARY_VERSION,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
 

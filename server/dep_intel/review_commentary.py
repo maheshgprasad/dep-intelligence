@@ -16,6 +16,7 @@ from dep_intel.store import now
 
 log = logging.getLogger("nami.boundary")
 
+COMMENTARY_VERSION = "2"
 COMMENTARY_TIMEOUT = 20.0
 COMMENTARY_PURPOSE = "commentary"
 
@@ -224,11 +225,12 @@ def fallback_commentary(payload: dict[str, Any]) -> dict[str, str]:
     if decision == "block" and "BG-CONTRACT-001" in rules:
         removed = operation or "a contract"
         who = consumer or "a known consumer"
+        provider = payload.get("service_id") or "The changed service"
         text = {
-            "headline": "Consumed contract change requires action",
-            "summary": f"The change removes {removed}, which is used by {who}. Nami verified the evidence and blocked the change.",
-            "why_it_matters": "A dependent service still relies on the removed contract.",
-            "next_action": f"Restore compatibility or update {who} before proceeding.",
+            "headline": "Restore consumed contract compatibility",
+            "summary": f"{provider} removes {removed} while {who} still consumes that operation. Nami confirmed the current dependency and blocked the change.",
+            "why_it_matters": "The consumer still relies on an operation that would no longer be provided.",
+            "next_action": f"Restore the endpoint or update {who} in the same coordinated change, then rerun the review.",
             "evidence_comment": "The decision is supported by deterministic contract and dependency evidence.",
         }
     elif decision == "block" and "BG-VERIFY-001" in rules:
@@ -309,7 +311,7 @@ def _failure_copy() -> dict[str, str]:
         "headline": "Gate decision requires technical review",
         "summary": "The stored Gate result could not be independently reproduced from the available evidence and rule requirements.",
         "why_it_matters": "A decision that cannot be replayed should not be treated as confirmed.",
-        "next_action": "Review the validation details before relying on this decision.",
+        "next_action": "Do not rely on this decision until the validation mismatch is reviewed.",
         "evidence_comment": "The stored evidence did not confirm the recorded Gate decision.",
         "validation_comment": "Independent validation failed, so this result is not confirmed.",
         "limitation_note": "",

@@ -43,12 +43,12 @@ function ActionItems({ items }: { items: ReviewAction[] }) {
       ))}
       {[...groups.values()].map((group) => (
         <li key={group.map((item) => item.action_id).join("-")}>
-          {group.map((item, index) => (
-            <span key={item.action_id}>
-              {index > 0 ? " OR " : ""}
-              <strong>{item.title}</strong>
-            </span>
-          ))}
+          <p>Choose one:</p>
+          <ul>
+            {group.map((item) => (
+              <li key={item.action_id}><strong>{item.title}</strong></li>
+            ))}
+          </ul>
           <p>{group[0]?.description}</p>
         </li>
       ))}

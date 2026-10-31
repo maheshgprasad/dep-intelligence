@@ -1,5 +1,7 @@
 # Nami Boundary Gate
 
+Boundary Gate is the operational review workflow on Review Change and Review Detail. Research is not required to use it.
+
 Nami Boundary Gate (NBG) answers a review question: given an actual change, what changed, what could be affected, which project rules apply, what evidence supports each concern, what can be verified, and should the change pass, warn, block, or stay incomplete?
 
 NBG is not the predictive model. Nami Rank Module (NRM) remains the Phase-2 ranking bridge. It combines structural paths with directional history and ranks downstream files. Those scores are strongest-path and historical ranking evidence. They are not probabilities of breakage, of a later edit, or of failure. NBG reads that ranking to choose review targets and to order findings. It does not rewrite `structural_score`, `temporal_score`, `hybrid_score`, NRM weights, relation weights, history files, or evaluation labels.

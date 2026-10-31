@@ -2,7 +2,7 @@
 
 Gate validation checks a stored Boundary Gate decision. It does not choose pass, warn, block, or incomplete, and it does not change the decision that was stored.
 
-This is independent deterministic validation: rule replay, evidence requirements, safety invariants, and bounded counterfactual checks. It is not a mathematical proof of software correctness, and it is not a formal-methods verification of the repositories under review.
+This is independent deterministic validation: rule replay, evidence requirements, safety invariants, and bounded counterfactual checks. It checks consistency between the available evidence, the configured rules, and the Gate result. It does not prove the future production outcome of the change, and it is not a formal-methods verification of the repositories under review.
 
 ## Decision
 

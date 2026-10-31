@@ -85,7 +85,7 @@ def main() -> int:
     print(f"PDF: {pdf}")
     print(f"Package: {package}")
     pdf_text = pdf.read_bytes()
-    required = [b"Decision", b"Nami explanation", b"Required", b"Gate Decision Validation", b"BG-CONTRACT-001", b"Evidence", b"Safety checks", b"Counterfactual", b"Reproducibility"]
+    required = [b"Decision", b"Nami explanation", b"Required", b"Decision logic validation", b"BG-CONTRACT-001", b"Evidence", b"Safety checks", b"Counterfactual", b"Reproducibility"]
     if report["gate"]["decision"] != "block" or validation["status"] != "validated" or any(piece not in pdf_text for piece in required):
         return 1
     return 0

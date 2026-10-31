@@ -12,7 +12,8 @@ from dep_intel.gate_validation_corpus import scenarios
 def test_evaluation_reports_the_corpus_without_hard_coded_scores() -> None:
     payload = evaluate_corpus()
     assert payload["schema"] == "nami.gate.validation"
-    assert payload["scenario_count"] == len(scenarios()) == 16
+    assert payload["scenario_count"] == len(scenarios())
+    assert payload["scenario_count"] >= 16
     labels = payload["confusion_matrix"]["labels"]
     counts = payload["confusion_matrix"]["counts"]
     assert labels == ["pass", "warn", "block", "incomplete"]

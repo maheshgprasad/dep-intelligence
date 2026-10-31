@@ -37,6 +37,7 @@ export function OverviewPage({
   const view = intelligenceView(snapshot, refreshing);
   const services = snapshot?.cluster?.services ?? [];
   const [relations, setRelations] = useState<{ from: string; contract: string; to: string }[]>([]);
+  const [relationTotal, setRelationTotal] = useState<number | null>(null);
   const [blockedReview, setBlockedReview] = useState("");
 
   useEffect(() => {
@@ -52,6 +53,7 @@ export function OverviewPage({
     if (!snapshot?.cluster?.version) return;
     void clusterRelationships(6)
       .then((payload) => {
+        setRelationTotal(payload.total);
         setRelations(payload.relationships.map((item) => ({
           from: item.from_service,
           contract: item.contract,
@@ -98,8 +100,9 @@ export function OverviewPage({
         </Column>
         <Column sm={4} md={2} lg={4}>
           <Tile>
-            <p className="stat-label">Cross-service contracts</p>
-            <p className="stat-value">{snapshot.cluster?.contract_count ?? 0}</p>
+            <p className="stat-label">Resolved relationships</p>
+            <p className="stat-value">{relationTotal ?? "—"}</p>
+            <p className="helper">Contracts: {snapshot.cluster?.contract_count ?? 0}. Unresolved references: {snapshot.cluster?.unresolved_count ?? 0}.</p>
           </Tile>
         </Column>
         <Column sm={4} md={2} lg={4}>
@@ -116,17 +119,24 @@ export function OverviewPage({
         </Column>
       </Grid>
       <Grid>
-        <Column sm={4} md={4} lg={8}>
+        <Column sm={4} md={4} lg={6}>
           <ClickableTile href="/review" className="action-tile">
             <h2>Review a change</h2>
             <p>Analyze a PR, commit, branch range, or working tree.</p>
             <ArrowRight />
           </ClickableTile>
         </Column>
-        <Column sm={4} md={4} lg={8}>
+        <Column sm={4} md={4} lg={5}>
           <ClickableTile href="/impact" className="action-tile">
             <h2>Explore impact</h2>
             <p>Ask what could be affected if a file or contract changes.</p>
+            <ArrowRight />
+          </ClickableTile>
+        </Column>
+        <Column sm={4} md={4} lg={5}>
+          <ClickableTile href="/reports" className="action-tile">
+            <h2>Generate report</h2>
+            <p>Create a point-in-time workspace intelligence report.</p>
             <ArrowRight />
           </ClickableTile>
         </Column>

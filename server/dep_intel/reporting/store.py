@@ -71,6 +71,8 @@ def list_reports(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
                 "service": manifest.get("service_id"),
                 "generated_at": manifest.get("created_at") or "",
                 "graph_version": manifest.get("graph_version") or "",
+                "readiness": manifest.get("readiness") or "",
+                "readiness_label": manifest.get("readiness_label") or "",
                 "_mtime": directory.stat().st_mtime,
             })
         except (OSError, TypeError, ValueError):

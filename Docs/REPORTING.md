@@ -1,6 +1,6 @@
 # Intelligence reports
 
-Nami Trace can report three scopes.
+Nami Trace can report three scopes. Workspace and repository reports are observational. They do not return PASS, WARN, BLOCK, or INCOMPLETE. The stored workspace scope name remains `cluster`. The user-facing title is Workspace intelligence. Readiness is Complete when structural intelligence is current and optional sources are available, Partial when structure is current but history or health is incomplete, and Limited when structural intelligence itself is stale or unavailable.
 
 | Scope | Question | Schema |
 | --- | --- | --- |

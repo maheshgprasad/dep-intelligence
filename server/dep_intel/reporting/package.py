@@ -16,13 +16,22 @@ from dep_intel.review_export import _scrub
 from dep_intel.store import read_json, write_json
 
 log = logging.getLogger("nami.report")
-EXPORT_RENDERER = "white-1"
+EXPORT_RENDERER = "white-2"
 
 
 def ensure_export(output_dir: Path, report_id: str, kind: str) -> Path:
     document = read_report(output_dir, report_id)
     if document is None:
         raise FileNotFoundError(report_id)
+    from dataclasses import replace
+
+    from dep_intel.config import Settings
+    from dep_intel.reporting.collect import with_review_explanations
+
+    settings = Settings.load()
+    if settings.output_dir != output_dir:
+        settings = replace(settings, output_dir=output_dir)
+    document = with_review_explanations(settings, document)
     names = {"json": "report.json", "pdf": "report.pdf", "markdown": "report.md", "zip": "evidence.zip"}
     if kind not in names:
         raise ValueError(kind)

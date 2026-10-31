@@ -177,7 +177,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     validation = report.get("gate_validation") or {}
     if validation:
         lines.extend([
-            "## Gate decision validation",
+            "## Decision logic validation",
             "",
             f"Validation status: {validation.get('status') or ''}",
             f"Observed decision: {validation.get('observed_decision') or ''}",

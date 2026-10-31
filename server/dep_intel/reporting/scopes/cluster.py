@@ -54,7 +54,7 @@ def build_cluster_document(settings: Settings, snapshot: Snapshot) -> dict[str, 
             "revision_vector": snapshot.revision_vector,
         },
         "executive_summary": {
-            "headline": "Cluster intelligence",
+            "headline": "Workspace intelligence",
             "summary": narrative,
             "readiness": readiness,
             "readiness_label": label(readiness),

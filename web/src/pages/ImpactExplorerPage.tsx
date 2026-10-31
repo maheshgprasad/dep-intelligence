@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Accordion,
   AccordionItem,
@@ -275,7 +275,7 @@ function ImpactResult({ result, narrative }: { result: HybridImpactResponse; nar
     <div className="stack-gap">
       {narrative ? (
         <Tile>
-          <h2 className="section-title">Nami inference</h2>
+          <h2 className="section-title">Nami assessment</h2>
           <p className="section-title">{narrative.title}</p>
           <p>{narrative.statement}</p>
           <p>Recommended: {narrative.recommended}</p>
@@ -287,6 +287,7 @@ function ImpactResult({ result, narrative }: { result: HybridImpactResponse; nar
           </div>
         </Tile>
       ) : null}
+      <ImpactScope result={result} />
     <NamiDataTable
       title="Downstream candidates"
       description={result.score_meaning}
@@ -308,9 +309,27 @@ function ImpactResult({ result, narrative }: { result: HybridImpactResponse; nar
   );
 }
 
+function ImpactScope({ result }: { result: HybridImpactResponse }) {
+  const candidates = result.candidates;
+  const both = candidates.filter((item) => item.evidence_origin === "hybrid" || item.evidence_origin === "both").length;
+  const historical = candidates.filter((item) => item.evidence_origin.includes("temporal")).length;
+  const structural = candidates.length - both - historical;
+  const services = new Set(candidates.map((item) => item.service_id)).size;
+  return (
+    <Tile>
+      <h2 className="section-title">Impact scope</h2>
+      <p>Affected services: {services}. Downstream files ranked: {candidates.length}.</p>
+      <p>Structural and historical: {both}. Structural only: {Math.max(structural, 0)}. Historical only: {historical}.</p>
+      <p className="helper">These counts describe evidence origin. They are not a risk score.</p>
+    </Tile>
+  );
+}
+
 function CandidateDetail({ row }: { row: HybridCandidate & { id: string } }) {
+  const historicalOnly = row.evidence_origin.includes("temporal") && row.evidence_origin !== "hybrid" && row.evidence_origin !== "both";
   return (
     <div className="stack-gap">
+      {historicalOnly ? <p>Historical association only. Nami did not confirm a current structural dependency for this candidate.</p> : null}
       <div>
         <h3 className="section-title">Why this is ranked</h3>
         <ul>{(row.why_ranked.length ? row.why_ranked : ["Ranked from the available evidence."]).map((item) => <li key={item}>{hideFilePaths(item)}</li>)}</ul>
@@ -323,6 +342,7 @@ function CandidateDetail({ row }: { row: HybridCandidate & { id: string } }) {
         <h3 className="section-title">Historical evidence</h3>
         <p>{hideFilePaths(row.temporal.observation || "No historical support was recorded.")}</p>
       </div>
+      <p><Link to={`/architecture?service=${encodeURIComponent(row.service_id)}`}>Open in Architecture</Link></p>
       <div>
         <h3 className="section-title">Affected symbols</h3>
         <p>{(row.structural.impacted_symbols ?? []).map((item) => repoSymbol(row.service_id, symbolName(item.name))).join(", ") || symbolName(row.name)}</p>

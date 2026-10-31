@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from dep_intel.changes import diff_snapshots, fresh_version, union_snapshot
-from dep_intel.cluster_manifest import applicable_manifest, manifest_path, suggestion_for_missing_manifest
+from dep_intel.cluster_manifest import active_manifest_path, applicable_manifest, suggestion_for_missing_manifest
 from dep_intel.config import Settings
 from dep_intel.crg_adapter import (
     ExtractionFailed,
@@ -499,9 +499,7 @@ class ClusterEngine:
 
     def _manifest_file(self) -> Path | None:
         override = os.environ.get("CLUSTER_MANIFEST", "")
-        if self.settings.cluster_manifest:
-            return self.settings.cluster_manifest
-        return manifest_path(self.settings.root, override)
+        return active_manifest_path(self.settings.root, self.settings.cluster_manifest, override)
 
     def _pool(self, workers: int) -> ThreadPoolExecutor:
         if self._pools is None:

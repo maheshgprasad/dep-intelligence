@@ -101,5 +101,29 @@
     "expected_rules": [
       "BG-GRAPH-001"
     ]
+  },
+  {
+    "name": "nrm-only-high-rank",
+    "expected_decision": "warn",
+    "expected_rules": [
+      "BG-IMPACT-001"
+    ]
+  },
+  {
+    "name": "failed-optional-verification",
+    "expected_decision": "pass",
+    "expected_rules": []
+  },
+  {
+    "name": "multiple-consumers",
+    "expected_decision": "block",
+    "expected_rules": [
+      "BG-CONTRACT-001"
+    ]
+  },
+  {
+    "name": "policy-match-on-deleted-line",
+    "expected_decision": "warn",
+    "expected_rules": []
   }
 ]

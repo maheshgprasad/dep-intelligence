@@ -29,17 +29,19 @@ export const ALIGNMENT_LABELS: Record<string, string> = {
 };
 
 export const SOURCE_LABELS: Record<string, string> = {
-  diff: "Code diff",
-  CRG: "Code graph",
+  diff: "Code change",
+  CRG: "Code dependency graph",
   cluster_graph: "Cross-service dependency graph",
   manifest: "Service manifest",
-  OpenAPI: "OpenAPI",
+  OpenAPI: "API specification",
   git_history: "Repository history",
   NRM: "Nami Rank",
   test: "Tests",
-  verification_command: "Verification",
-  policy: "Project policy",
+  verification_command: "Verification command",
+  policy: "Project rule",
   LLM: "Model suggestion",
+  generated_topology: "Generated topology",
+  deployment_topology: "Deployment configuration",
 };
 
 export const EVIDENCE_QUALITY: Record<string, string> = {
@@ -68,15 +70,15 @@ export function alignmentLabel(value: string | undefined): string {
 }
 
 export const VALIDATION_STATUS: Record<string, string> = {
-  validated: "Validated",
-  validated_with_limitations: "Validated with limitations",
-  failed: "Validation failed",
+  validated: "Decision logic validated",
+  validated_with_limitations: "Decision logic validated with limitations",
+  failed: "Decision validation failed",
 };
 
 export const VALIDATION_HELP: Record<string, string> = {
-  validated: "Nami independently reproduced the Gate result from the stored evidence and rule requirements.",
-  validated_with_limitations: "The Gate result was reproduced, but one or more optional validation checks could not be completed.",
-  failed: "The independent validator could not justify or reproduce the stored Gate decision.",
+  validated: "Nami independently replayed the configured Gate rules using the stored evidence and reproduced the same decision. This checks consistency between the evidence, the rules, and the Gate result. It does not prove the future production outcome of the change.",
+  validated_with_limitations: "The Gate result was reproduced, but one or more optional checks could not be completed. This does not prove the future production outcome of the change.",
+  failed: "The independent validator could not justify or reproduce the stored Gate decision. Do not rely on this decision until the mismatch is reviewed.",
 };
 
 export function validationLabel(status: string | undefined): string {

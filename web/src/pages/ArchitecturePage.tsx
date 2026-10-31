@@ -44,6 +44,8 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const explicitView = params.get("view");
   const view = explicitView === "cluster" || explicitView === "repository" ? explicitView : service ? "repository" : "cluster";
   const selected = repos.find((repo) => repo.slug === service || repo.name === service) ?? repos[0];
+  const [topologyNote, setTopologyNote] = useState("");
+  const [topology, setTopology] = useState<{ relationships?: { from: string; to: string; method?: string; path?: string; reasons?: string[] }[]; unresolved?: { from: string; message: string; override_snippet?: string }[]; services?: unknown[]; overrides?: unknown[]; notes?: string[]; not_scanned?: string[] } | null>(null);
   const [relations, setRelations] = useState<RelationshipMap | null>(null);
   const [relationsError, setRelationsError] = useState("");
   const [bundle, setBundle] = useState<{ crg: CrgBundle | null; cochange: Cochange | null } | null>(null);
@@ -57,6 +59,20 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const [liveError, setLiveError] = useState("");
   const [busy, setBusy] = useState(false);
   const searched = useRef("");
+
+  useEffect(() => {
+    void fetch("/api/topology")
+      .then(async (response) => {
+        if (!response.ok) {
+          setTopology(null);
+          setTopologyNote("Service topology has not been discovered. Refresh intelligence. A matching route name is not treated as a provider.");
+          return;
+        }
+        setTopology(await response.json());
+        setTopologyNote("");
+      })
+      .catch(() => setTopologyNote("Topology status could not be loaded. Refresh intelligence and try again."));
+  }, [snapshot?.cluster?.version]);
 
   useEffect(() => {
     if (!snapshot?.cluster?.version) return;
@@ -159,7 +175,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
     <div className="stack-gap">
       <PageHeader
         title="Architecture"
-        description={view === "cluster" ? "Services that call each other. This is separate from the structure inside one repository." : "Internal structure, history, and diagnostics for one repository."}
+        description={view === "cluster" ? "See confirmed calls and contracts between analyzed services." : "Explore internal symbols, dependencies, and diagnostics for one repository."}
         breadcrumbs={view === "repository" && service ? [{ label: "Architecture", href: "/architecture?view=cluster" }, { label: selected?.name || service }] : undefined}
       />
       <ContentSwitcher
@@ -171,9 +187,23 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
           setParams(next, { replace: true });
         }}
       >
-        <Switch>Cluster</Switch>
-        <Switch>Repository</Switch>
+        <Switch>Service topology</Switch>
+        <Switch>Repository structure</Switch>
       </ContentSwitcher>
+      {topologyNote ? <InlineNotification kind="info" title="Topology status" subtitle={topologyNote} lowContrast hideCloseButton /> : null}
+      {topology ? (
+        <InlineNotification
+          kind="info"
+          title="Topology status"
+          subtitle={`${topology.services?.length ?? 0} services. ${topology.relationships?.length ?? 0} resolved relationships. ${topology.unresolved?.length ?? 0} unresolved references. ${topology.overrides?.length ?? 0} manual overrides.`}
+          lowContrast
+          hideCloseButton
+        />
+      ) : null}
+      {topology?.unresolved?.[0] ? <p className="helper">{topology.unresolved[0].message} {topology.unresolved[0].override_snippet ? `Override: ${topology.unresolved[0].override_snippet}` : ""}</p> : null}
+      {topology?.relationships?.[0]?.reasons?.length ? <p className="helper">Why Nami linked these services: {topology.relationships[0].reasons.join(". ")}</p> : null}
+      {topology?.notes?.[0] ? <p className="helper">{topology.notes[0]}</p> : null}
+      {topology?.not_scanned?.length ? <p className="helper">{topology.not_scanned.length} repositories have no local checkout, so their relationships were not scanned.</p> : null}
       {view === "cluster" ? (
         <ClusterView
           repos={repos}
@@ -224,7 +254,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
               <Column sm={4} md={2} lg={4}><p className="stat-label"><Term term="Bridge symbols" definition="Symbols that sit between subsystems." /></p><p className="stat-value">{bridges.length}</p></Column>
               <Column sm={4} md={2} lg={4}><p className="stat-label">Highly connected symbols</p><p className="stat-value">{hubs.length}</p></Column>
             </Grid>
-            <p className="helper">These groups are inside this repository. Calls between services are on the Cluster view.</p>
+            <p className="helper">These groups are inside this repository. Calls between services are on Service topology.</p>
             <h2 className="section-title">Subsystems</h2>
             <RecordTable repository={selected?.name || ""} rows={communities} emptyTitle="No subsystems" emptyDescription="This repository graph has no community summary." preferred={["repository", "symbol", "label", "size", "symbols", "cohesion"]} />
             <h2 className="section-title">Important connectors</h2>
@@ -407,7 +437,7 @@ function ClusterView({
   error: string;
   onOpen: (serviceId: string) => void;
 }) {
-  if (error) return <InlineNotification kind="error" title="Cluster is unavailable" subtitle={error} lowContrast hideCloseButton />;
+  if (error) return <InlineNotification kind="error" title="Service topology is unavailable" subtitle={error} lowContrast hideCloseButton />;
   if (!map) return <InlineLoading description="Loading the service cluster" />;
   const clusters = map.clusters;
   const rows = map.relationships.map((item) => relationshipRow(item, repos));

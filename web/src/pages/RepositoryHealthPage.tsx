@@ -116,8 +116,8 @@ export function RepositoryHealthPage({ loaded }: { loaded: boolean }) {
                 { key: "summary", header: "Advisory" },
               ]}
               rows={(security?.advisories ?? []).map((item, index) => ({ ...item, id: `${item.id}-${index}` }))}
-              emptyTitle="No advisories"
-              emptyDescription="OSV did not report a finding, or a security scan has not been run."
+              emptyTitle="Not scanned"
+              emptyDescription="No advisory scan is stored. Run repository health scan. A finished scan with zero findings is different from a scan that has not run."
             />
             <h2 className="section-title">Dependency hygiene</h2>
             <NamiDataTable
@@ -164,8 +164,8 @@ export function RepositoryHealthPage({ loaded }: { loaded: boolean }) {
                   status: repo.percent == null ? "Not configured" : "Available",
                   message: repo.message,
                 }))}
-                emptyTitle="No coverage results"
-                emptyDescription="Run a repository health scan to collect coverage."
+                emptyTitle="Not scanned"
+                emptyDescription="Coverage has not been scanned. Run repository health scan before treating this as zero."
                 renderExpanded={(row) => <p>{row.message || "No extra coverage detail was recorded."}</p>}
               />
             )}

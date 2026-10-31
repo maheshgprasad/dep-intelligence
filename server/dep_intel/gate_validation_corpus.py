@@ -187,4 +187,13 @@ def scenarios() -> list[dict[str, Any]]:
         _scenario("required-verification-unavailable", "incomplete", ["BG-EVIDENCE-001"], verification=[_command("skipped", None)]),
         _scenario("high-rank-review-target", "warn", ["BG-IMPACT-001"], findings=[_impact("structural_only")], impact={"affected_services": ["user-service"], "ranked_candidates": []}),
         _scenario("unavailable-graph-strict", "incomplete", ["BG-GRAPH-001"], change=_change("unavailable"), gate={"strict_graph": True}),
+        _scenario("nrm-only-high-rank", "warn", ["BG-IMPACT-001"], findings=[_impact("structural_only")], impact={"affected_services": ["user-service"], "ranked_candidates": []}),
+        _scenario("failed-optional-verification", "pass", [], verification=[{**_command("failed", 1), "required": False}]),
+        _scenario("multiple-consumers", "block", ["BG-CONTRACT-001"], findings=[_contract([{"service_id": "user-service"}, {"service_id": "billing-service"}])], impact={"affected_services": ["user-service", "billing-service"], "ranked_candidates": []}),
+        _scenario("policy-match-on-deleted-line", "warn", [], findings=[{
+            **_policy("high"),
+            "evidence_strength": "moderate",
+            "blocking": False,
+            "claim": "The forbidden pattern appears only on a deleted line.",
+        }]),
     ]

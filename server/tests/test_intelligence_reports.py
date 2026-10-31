@@ -78,6 +78,51 @@ def test_missing_health_is_not_scanned(tmp_path: Path) -> None:
     assert "clean" not in document["health"]["security"]["detail"].lower()
 
 
+def test_recent_reviews_include_why_evidence_and_validation(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    directory = tmp_path / "reviews" / "rev-1"
+    directory.mkdir(parents=True)
+    (directory / "report.json").write_text(json.dumps({
+        "review_id": "rev-1",
+        "gate": {"decision": "block"},
+        "change": {"service_id": "auth-service", "repository": "/home/mahesh/auth-service"},
+        "assessment": {
+            "headline": "Known consumer compatibility is affected.",
+            "summary": "The reviewed change removes a contract consumed by user-service.",
+            "recommended_next_step": "Restore the endpoint or update user-service.",
+        },
+        "commentary": {
+            "headline": "Restore consumed contract compatibility",
+            "summary": "auth-service removes POST /api/auth/validate while user-service still consumes it.",
+            "why_it_matters": "The consumer still relies on an operation that would no longer be provided.",
+            "next_action": "Restore the endpoint or update user-service, then rerun the review.",
+            "validation_comment": "The configured Gate rules were independently replayed and reproduced the same BLOCK result.",
+        },
+        "gate_validation": {"status": "validated"},
+        "evidence_catalog": [{"source": "cluster_graph", "statement": "user-service consumes POST /api/auth/validate."}],
+    }), encoding="utf-8")
+    (directory / "manifest.json").write_text(json.dumps({"review_id": "rev-1", "completed_at": "2026-10-31T00:00:00+00:00"}), encoding="utf-8")
+    document = generate_report(settings, _snapshot(), "repository", "auth-service")
+    item = document["review_activity"]["reviews"][0]
+    assert document["review_activity"]["counts"]["block"] == 1
+    assert "user-service" in item["what_happened"]
+    assert "no longer be provided" in item["why_it_matters"]
+    assert item["evidence"][0]["source"] == "Cross-service dependency graph"
+    assert "BLOCK" in item["validation"]
+    assert item["repository"] == "auth-service"
+    assert "/home/" not in json.dumps(item)
+    from dep_intel.reporting.render_markdown import render_markdown
+    from dep_intel.reporting.render_pdf import render_report_pdf
+
+    text = render_markdown(document)
+    pdf = render_report_pdf(document)
+    assert "Why it matters" in text
+    assert "not a Boundary Gate decision" in text
+    assert "What needs attention" in text
+    assert b"Why it matters" in pdf
+    assert b"What needs attention" in pdf or b"not a Boundary Gate" in pdf
+
+
 def test_fingerprint_is_stable_until_content_changes() -> None:
     document = {"schema": "nami.intelligence.report", "scope": "cluster", "executive_summary": {"summary": "same"}, "reproducibility": {}}
     assert fingerprint(document) == fingerprint(json.loads(json.dumps(document)))

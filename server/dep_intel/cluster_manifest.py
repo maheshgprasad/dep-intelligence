@@ -205,6 +205,23 @@ def manifest_path(root: Path, override: str = "") -> Path | None:
     return default if default.is_file() else None
 
 
+def active_manifest_path(root: Path, explicit: Path | None = None, override: str = "") -> Path | None:
+    """Manifest used for compatibility bindings.
+
+    A project ``cluster-manifest.json`` wins. The shipped fixture manifest is
+    considered only when no project file is present; ``applicable_manifest``
+    still ignores it when its services are not on the allowlist. Route names
+    are never used as a substitute for this file.
+    """
+    if explicit is not None and explicit.is_file():
+        return explicit
+    chosen = manifest_path(root, override)
+    if chosen is not None:
+        return chosen
+    fixture = root / "fixtures" / "cluster-manifest.json"
+    return fixture if fixture.is_file() else None
+
+
 def load_manifest(path: Path | None, repos: list[RepoRef], root: Path) -> tuple[ClusterManifest | None, list[str]]:
     if path is None or not path.is_file():
         return None, []
@@ -329,6 +346,36 @@ def _match_repo(reference: str, repos: list[RepoRef], root: Path) -> list[RepoRe
         seen.add(repo.raw)
         unique.append(repo)
     return unique
+
+
+def select_manifest(
+    root: Path,
+    repos: list[RepoRef],
+    explicit: Path | None = None,
+    override: str = "",
+) -> tuple[ClusterManifest | None, list[str], list[str]]:
+    """Pick the manifest that actually applies to this allowlist.
+
+    An explicit path is used as given. Otherwise a project manifest that does
+    not name any allowlisted repository is skipped, and the shipped fixture
+    manifest is used when its services are on the allowlist. A relative client
+    URL is still not matched to a provider by route name alone.
+    """
+    if explicit is not None and explicit.is_file():
+        return applicable_manifest(explicit, repos, root)
+    primary = manifest_path(root, override)
+    if primary is not None:
+        manifest, errors, notices = applicable_manifest(primary, repos, root)
+        if not notices:
+            return manifest, errors, notices
+    fixture = root / "fixtures" / "cluster-manifest.json"
+    if fixture.is_file() and (primary is None or fixture.resolve() != primary.resolve()):
+        manifest, errors, notices = applicable_manifest(fixture, repos, root)
+        if not notices:
+            return manifest, errors, notices
+    if primary is not None:
+        return applicable_manifest(primary, repos, root)
+    return applicable_manifest(None, repos, root)
 
 
 def applicable_manifest(

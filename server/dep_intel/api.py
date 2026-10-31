@@ -323,18 +323,27 @@ async def refresh_intelligence() -> dict:
         if phase == "complete":
             return
         mapped = 55 if phase == "analyze_commit_history" else 20
-        publish_progress(phase, min(mapped, 80), message)
+        plain = "Analyzing change history" if phase == "analyze_commit_history" else "Building repository structure"
+        publish_progress(phase, min(mapped, 80), plain)
 
     async def job() -> None:
         global _running
         try:
-            publish_progress("preparing", 10, "Preparing repositories")
+            publish_progress("preparing", 8, "Preparing repositories")
             await asyncio.to_thread(run_graphs, "", "", 365, on_nested)
-            publish_progress("contracts", 85, "Resolving cross-service contracts")
+            publish_progress("contracts", 70, "Discovering contracts")
             await asyncio.to_thread(get_engine(Settings.load()).refresh)
+            publish_progress("relationships", 82, "Resolving service relationships")
+            publish_progress("topology", 90, "Building topology")
+            try:
+                from dep_intel.topology.discovery import discover
+
+                await asyncio.to_thread(discover, Settings.load())
+            except Exception:
+                publish_progress("topology", 90, "Topology discovery could not finish. Workspace intelligence is partial.")
             publish("file_updated", {"filename": "snapshot"})
-            publish_progress("publish", 95, "Publishing snapshot")
-            publish_progress("complete", 100, "Intelligence refresh finished")
+            publish_progress("publish", 96, "Publishing intelligence")
+            publish_progress("complete", 100, "Intelligence refreshed")
         finally:
             _running = False
 
@@ -650,6 +659,30 @@ class ImpactSummaryBody(BaseModel):
     ranked_candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
+@app.get("/api/topology")
+def topology_status() -> dict:
+    from dep_intel.topology.discovery import load_effective
+
+    payload = load_effective(Settings.load())
+    if payload is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "topology_not_discovered",
+                "message": "Service topology has not been discovered for this workspace.",
+                "recommended_action": "Refresh intelligence, or run scripts/nami-topology.py discover.",
+            },
+        )
+    return payload
+
+
+@app.post("/api/topology/discover")
+def topology_discover() -> dict:
+    from dep_intel.topology.discovery import discover
+
+    return discover(Settings.load())
+
+
 @app.get("/api/research/gate-validation")
 def research_gate_validation() -> dict:
     """Latest offline Boundary Gate validation corpus. Absent until evaluate-gate.py has run."""
@@ -752,10 +785,13 @@ def list_intelligence_reports(limit: int = 20) -> dict:
 def get_intelligence_report(report_id: str) -> dict:
     from dep_intel.reporting.store import read_report
 
-    document = read_report(Settings.load().output_dir, report_id)
+    settings = Settings.load()
+    document = read_report(settings.output_dir, report_id)
     if document is None:
         raise HTTPException(status_code=404, detail={"code": "report_not_found"})
-    return document
+    from dep_intel.reporting.collect import with_review_explanations
+
+    return with_review_explanations(settings, document)
 
 
 def _intelligence_export(report_id: str, kind: str, media_type: str) -> FileResponse:
