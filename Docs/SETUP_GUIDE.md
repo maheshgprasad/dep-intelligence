@@ -1,6 +1,6 @@
 # Setup
 
-Python 3.11 or newer, and Node.js 18 or newer.
+Python 3.11 or newer, and Node.js >=22.22.2 and <23 (see `.nvmrc`). `./scripts/nami-trace.sh` selects that Node from an nvm install of the pinned version.
 
 ```bash
 skills/install-mcp-pydriller/scripts/install.sh
