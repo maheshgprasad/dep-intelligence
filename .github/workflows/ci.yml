@@ -43,7 +43,7 @@ jobs:
           python scripts/check_coverage.py output/ci/coverage.xml .github/quality-baseline.json
       - name: Upload backend results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-test-results
           path: |
@@ -74,7 +74,7 @@ jobs:
           python scripts/ci_summary.py semantic output/ci/semantic-junit.xml output/ci/semantic-summary.json
       - name: Upload semantic summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: semantic-summary
           path: |
@@ -113,7 +113,7 @@ jobs:
           FRONTEND_TEST_RESULT="${{ steps.tests.outcome }}" FRONTEND_BUILD_RESULT="${{ steps.build.outcome }}" python3 scripts/ci_summary.py frontend output/ci/frontend-summary.json
       - name: Upload frontend results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-summary
           path: |
@@ -142,7 +142,7 @@ jobs:
           python scripts/ci_report_smoke.py --dest output/ci
       - name: Upload smoke summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: report-smoke
           path: output/ci/report-smoke.json
@@ -150,7 +150,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload sample reports
         if: always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || failure())
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nami-sample-reports
           path: output/ci/samples/
