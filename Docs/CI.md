@@ -14,7 +14,7 @@ These check names are stable and are the names to use if branch protection is en
 | --- | --- |
 | Backend test suite | The Python package tests pass on Python 3.11, and line coverage stays at or above the recorded floor. |
 | Nami semantic contract | Domain invariants still hold. This suite also runs inside the backend job. The separate job makes the result visible. |
-| Frontend checks | Vitest component tests pass and `tsc --noEmit && vite build` succeeds on Node.js 20. |
+| Frontend checks | Vitest component tests pass and `tsc --noEmit && vite build` succeeds on Node.js 22.22.2. |
 | Report and export smoke | Fixture Workspace, Service Cluster, Repository, and Change Intelligence reports export to PDF, Markdown, JSON, and, for intelligence reports, an evidence package. |
 | Nami required checks | All four checks above succeeded. This is the single check to require. |
 | CI quality summary | Job summary with the counts from that run. It runs even when a required check fails. It is not a merge gate. |
@@ -99,6 +99,22 @@ Generated files stay under `output/ci/` and are gitignored with the rest of `out
 
 CI does not upload `.env`, tokens, Git credentials, SSH keys, source checkouts, or graph databases. `output/ci/quality-summary.json` describes the CI run. It is not Nami analysis, Boundary Gate evidence, or a stored intelligence report. A future GitHub Pages dashboard could read it. This workflow does not publish Pages.
 
+## Frontend Node.js
+
+Frontend development requires Node.js 22, at least 22.22.2 and below 23. `.nvmrc` is the local version to select. GitHub Actions uses that same `22.22.2` baseline for frontend checks and the nightly npm audit.
+
+```bash
+nvm install
+nvm use
+
+cd web
+npm ci
+```
+
+Vitest 4 is required with Vite 8. Vitest 2 does not support Vite 8, and Vitest 4.1 is the smallest current major that declares Vite 6, 7, and 8. The test runner, jsdom environment, and JSON report used by the CI summary stay the same.
+
+Dependabot still opens weekly updates. Minor and patch updates stay in one group. Major updates of `vite`, `@vitejs/plugin-react`, `vitest`, `jsdom`, and `typescript` are grouped together because those packages move as one toolchain. Security updates are not suppressed.
+
 ## Run the same checks locally
 
 ```bash
@@ -109,9 +125,9 @@ CI does not upload `.env`, tokens, Git credentials, SSH keys, source checkouts, 
 ./scripts/ci.sh all
 ```
 
-`backend` is the pytest command used in GitHub, plus the coverage floor. `semantic` runs `pytest server/tests -m semantic_contract`. `frontend` uses `npm ci` when `web/package-lock.json` exists, then `npm run test:ci` and `npm run build`. `reports` runs the fixture smoke script. `all` stops on the first failure. These commands write under `output/ci/` and do not delete the rest of `output/`.
+`backend` is the pytest command used in GitHub, plus the coverage floor. `semantic` runs `pytest server/tests -m semantic_contract`. `frontend` uses `npm ci` when `web/package-lock.json` exists, then `npm run test:ci` and `npm run build`. It stops immediately when Node.js is outside `>=22.22.2 <23`. `reports` runs the fixture smoke script. `all` stops on the first failure. These commands write under `output/ci/` and do not delete the rest of `output/`.
 
-Python 3.11 is the required runtime (`requires-python = ">=3.11"`). The frontend CI image is Node.js 20.
+Python 3.11 is the required runtime (`requires-python = ">=3.11"`). The frontend CI image is Node.js 22.22.2.
 
 ## Branch protection
 
