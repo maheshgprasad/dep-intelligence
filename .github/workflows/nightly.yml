@@ -91,7 +91,7 @@ jobs:
           cache-dependency-path: server/pyproject.toml
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Audit Python dependencies

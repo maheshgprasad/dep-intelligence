@@ -18,6 +18,15 @@ updates:
         update-types:
           - minor
           - patch
+      frontend-toolchain-major:
+        patterns:
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "jsdom"
+          - "typescript"
+        update-types:
+          - major
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -29,7 +29,23 @@ semantic() {
   "$PYTHON" scripts/ci_summary.py semantic output/ci/semantic-junit.xml output/ci/semantic-summary.json
 }
 
+require_frontend_node() {
+  local raw major minor patch
+  raw="$(node -v 2>/dev/null || true)"
+  raw="${raw#v}"
+  IFS=. read -r major minor patch <<<"${raw%%-*}"
+  if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ || ! "${patch:-}" =~ ^[0-9]+$ ]] \
+    || (( major != 22 || minor < 22 || (minor == 22 && patch < 2) )); then
+    echo "Detected Node.js ${raw:-unknown}" >&2
+    echo "Nami frontend tooling requires Node.js >=22.22.2 and <23." >&2
+    echo "Use:" >&2
+    echo "nvm use" >&2
+    exit 1
+  fi
+}
+
 frontend() {
+  require_frontend_node
   cd "$ROOT/web"
   if [[ -f package-lock.json ]]; then
     npm ci
