@@ -275,7 +275,7 @@ function ImpactResult({ result, narrative }: { result: HybridImpactResponse; nar
     <div className="stack-gap">
       {narrative ? (
         <Tile>
-          <h2 className="section-title">Nami inference</h2>
+          <h2 className="section-title">Nami assessment</h2>
           <p className="section-title">{narrative.title}</p>
           <p>{narrative.statement}</p>
           <p>Recommended: {narrative.recommended}</p>

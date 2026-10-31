@@ -12,7 +12,7 @@ export function GateValidationSummary({ validation }: { validation?: GateValidat
   const counterfactuals = validation.counterfactuals;
   return (
     <Tile>
-      <p className="section-title">Decision validation</p>
+      <p className="section-title">Decision logic validation</p>
       <div className="decision-kicker">
         <Tag type={tone} title={validationHelp(status)}>{validationLabel(status)}</Tag>
       </div>
@@ -40,7 +40,7 @@ function lead(validation: GateValidation): string {
     return validation.summary || "The Gate decision was reproduced, but one optional provenance check could not be completed.";
   }
   const label = validation.observed_decision.toUpperCase();
-  return `Nami independently replayed the Gate rules and reproduced the same ${label} decision.`;
+  return `Nami independently replayed the configured Gate rules using the stored evidence and reproduced the same ${label} decision. This checks evidence, rules, and the Gate result. It does not prove the production outcome.`;
 }
 
 function ValidationDetails({ validation }: { validation: GateValidation }) {
@@ -62,6 +62,9 @@ function ValidationDetails({ validation }: { validation: GateValidation }) {
             {rule.requirements.map((item) => (
               <li key={`${rule.rule_id}-${item.requirement}`}>{item.label || item.requirement}: {item.status}{item.evidence_refs.length ? ` (${item.evidence_refs.join(", ")})` : ""}</li>
             ))}
+            {rule.evidence_grade ? <li>Minimum evidence grade: {rule.evidence_grade}</li> : null}
+            <li>Counter-evidence: {rule.counter_evidence_status === "decisive_contradiction" ? "Decisive contradiction" : "None decisive"}</li>
+            <li>Expected decision: {(rule.expected_decision || "").toUpperCase()}. Rule check: {rule.status}.</li>
           </ul>
         </div>
       )) : <p className="helper">No triggered rules.</p>}

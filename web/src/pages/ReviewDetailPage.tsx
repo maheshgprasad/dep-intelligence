@@ -55,7 +55,7 @@ export function ReviewDetailPage() {
   const [feedbackSuccess, setFeedbackSuccess] = useState("");
   const [feedbackError, setFeedbackError] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState(false);
-  const [progress, setProgress] = useState({ stage: "resolve_change", label: "Resolve change", percent: 11, index: 1, count: 9 });
+  const [progress, setProgress] = useState({ stage: "resolve_change", label: "Selecting the change", percent: 11, index: 1, count: 9 });
 
   useEffect(() => {
     if (!reviewId) return;
@@ -156,10 +156,17 @@ export function ReviewDetailPage() {
       />
       <AssessmentSummary report={report} />
       <NamiCommentary report={report} />
-      <GateValidationSummary validation={report.gate_validation} />
       <ActionList actions={report.actions ?? []} />
+      <GateValidationSummary validation={report.gate_validation} />
       <DecisionReason rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <GateChecklist items={report.gate_checklist ?? []} />
+      <Tile>
+        <p className="section-title">Affected services</p>
+        <p>{report.impact.affected_services.length ? report.impact.affected_services.join(", ") : "No other service was identified from the stored evidence."}</p>
+        {report.impact.affected_services[0] ? <Link to={`/architecture?service=${encodeURIComponent(report.impact.affected_services[0])}`}>Open architecture</Link> : null}
+        {" "}
+        {report.impact.affected_services[0] ? <Link to={`/impact?service=${encodeURIComponent(report.impact.affected_services[0])}`}>Explore impact</Link> : null}
+      </Tile>
       <EvidenceList evidence={report.evidence_catalog ?? []} counter={report.counter_evidence ?? []} suppressed={report.suppressed_findings ?? []} />
       <InlineNotification kind={report.gate.reason_codes?.includes("cancelled") ? "info" : kind} title={report.gate.reason_codes?.includes("cancelled") ? "Review cancelled" : decision.toUpperCase()} subtitle={reviewExplanation(report)} lowContrast hideCloseButton />
       <dl className="detail-list">

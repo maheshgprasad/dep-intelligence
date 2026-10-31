@@ -17,8 +17,8 @@ export function NamiCommentary({ report }: { report: ReviewReport }) {
       {commentary.evidence_comment ? <p className="helper">{commentary.evidence_comment}</p> : null}
       {commentary.validation_comment ? <p className="helper">{commentary.validation_comment}</p> : null}
       {commentary.limitation_note ? <p className="helper">{commentary.limitation_note}</p> : null}
+      <p className="helper">Generated from validated Nami evidence</p>
       <p className="helper">{disclosure(commentary, failed)}</p>
-      <p className="helper">Based on validated Nami evidence</p>
     </Tile>
   );
 }
@@ -26,7 +26,7 @@ export function NamiCommentary({ report }: { report: ReviewReport }) {
 function disclosure(commentary: Commentary, failed: boolean): string {
   if (failed) return "Validation failed. Review the technical validation details before relying on this result.";
   if (commentary.mode === "deterministic_fallback" || commentary.source === "deterministic") {
-    return "Generated from deterministic Nami templates";
+    return "Commentary mode: deterministic fallback";
   }
   const provider = commentary.provider ? `Provider: ${commentary.provider}` : "Generated explanation";
   const model = commentary.model ? ` Model: ${commentary.model}` : "";

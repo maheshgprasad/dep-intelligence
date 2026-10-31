@@ -25,7 +25,6 @@ import {
 } from "@carbon/react";
 import { Activity, Asleep, Light } from "@carbon/icons-react";
 import { getAppState, refreshIntelligence, searchWorkspace, type AppState, type SearchHit } from "./api";
-import { StatusTag } from "./components/StatusTag";
 import { intelligenceView } from "./intelligence";
 import { ArchitecturePage } from "./pages/ArchitecturePage";
 import { ReportDetailPage } from "./pages/ReportDetailPage";
@@ -171,10 +170,10 @@ export function App() {
           <HeaderMenuItem href="/review" isCurrentPage={current("/review")} onClick={follow}>Review change</HeaderMenuItem>
           <HeaderMenuItem href="/impact" isCurrentPage={current("/impact")} onClick={follow}>Impact explorer</HeaderMenuItem>
           <HeaderMenuItem href="/architecture" isCurrentPage={current("/architecture")} onClick={follow}>Architecture</HeaderMenuItem>
+          <HeaderMenuItem href="/reports" isCurrentPage={current("/reports")} onClick={follow}>Reports</HeaderMenuItem>
           <HeaderMenu aria-label="More" menuLinkName="More">
             <HeaderMenuItem href="/health" isCurrentPage={current("/health")} onClick={follow}>Repository health</HeaderMenuItem>
             <HeaderMenuItem href="/research" isCurrentPage={current("/research")} onClick={follow}>Research</HeaderMenuItem>
-            <HeaderMenuItem href="/reports" isCurrentPage={current("/reports")} onClick={follow}>Reports</HeaderMenuItem>
           </HeaderMenu>
         </HeaderNavigation>
         <SideNav aria-label="Primary" expanded={menu} isPersistent={false} onOverlayClick={() => setMenu(false)}>
@@ -183,10 +182,10 @@ export function App() {
             <SideNavLink href="/review" isActive={current("/review")} onClick={follow}>Review change</SideNavLink>
             <SideNavLink href="/impact" isActive={current("/impact")} onClick={follow}>Impact explorer</SideNavLink>
             <SideNavLink href="/architecture" isActive={current("/architecture")} onClick={follow}>Architecture</SideNavLink>
+            <SideNavLink href="/reports" isActive={current("/reports")} onClick={follow}>Reports</SideNavLink>
             <SideNavMenu title="More" defaultExpanded>
               <SideNavMenuItem href="/health" isActive={current("/health")} onClick={follow}>Repository health</SideNavMenuItem>
               <SideNavMenuItem href="/research" isActive={current("/research")} onClick={follow}>Research</SideNavMenuItem>
-              <SideNavMenuItem href="/reports" isActive={current("/reports")} onClick={follow}>Reports</SideNavMenuItem>
             </SideNavMenu>
           </SideNavItems>
         </SideNav>
@@ -243,11 +242,13 @@ export function App() {
           <div className="status-panel">
             <h2>Intelligence status</h2>
             <dl>
-              <div><dt>Cluster graph</dt><dd><StatusTag status={view.cluster} /></dd></div>
-              <div><dt>Commit history</dt><dd><StatusTag status={view.history} /></dd></div>
-              <div><dt>Contracts</dt><dd><StatusTag status={view.contracts} /></dd></div>
-              <div><dt>Stale services</dt><dd>{view.stale}</dd></div>
-              <div><dt>Unresolved refs</dt><dd>{view.unresolved}</dd></div>
+              <div><dt>Structure</dt><dd>{readinessText(view.cluster)}</dd></div>
+              <div><dt>Contracts</dt><dd>{readinessText(view.contracts)}</dd></div>
+              <div><dt>History</dt><dd>{readinessText(view.history)}</dd></div>
+              <div><dt>Topology</dt><dd>{view.unresolved ? "Partial" : readinessText(view.cluster)}</dd></div>
+              <div><dt>Health</dt><dd>Not scanned</dd></div>
+              <div><dt>Out of date services</dt><dd>{view.stale}</dd></div>
+              <div><dt>Unresolved references</dt><dd>{view.unresolved}</dd></div>
             </dl>
             <p className="helper">Last refreshed</p>
             <p>{view.refreshedAt}</p>
@@ -263,7 +264,7 @@ export function App() {
           <div className="activity-strip" role="status">
             <p>{progress.message}</p>
             <ProgressBar label={progress.message} value={progress.percent || undefined} max={100} status="active" />
-            <p className="helper">Displayed results are from the previous snapshot.</p>
+            <p className="helper">Showing the previous snapshot while refresh is in progress.</p>
           </div>
         ) : null}
         <Routes>
@@ -281,4 +282,11 @@ export function App() {
       </Content>
     </Theme>
   );
+}
+
+function readinessText(value: string): string {
+  if (value === "Stale") return "Out of date";
+  if (value === "Missing") return "Not scanned";
+  if (value === "Refreshing") return "Refreshing";
+  return value || "Unavailable";
 }

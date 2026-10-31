@@ -2,6 +2,8 @@
 
 Nami Trace is a React + Carbon dashboard and a Python analysis service, started together with `scripts/nami-trace.sh`. Cursor, Claude, and IBM Bob share one MCP server: `scripts/dep-intel-mcp.sh`. **Nami Rank Module (NRM)** combines structural dependency evidence with temporal/evolutionary evidence to rank downstream software change-impact candidates. MCP tool `analyze_hybrid_impact` is the NRM entry point.
 
+Existing user-facing surfaces are permanent unless the user explicitly removes them. Boundary Gate stays on Review Change and Review Detail. Research stays an evaluation area. Reports stay a first-class surface, including change, repository, and workspace reports and their PDF, Markdown, JSON, and evidence-package exports. The full rule is in `.cursor/rules/nami-product-contract.mdc`.
+
 ## Approved without another confirmation
 
 - Read `repos.txt`

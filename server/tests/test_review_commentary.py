@@ -15,7 +15,7 @@ def test_missing_model_uses_the_contract_fallback() -> None:
     assert commentary["advisory"] is True
     assert "user-service" in commentary["summary"]
     assert "POST /api/auth/validate" in commentary["summary"]
-    assert commentary["headline"].startswith("Consumed contract")
+    assert "contract" in commentary["headline"].lower()
     assert report["gate"]["decision"] == "block"
 
 

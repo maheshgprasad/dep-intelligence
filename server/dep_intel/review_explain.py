@@ -528,7 +528,15 @@ def copy_summary(report: dict[str, Any]) -> str:
     summary = assessment.get("summary") or ""
     step = assessment.get("recommended_next_step") or ""
     review_id = report.get("review_id") or ""
-    return f"Nami Trace: {decision}\n\n{summary}\n\nNext step: {step}\n\nReview ID: {review_id}"
+    validation = (report.get("gate_validation") or {}).get("status") or "not recorded"
+    validation_text = {
+        "validated": "Decision logic validated.",
+        "validated_with_limitations": "Decision logic validated with limitations.",
+        "failed": "Decision validation failed. Do not rely on this decision until the mismatch is reviewed.",
+    }.get(validation, "Decision validation was not recorded.")
+    commentary = (report.get("commentary") or {}).get("headline") or ""
+    headline = f"\n{commentary}\n" if commentary else "\n"
+    return f"Nami Trace — {decision}{headline}\n{summary}\n\nRequired:\n{step}\n\nDecision logic validation:\n{validation_text}\n\nReview: {review_id}"
 
 
 def summarize_impact(result: dict[str, Any]) -> dict[str, str]:

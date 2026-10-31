@@ -1,0 +1,47 @@
+---
+description: Permanent Nami Trace product regression contract
+alwaysApply: true
+---
+
+# Nami Trace product regression contract
+
+Existing user-facing capabilities are permanent unless the user explicitly removes them.
+
+Operational product surfaces:
+
+- Overview
+- Review Change
+- Review Detail
+- Impact Explorer
+- Architecture
+- Reports
+- Report Detail
+- Repository Health
+- Research
+
+Boundary Gate belongs to Review Change and Review Detail. It must never become Research-only functionality. Research is for evaluation, experiments, and aggregate validation metrics. It must not replace operational review workflows.
+
+Reports are first-class product functionality. These remain supported:
+
+- Change Intelligence Report
+- Repository Intelligence Report
+- Cluster / Workspace Intelligence Report
+- PDF export
+- Markdown export
+- JSON export
+- Evidence Package
+
+Before completing any implementation:
+
+- compare UI routes before and after
+- compare API routes before and after
+- verify report-generation actions remain visible
+- verify export endpoints remain callable
+- verify Review Change still executes Boundary Gate
+- verify Review Detail still shows decision, evidence, actions, and validation
+- verify Research remains evaluation-oriented
+- run backend tests
+- run the frontend production build
+- run major demos
+
+Refactoring does not authorize feature removal. A feature that still exists in backend code but becomes inaccessible through normal UI navigation counts as a regression.

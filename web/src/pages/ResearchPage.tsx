@@ -177,7 +177,7 @@ function GateCorpusSummary({ corpus }: { corpus: GateValidationCorpus }) {
   return (
     <section className="stack-gap">
       <h2>Boundary Gate validation</h2>
-      <p className="helper">Offline corpus for this checkout. It is separate from the validation of a single review.</p>
+      <p className="helper">These metrics describe the labelled validation fixture corpus. They are not a production-accuracy guarantee, and they are separate from the validation of a single review.</p>
       <p className="helper">Scenarios {corpus.scenario_count}. Validator {corpus.validator_version}.</p>
       <Grid>
         {rates.map(([label, value]) => (

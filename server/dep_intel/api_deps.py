@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from dep_intel.cluster_manifest import applicable_manifest, manifest_path, suggestion_for_missing_manifest
+from dep_intel.cluster_manifest import select_manifest, suggestion_for_missing_manifest
 from dep_intel.config import Settings
 from dep_intel.contract_extractors.javascript import extract_javascript, resolve_routes
 from dep_intel.contract_extractors.openapi import parse_openapi
@@ -51,7 +51,11 @@ def detect_api_dependencies(workspaces: list[Workspace], settings: Settings) -> 
             )
 
     dependencies = []
-    manifest, errors, _notices = applicable_manifest(manifest_path(settings.root), [workspace.ref for workspace in workspaces], settings.root)
+    manifest, errors, _notices = select_manifest(
+        settings.root,
+        [workspace.ref for workspace in workspaces],
+        settings.cluster_manifest,
+    )
     if errors:
         diagnostics.extend({"code": "manifest", "message": error} for error in errors)
     elif manifest is None:

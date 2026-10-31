@@ -44,6 +44,8 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const explicitView = params.get("view");
   const view = explicitView === "cluster" || explicitView === "repository" ? explicitView : service ? "repository" : "cluster";
   const selected = repos.find((repo) => repo.slug === service || repo.name === service) ?? repos[0];
+  const [topologyNote, setTopologyNote] = useState("");
+  const [topology, setTopology] = useState<{ relationships?: { from: string; to: string; method?: string; path?: string; reasons?: string[] }[]; unresolved?: { from: string; message: string; override_snippet?: string }[]; services?: unknown[]; overrides?: unknown[]; notes?: string[]; not_scanned?: string[] } | null>(null);
   const [relations, setRelations] = useState<RelationshipMap | null>(null);
   const [relationsError, setRelationsError] = useState("");
   const [bundle, setBundle] = useState<{ crg: CrgBundle | null; cochange: Cochange | null } | null>(null);
@@ -57,6 +59,20 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const [liveError, setLiveError] = useState("");
   const [busy, setBusy] = useState(false);
   const searched = useRef("");
+
+  useEffect(() => {
+    void fetch("/api/topology")
+      .then(async (response) => {
+        if (!response.ok) {
+          setTopology(null);
+          setTopologyNote("Service topology has not been discovered. Refresh intelligence. A matching route name is not treated as a provider.");
+          return;
+        }
+        setTopology(await response.json());
+        setTopologyNote("");
+      })
+      .catch(() => setTopologyNote("Topology status could not be loaded. Refresh intelligence and try again."));
+  }, [snapshot?.cluster?.version]);
 
   useEffect(() => {
     if (!snapshot?.cluster?.version) return;
@@ -174,6 +190,20 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
         <Switch>Cluster</Switch>
         <Switch>Repository</Switch>
       </ContentSwitcher>
+      {topologyNote ? <InlineNotification kind="info" title="Topology status" subtitle={topologyNote} lowContrast hideCloseButton /> : null}
+      {topology ? (
+        <InlineNotification
+          kind="info"
+          title="Topology status"
+          subtitle={`${topology.services?.length ?? 0} services. ${topology.relationships?.length ?? 0} resolved relationships. ${topology.unresolved?.length ?? 0} unresolved references. ${topology.overrides?.length ?? 0} manual overrides.`}
+          lowContrast
+          hideCloseButton
+        />
+      ) : null}
+      {topology?.unresolved?.[0] ? <p className="helper">{topology.unresolved[0].message} {topology.unresolved[0].override_snippet ? `Override: ${topology.unresolved[0].override_snippet}` : ""}</p> : null}
+      {topology?.relationships?.[0]?.reasons?.length ? <p className="helper">Why Nami linked these services: {topology.relationships[0].reasons.join(". ")}</p> : null}
+      {topology?.notes?.[0] ? <p className="helper">{topology.notes[0]}</p> : null}
+      {topology?.not_scanned?.length ? <p className="helper">{topology.not_scanned.length} repositories have no local checkout, so their relationships were not scanned.</p> : null}
       {view === "cluster" ? (
         <ClusterView
           repos={repos}

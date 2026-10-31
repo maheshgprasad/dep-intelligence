@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 REVIEW_STAGES: list[tuple[str, str]] = [
-    ("resolve_change", "Resolve change"),
-    ("build_change_view", "Build change view"),
-    ("align_graph", "Align graph"),
-    ("calculate_impact", "Analyze impact"),
-    ("apply_policies", "Evaluate policies"),
-    ("collect_findings", "Collect findings"),
-    ("verify_findings", "Verify findings"),
-    ("gate_decision", "Make decision"),
-    ("write_report", "Write report"),
+    ("resolve_change", "Selecting the change"),
+    ("build_change_view", "Reading the change"),
+    ("align_graph", "Checking dependency evidence"),
+    ("calculate_impact", "Finding affected services"),
+    ("apply_policies", "Checking project rules"),
+    ("collect_findings", "Collecting evidence"),
+    ("verify_findings", "Running verification"),
+    ("gate_decision", "Making the Gate decision"),
+    ("write_report", "Writing the report"),
 ]
 
 STAGE_INDEX = {stage: index for index, (stage, _label) in enumerate(REVIEW_STAGES)}

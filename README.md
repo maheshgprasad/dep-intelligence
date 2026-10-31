@@ -23,7 +23,20 @@ Dashboard: http://127.0.0.1:3002
 
 Startup loads the last files under `output/`. It does not rebuild graphs or watch `graph.db`. The dashboard reads a small application state from `GET /api/app-state`. `GET /api/snapshot` remains for compatibility and still returns the full analysis payload.
 
-The normal flow is **Refresh intelligence**, **Review change**, **Explore impact**, **Architecture**, **Repository health**, and **Research**. Refresh intelligence rebuilds repository graphs, commit history, temporal evidence, the cluster graph, and contracts. **Run repository health scan** is separate: packages, updates, OSV advisories, coverage, and optional vendor checks. It does not rebuild the graph or run Boundary Gate.
+The normal flow is:
+
+1. Add repositories to `repos.txt`.
+2. Start Nami Trace.
+3. Refresh intelligence.
+4. Inspect architecture or impact.
+5. Review an actual change.
+6. Read Nami's explanation and Gate decision.
+7. Inspect validation and evidence if needed.
+8. Generate and export reports.
+
+Primary navigation is Overview, Review change, Impact explorer, Architecture, and Reports. Repository health and Research stay under More. Research is for evaluation. It does not replace a change review.
+
+Nami Trace is an explainable cross-repository change-intelligence and evidence-backed DevOps decision system. It helps teams understand what a change may affect, why, what should be verified, whether the change is ready to proceed, and what evidence supports that decision. Refresh intelligence rebuilds repository graphs, commit history, temporal evidence, the cluster graph, and contracts. **Run repository health scan** is separate: packages, updates, OSV advisories, coverage, and optional vendor checks. It does not rebuild the graph or run Boundary Gate.
 
 Nami Rank Module ranks downstream files. A rank is not a probability and it does not block a change by itself. Nami Boundary Gate reviews an actual change and can pass, warn, block, or return incomplete. High rank alone does not block, and temporal-only evidence alone does not block.
 
