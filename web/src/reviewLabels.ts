@@ -40,6 +40,8 @@ export const SOURCE_LABELS: Record<string, string> = {
   verification_command: "Verification command",
   policy: "Project rule",
   LLM: "Model suggestion",
+  generated_topology: "Generated topology",
+  deployment_topology: "Deployment configuration",
 };
 
 export const EVIDENCE_QUALITY: Record<string, string> = {

@@ -172,13 +172,13 @@ def test_exports_include_validation_and_commentary() -> None:
     assert payload["gate_decision"] == "block"
     assert payload["reproducibility"]["gate_input_hash"] != payload["reproducibility"]["report_hash"]
     text = "\n".join(pdf_lines(payload))
-    for phrase in ("Nami explanation", "Gate Decision Validation", "Safety checks", "Counterfactual", "Evidence"):
+    for phrase in ("Nami explanation", "Decision logic validation", "Safety checks", "Counterfactual", "Evidence"):
         assert phrase in text
     pdf = render_text_pdf(pdf_lines(payload))
-    assert b"Gate Decision Validation" in pdf
+    assert b"Decision logic validation" in pdf
     assert b"Nami explanation" in pdf
     markdown = render_markdown(report)
-    assert "## Gate decision validation" in markdown
+    assert "## Decision logic validation" in markdown
     assert "## Nami explanation" in markdown
     package = build_zip(report["review_id"], payload, report)
     with zipfile.ZipFile(io.BytesIO(package)) as archive:

@@ -39,6 +39,9 @@ def export_json(output_dir: Path, review_id: str) -> dict[str, Any]:
     return payload
 
 
+EXPORT_RENDERER = "decision-logic-1"
+
+
 def ensure_export(output_dir: Path, review_id: str, kind: str) -> Path:
     """Return a cached export file. kind is json, pdf, markdown, or zip."""
     report = read_review(output_dir, review_id)
@@ -50,6 +53,7 @@ def ensure_export(output_dir: Path, review_id: str, kind: str) -> Path:
     payload = canonical_export(report, manifest if isinstance(manifest, dict) else {}, feedback if isinstance(feedback, dict) else {})
     token = {
         "report_hash": payload["reproducibility"]["report_hash"],
+        "renderer": EXPORT_RENDERER,
         "feedback": [item.get("created_at") for item in (feedback or {}).get("items") or []] if isinstance(feedback, dict) else [],
     }
     cache = directory / "exports"
@@ -174,10 +178,10 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
             commentary.get("summary") or "",
             "Why this matters",
             commentary.get("why_it_matters") or "",
-            "What to do next",
-            commentary.get("next_action") or "",
-            commentary.get("validation_comment") or "",
         ])
+        if not (payload.get("required_actions") or []):
+            lines.extend(["What to do next", commentary.get("next_action") or ""])
+        lines.append(commentary.get("validation_comment") or "")
     else:
         lines.append("No explanation was recorded.")
     lines.extend([
@@ -186,7 +190,7 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     ])
     required = payload.get("required_actions") or []
     lines.extend([f"- {item.get('title')}: {item.get('description')}" for item in required] or ["None."])
-    lines.extend(["", "Gate Decision Validation"])
+    lines.extend(["", "Decision logic validation"])
     lines.extend(_validation_lines(payload.get("gate_validation") or {}))
     lines.extend([
         "",
@@ -227,6 +231,10 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     for item in payload.get("limitations") or []:
         lines.append(f"- {item}")
     lines.extend([
+        "",
+        "How this result was produced",
+        "Change view, evidence collection, evidence sufficiency, inference, Boundary Gate, independent validation, commentary.",
+        "Commentary does not change the Gate decision.",
         "",
         "Reproducibility",
         "Gate input fingerprint. Integrity fingerprint, not digital signature.",

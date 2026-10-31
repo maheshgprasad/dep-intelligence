@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ from dep_intel.app_state import cross_service_relationships
 from dep_intel.config import Settings
 from dep_intel.graph_models import CODE_SYMBOL, EVENT_CONTRACT, GRPC_CONTRACT, HTTP_CONTRACT, UNRESOLVED, Snapshot
 from dep_intel.reporting.models import STATUS_LABELS
-from dep_intel.review_store import list_reviews
+from dep_intel.review_store import list_reviews, read_review
 from dep_intel.store import read_json
 
 CONTRACTS = {HTTP_CONTRACT, GRPC_CONTRACT, EVENT_CONTRACT}
@@ -108,22 +109,105 @@ def reviews_for(settings: Settings, service: str = "", repository: str = "", lim
         decision = str(row.get("decision") or "").lower()
         if decision in counts:
             counts[decision] += 1
+    explained = [_explain_review(settings, row) for row in bounded]
     return {
         "total_considered": len(matched),
         "included": len(bounded),
+        "explained": len(explained),
         "counts": counts,
-        "reviews": [
-            {
-                "review_id": row.get("review_id"),
-                "decision": row.get("decision"),
-                "service": row.get("service"),
-                "repository": row.get("repository"),
-                "completed_at": row.get("completed_at"),
-            }
-            for row in bounded
-        ],
-        "note": "Review counts describe Nami Gate outcomes and are not a software-quality score.",
+        "reviews": explained,
+        "note": "Review counts describe Nami Gate outcomes and are not a software-quality score. Each review below states why that outcome was reached and which stored evidence supports it.",
     }
+
+
+_SOURCES = {
+    "diff": "Code change",
+    "CRG": "Code dependency graph",
+    "cluster_graph": "Cross-service dependency graph",
+    "OpenAPI": "API specification",
+    "git_history": "Repository history",
+    "verification_command": "Verification command",
+    "policy": "Project rule",
+    "NRM": "Nami Rank",
+    "LLM": "Model suggestion",
+}
+_VALIDATION = {
+    "validated": "Decision logic validated. The stored evidence and configured rules reproduced the same Gate result. This is not a proof of the production outcome.",
+    "validated_with_limitations": "Decision logic validated with limitations. The Gate result was reproduced, but an optional check could not be completed.",
+    "failed": "Decision validation failed. Do not rely on this decision until the mismatch is reviewed.",
+}
+
+
+def with_review_explanations(settings: Settings, document: dict[str, Any]) -> dict[str, Any]:
+    """Add why, evidence, and validation to review rows that only stored a count."""
+    activity = document.get("review_activity") if isinstance(document.get("review_activity"), dict) else {}
+    reviews = activity.get("reviews") if isinstance(activity.get("reviews"), list) else []
+    if reviews and all(isinstance(item, dict) and item.get("what_happened") for item in reviews):
+        return document
+    identity = document.get("identity") if isinstance(document.get("identity"), dict) else {}
+    if document.get("scope") == "repository":
+        refreshed = reviews_for(settings, service=str(identity.get("service") or ""), repository=str(identity.get("repository") or ""))
+    else:
+        refreshed = reviews_for(settings)
+    copy = dict(document)
+    copy["review_activity"] = refreshed
+    return copy
+
+
+def _explain_review(settings: Settings, row: dict[str, Any]) -> dict[str, Any]:
+    report = read_review(settings.output_dir, str(row.get("review_id") or "")) or {}
+    commentary = report.get("commentary") if isinstance(report.get("commentary"), dict) else {}
+    assessment = report.get("assessment") if isinstance(report.get("assessment"), dict) else {}
+    validation = report.get("gate_validation") if isinstance(report.get("gate_validation"), dict) else {}
+    status = str(validation.get("status") or "")
+    happened = _plain(commentary.get("summary") or assessment.get("summary") or "")
+    why = _plain(commentary.get("why_it_matters") or "")
+    if why == happened:
+        why = ""
+    if not happened and not why:
+        happened = "This stored review does not include an explanation of the Gate result."
+    evidence = []
+    catalog = report.get("evidence_catalog") if isinstance(report.get("evidence_catalog"), list) else []
+    for item in catalog:
+        if not isinstance(item, dict):
+            continue
+        statement = _plain(item.get("statement") or item.get("summary") or "")
+        if not statement:
+            continue
+        evidence.append({"source": _SOURCES.get(str(item.get("source") or ""), "Stored evidence"), "what": statement})
+        if len(evidence) >= 3:
+            break
+    if not evidence:
+        findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            statement = _plain(finding.get("claim") or finding.get("title") or "")
+            if not statement:
+                continue
+            evidence.append({"source": _SOURCES.get(str(finding.get("source") or ""), "Stored evidence"), "what": statement})
+            if len(evidence) >= 3:
+                break
+    repository = str(row.get("repository") or "")
+    return {
+        "review_id": row.get("review_id"),
+        "decision": row.get("decision"),
+        "service": row.get("service"),
+        "repository": Path(repository).name if repository else "",
+        "completed_at": row.get("completed_at"),
+        "headline": _plain(commentary.get("headline") or assessment.get("headline") or ""),
+        "what_happened": happened,
+        "why_it_matters": why,
+        "next_action": _plain(commentary.get("next_action") or assessment.get("recommended_next_step") or ""),
+        "validation_status": status,
+        "validation": _plain(commentary.get("validation_comment") or _VALIDATION.get(status) or "Decision validation was not recorded for this stored review."),
+        "evidence": evidence,
+    }
+
+
+def _plain(value: Any) -> str:
+    text = re.sub(r"/(?:home|tmp|var|Users)/\S+", lambda match: Path(match.group(0)).name, str(value or ""))
+    return " ".join(text.split())[:400]
 
 
 def architecture_of(settings: Settings, snapshot: Snapshot, service_id: str) -> dict[str, Any]:

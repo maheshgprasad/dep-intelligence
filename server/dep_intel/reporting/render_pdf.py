@@ -36,13 +36,15 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
     summary = document.get("executive_summary") or {}
     scope = document.get("scope")
     canvas.title(str(summary.get("headline") or "Intelligence report"))
-    canvas.muted("Cluster report" if scope == "cluster" else "Repository report")
+    canvas.muted("Workspace intelligence report" if scope == "cluster" else "Repository intelligence report")
     canvas.status_line("Readiness", str(summary.get("readiness_label") or "Partial"), str(summary.get("readiness") or ""))
     canvas.gap(4)
     canvas.paragraph(str(summary.get("summary") or ""))
     generated = document.get("generated_at") or ""
     graph = (document.get("reproducibility") or {}).get("graph_version") or ""
     canvas.muted(f"Generated {generated}. Graph {graph}.")
+    canvas.muted("This report describes published Nami intelligence. It is not a Boundary Gate decision for a specific change.")
+    _attention(canvas, document)
 
     canvas.section("Intelligence status")
     status = document.get("intelligence_status") or {}
@@ -55,6 +57,11 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
     else:
         _repository(canvas, document)
 
+    canvas.section("How to interpret this report")
+    canvas.bullet("Dependency reach is not a probability of failure.")
+    canvas.bullet("Historical change association does not prove a structural dependency.")
+    canvas.bullet("Workspace and repository readiness is not a Boundary Gate decision.")
+    canvas.bullet("Missing or unscanned data is reported separately from clean results.")
     canvas.section("Limitations")
     limitations = [str(item) for item in document.get("limitations") or []]
     if limitations:
@@ -80,6 +87,15 @@ def render_report_pdf(document: dict[str, Any]) -> bytes:
     canvas.gap(4)
     canvas.muted("Integrity fingerprint; not a cryptographic signature.")
     return _document(canvas.finish())
+
+
+def _attention(canvas: _Canvas, document: dict[str, Any]) -> None:
+    items = (document.get("recommendations") or [])[:5]
+    if not items:
+        return
+    canvas.section("What needs attention")
+    for item in items:
+        canvas.bullet(f"{item.get('title')}. {item.get('reason')}")
 
 
 def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
@@ -137,6 +153,12 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
             canvas.muted(note or "Relationship rows were truncated.")
     else:
         canvas.muted("No cross-service relationships are recorded.")
+    provenance = relation.get("provenance") or {}
+    if provenance:
+        canvas.section("Relationship provenance")
+        for key, count in provenance.items():
+            canvas.kv(str(key), count)
+        canvas.muted("Provenance counts come from stored relationship records.")
 
     canvas.section("Contracts")
     table = (document.get("contracts") or {}).get("table") or []
@@ -265,6 +287,28 @@ def _reviews(canvas: _Canvas, activity: dict[str, Any]) -> None:
     canvas.kv("Block", counts.get("block", 0))
     canvas.kv("Incomplete", counts.get("incomplete", 0))
     canvas.muted(str(activity.get("note") or "Review counts describe Nami Gate outcomes and are not a software-quality score."))
+    reviews = activity.get("reviews") or []
+    if not reviews:
+        canvas.muted("No stored reviews matched this report.")
+        return
+    for item in reviews:
+        decision = str(item.get("decision") or "unknown").upper()
+        title = item.get("headline") or item.get("service") or item.get("review_id") or "Review"
+        canvas.paragraph(f"{decision}. {title}")
+        if item.get("what_happened"):
+            canvas.muted(str(item["what_happened"]))
+        if item.get("why_it_matters"):
+            canvas.muted(f"Why it matters: {item['why_it_matters']}")
+        evidence = item.get("evidence") or []
+        if evidence:
+            for entry in evidence:
+                canvas.bullet(f"{entry.get('source') or 'Stored evidence'}: {entry.get('what') or ''}")
+        else:
+            canvas.muted("No evidence statements were stored with this review.")
+        if item.get("validation"):
+            canvas.muted(str(item["validation"]))
+        if item.get("next_action"):
+            canvas.muted(f"Next: {item['next_action']}")
 
 
 def _observations(canvas: _Canvas, document: dict[str, Any]) -> None:

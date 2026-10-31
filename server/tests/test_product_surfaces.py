@@ -19,6 +19,12 @@ def test_ui_routes_stay_registered() -> None:
     assert nav.index('href="/reports"') < nav.index('menuLinkName="More"')
 
 
+def test_failed_validation_copy_does_not_claim_validated_evidence() -> None:
+    text = (ROOT / "web/src/components/NamiCommentary.tsx").read_text(encoding="utf-8")
+    assert 'if (status === "failed") return "Generated from stored Nami evidence; decision validation failed"' in text
+    assert 'if (status === "validated") return "Based on validated Nami evidence"' in text
+
+
 def test_api_families_stay_registered() -> None:
     paths = {getattr(route, "path", "") for route in app.routes}
     assert any(path.startswith("/api/review") for path in paths)

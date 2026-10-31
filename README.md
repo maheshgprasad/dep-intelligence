@@ -28,11 +28,11 @@ The normal flow is:
 1. Add repositories to `repos.txt`.
 2. Start Nami Trace.
 3. Refresh intelligence.
-4. Inspect architecture or impact.
-5. Review an actual change.
-6. Read Nami's explanation and Gate decision.
-7. Inspect validation and evidence if needed.
-8. Generate and export reports.
+4. Inspect service topology or repository structure.
+5. Explore potential impact.
+6. Review an actual change with Boundary Gate.
+7. Read Nami's explanation, actions, and validation proof.
+8. Generate and share reports.
 
 Primary navigation is Overview, Review change, Impact explorer, Architecture, and Reports. Repository health and Research stay under More. Research is for evaluation. It does not replace a change review.
 

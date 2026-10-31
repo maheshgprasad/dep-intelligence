@@ -68,6 +68,8 @@ def generate_report(
         "service_id": service or None,
         "graph_version": snapshot.version,
         "created_at": generated_at,
+        "readiness": (document.get("executive_summary") or {}).get("readiness") or "",
+        "readiness_label": (document.get("executive_summary") or {}).get("readiness_label") or "",
         "nami_version": NAMI_TRACE_VERSION,
         "report_schema_version": SCHEMA_VERSION,
     }

@@ -168,7 +168,7 @@ export function ResearchPage({ snapshot }: { snapshot: AppState | null }) {
 function GateCorpusSummary({ corpus }: { corpus: GateValidationCorpus }) {
   const metrics = corpus.metrics;
   const rates = [
-    ["Decision accuracy", metrics.decision_accuracy],
+    ["Decision accuracy on this corpus", metrics.decision_accuracy],
     ["False-block rate", metrics.false_block_rate],
     ["False-pass rate", metrics.false_pass_rate],
     ["Invariant pass rate", metrics.invariant_pass_rate],

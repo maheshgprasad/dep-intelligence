@@ -45,17 +45,19 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
       <NamiDataTable
         title="Recent reports"
         columns={[
-          { key: "scope", header: "Scope" },
-          { key: "service", header: "Repository" },
+          { key: "scope", header: "Type" },
+          { key: "service", header: "Target" },
+          { key: "readiness", header: "Readiness" },
           { key: "generated_at", header: "Generated" },
-          { key: "graph_version", header: "Graph version" },
+          { key: "graph_version", header: "Snapshot" },
           { key: "open", header: "Actions", render: (row) => <Button kind="ghost" size="sm" onClick={() => navigate(`/reports/${row.report_id}`)}>Open</Button> },
         ]}
         rows={reports.map((item) => ({
           id: item.report_id,
           report_id: item.report_id,
-          scope: item.scope === "cluster" ? "Cluster report" : "Repository report",
+          scope: item.scope === "cluster" ? "Workspace report" : "Repository report",
           service: item.service || "Entire workspace",
+          readiness: item.readiness_label || "Not recorded",
           generated_at: item.generated_at,
           graph_version: item.graph_version,
         }))}

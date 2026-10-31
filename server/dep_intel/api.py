@@ -785,10 +785,13 @@ def list_intelligence_reports(limit: int = 20) -> dict:
 def get_intelligence_report(report_id: str) -> dict:
     from dep_intel.reporting.store import read_report
 
-    document = read_report(Settings.load().output_dir, report_id)
+    settings = Settings.load()
+    document = read_report(settings.output_dir, report_id)
     if document is None:
         raise HTTPException(status_code=404, detail={"code": "report_not_found"})
-    return document
+    from dep_intel.reporting.collect import with_review_explanations
+
+    return with_review_explanations(settings, document)
 
 
 def _intelligence_export(report_id: str, kind: str, media_type: str) -> FileResponse:

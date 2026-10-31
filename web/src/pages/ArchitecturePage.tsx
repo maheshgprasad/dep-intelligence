@@ -175,7 +175,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
     <div className="stack-gap">
       <PageHeader
         title="Architecture"
-        description={view === "cluster" ? "Services that call each other. This is separate from the structure inside one repository." : "Internal structure, history, and diagnostics for one repository."}
+        description={view === "cluster" ? "See confirmed calls and contracts between analyzed services." : "Explore internal symbols, dependencies, and diagnostics for one repository."}
         breadcrumbs={view === "repository" && service ? [{ label: "Architecture", href: "/architecture?view=cluster" }, { label: selected?.name || service }] : undefined}
       />
       <ContentSwitcher
@@ -187,8 +187,8 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
           setParams(next, { replace: true });
         }}
       >
-        <Switch>Cluster</Switch>
-        <Switch>Repository</Switch>
+        <Switch>Service topology</Switch>
+        <Switch>Repository structure</Switch>
       </ContentSwitcher>
       {topologyNote ? <InlineNotification kind="info" title="Topology status" subtitle={topologyNote} lowContrast hideCloseButton /> : null}
       {topology ? (
@@ -254,7 +254,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
               <Column sm={4} md={2} lg={4}><p className="stat-label"><Term term="Bridge symbols" definition="Symbols that sit between subsystems." /></p><p className="stat-value">{bridges.length}</p></Column>
               <Column sm={4} md={2} lg={4}><p className="stat-label">Highly connected symbols</p><p className="stat-value">{hubs.length}</p></Column>
             </Grid>
-            <p className="helper">These groups are inside this repository. Calls between services are on the Cluster view.</p>
+            <p className="helper">These groups are inside this repository. Calls between services are on Service topology.</p>
             <h2 className="section-title">Subsystems</h2>
             <RecordTable repository={selected?.name || ""} rows={communities} emptyTitle="No subsystems" emptyDescription="This repository graph has no community summary." preferred={["repository", "symbol", "label", "size", "symbols", "cohesion"]} />
             <h2 className="section-title">Important connectors</h2>
@@ -437,7 +437,7 @@ function ClusterView({
   error: string;
   onOpen: (serviceId: string) => void;
 }) {
-  if (error) return <InlineNotification kind="error" title="Cluster is unavailable" subtitle={error} lowContrast hideCloseButton />;
+  if (error) return <InlineNotification kind="error" title="Service topology is unavailable" subtitle={error} lowContrast hideCloseButton />;
   if (!map) return <InlineLoading description="Loading the service cluster" />;
   const clusters = map.clusters;
   const rows = map.relationships.map((item) => relationshipRow(item, repos));

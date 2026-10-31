@@ -9,7 +9,7 @@ export function DecisionReason({ rules, evidence }: { rules: DecisionRule[]; evi
   return (
     <section className="stack-gap">
       <div className="inline-help">
-        <h2 className="section-title">Why this decision?</h2>
+        <h2 className="section-title">Why Nami made this decision</h2>
         <Toggletip align="bottom">
           <ToggletipButton label="What evidence quality means">
             <Information />
@@ -25,7 +25,7 @@ export function DecisionReason({ rules, evidence }: { rules: DecisionRule[]; evi
       {triggered.map((rule) => {
         const supporting = evidence.filter((item) => rule.evidence_refs.includes(item.evidence_id));
         return (
-          <Tile key={rule.rule_id}>
+          <Tile key={rule.rule_id} id={`rule-${rule.rule_id}`}>
             <div className="decision-kicker">
               <strong>{rule.title}</strong>
               <Tag type={rule.blocks ? "red" : "warm-gray"}>{rule.blocks ? "Blocking" : "Review"}</Tag>

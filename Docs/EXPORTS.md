@@ -56,7 +56,7 @@ The CLI keeps exit code 0 for pass and warn, 1 for block, and 2 for incomplete. 
 
 ## PDF
 
-The PDF is a text report: decision, Nami explanation, required actions, gate decision validation, why the decision was made, evidence, counter-evidence, suppressed claims, affected services, verification, limitations, and reproducibility. Ranking internals are not the first page. Markdown includes `Nami explanation` and `Gate decision validation`.
+The PDF is a text report: decision, Nami explanation, required actions, decision logic validation, why the decision was made, evidence, counter-evidence, suppressed claims, affected services, verification, limitations, and reproducibility. Ranking internals are not the first page. Markdown includes `Nami explanation` and `Decision logic validation`. Decision logic validation confirms consistency with stored evidence and configured rules. It does not predict the production outcome. `gate_input_hash` fingerprints the Gate inputs and excludes commentary. `report_hash` fingerprints the exported report and may include commentary. Neither is a signature.
 
 ## Impact and research
 

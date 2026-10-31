@@ -138,9 +138,6 @@ export function ReviewDetailPage() {
     );
   }
 
-  const decision = report.gate.decision.toLowerCase();
-  const kind = decision === "pass" ? "success" : decision === "block" ? "error" : "warning";
-
   return (
     <div className="stack-gap">
       <PageHeader
@@ -159,21 +156,27 @@ export function ReviewDetailPage() {
       <ActionList actions={report.actions ?? []} />
       <GateValidationSummary validation={report.gate_validation} />
       <DecisionReason rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
-      <GateChecklist items={report.gate_checklist ?? []} />
       <Tile>
-        <p className="section-title">Affected services</p>
-        <p>{report.impact.affected_services.length ? report.impact.affected_services.join(", ") : "No other service was identified from the stored evidence."}</p>
+        <p className="section-title">Affected scope</p>
+        <p>{report.impact.affected_services.length ? `${report.impact.affected_services.length} service${report.impact.affected_services.length === 1 ? "" : "s"} affected: ${report.impact.affected_services.join(", ")}` : "No other service was identified from the stored evidence."}</p>
+        <p className="helper">{report.impact.ranked_candidates?.length ?? 0} downstream files ranked. See the Impact tab for the ranked files. A rank is not a probability of failure.</p>
         {report.impact.affected_services[0] ? <Link to={`/architecture?service=${encodeURIComponent(report.impact.affected_services[0])}`}>Open architecture</Link> : null}
         {" "}
         {report.impact.affected_services[0] ? <Link to={`/impact?service=${encodeURIComponent(report.impact.affected_services[0])}`}>Explore impact</Link> : null}
       </Tile>
+      <GateChecklist items={report.gate_checklist ?? []} />
       <EvidenceList evidence={report.evidence_catalog ?? []} counter={report.counter_evidence ?? []} suppressed={report.suppressed_findings ?? []} />
-      <InlineNotification kind={report.gate.reason_codes?.includes("cancelled") ? "info" : kind} title={report.gate.reason_codes?.includes("cancelled") ? "Review cancelled" : decision.toUpperCase()} subtitle={reviewExplanation(report)} lowContrast hideCloseButton />
-      <dl className="detail-list">
-        <div><dt>Review mode</dt><dd>{modeText(report)}</dd></div>
-        <div><dt>Graph alignment</dt><dd>{alignmentText(report.change.graph_alignment)}</dd></div>
-        <div><dt>Change</dt><dd>{sourceText(report.change.source?.kind)}</dd></div>
-      </dl>
+      {report.gate.reason_codes?.includes("cancelled") ? <InlineNotification kind="info" title="Review cancelled" subtitle="This review stopped before a policy decision." lowContrast hideCloseButton /> : null}
+      {report.diagnostics.some((item) => item.severity === "error") ? <InlineNotification kind="error" title="Review processing issue" subtitle={report.diagnostics.find((item) => item.severity === "error")?.message || "A processing issue was recorded."} lowContrast hideCloseButton /> : null}
+      <Accordion>
+        <AccordionItem title="Review details">
+          <dl className="detail-list">
+            <div><dt>Review mode</dt><dd>{modeText(report)}</dd></div>
+            <div><dt>Graph alignment</dt><dd>{alignmentText(report.change.graph_alignment)}</dd></div>
+            <div><dt>Change</dt><dd>{sourceText(report.change.source?.kind)}</dd></div>
+          </dl>
+        </AccordionItem>
+      </Accordion>
       {report.diagnostics.filter((item) => item.severity !== "error").map((item) => (
         <p key={item.code} className="helper">{hideFilePaths(item.message)}</p>
       ))}
@@ -182,8 +185,8 @@ export function ReviewDetailPage() {
       <Grid>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Changed files</p><p className="stat-value">{report.changed_files.length}</p></Tile></Column>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Affected services</p><p className="stat-value">{report.impact.affected_services.length}</p></Tile></Column>
-        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Findings</p><p className="stat-value">{report.findings.length}</p></Tile></Column>
-        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Blocking findings</p><p className="stat-value">{report.gate.blocking_findings.length}</p></Tile></Column>
+        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Review findings</p><p className="stat-value">{report.findings.length}</p></Tile></Column>
+        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Blocking issues</p><p className="stat-value">{report.gate.blocking_findings.length}</p></Tile></Column>
         <Column sm={4} md={4} lg={4}><Tile><p className="stat-label">Verification</p><p className="stat-value">{report.verification.length ? `${passed(report)} / ${report.verification.length} passed` : "Not run"}</p></Tile></Column>
       </Grid>
       <Tabs>
@@ -394,16 +397,6 @@ function evidenceLabel(origin: string): string {
 
 function formatScore(value: number | undefined): string {
   return typeof value === "number" ? value.toFixed(3) : "—";
-}
-
-function reviewExplanation(report: ReviewReport): string {
-  if (report.gate.reason_codes?.includes("cancelled")) return "This review stopped before a policy decision.";
-  const errors = report.diagnostics.filter((item) => item.severity === "error").map((item) => hideFilePaths(item.message)).filter(Boolean);
-  const mode = modeText(report);
-  const alignment = alignmentText(report.change.graph_alignment);
-  if (errors.length) return `${mode} ${alignment} ${errors.join(" ")}`;
-  if (report.changed_files.length === 0) return `${mode} ${alignment} This source had no diff, so nothing was ranked and no finding was produced.`;
-  return `${mode} ${alignment}`;
 }
 
 function modeText(report: ReviewReport): string {
