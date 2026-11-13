@@ -6,7 +6,10 @@ import re
 from pathlib import Path
 
 _ROUTE = re.compile(r"""(?:@[\w.]+\.|\.)(get|post|put|patch|delete|head|options)\(\s*["'](/[^"']*)["']""", re.IGNORECASE)
-_CLIENT = re.compile(r"""(?:axios|fetch|httpx|requests|http|https)\.(?:get|post|put|patch|delete|request)\(\s*["']([^"']+)["']""", re.IGNORECASE)
+_CLIENT = re.compile(
+    r"""(?:axios|fetch|httpx|requests|http|https)\.(get|post|put|patch|delete|request)\(\s*["']([^"']+)["']""",
+    re.IGNORECASE,
+)
 _SERVICES = re.compile(r"""SERVICES\s*=\s*\(([^)]{0,500})\)""")
 _URL = re.compile(r"""["'](https?://[^"'\s]+)["']""")
 _SKIP = {"node_modules", ".git", "dist", "output", ".venv", "coverage"}
@@ -33,8 +36,8 @@ def scan(root: Path) -> dict[str, list[dict[str, str]]]:
         relative = str(path.relative_to(root))
         for method, route in _ROUTE.findall(text):
             routes.append({"method": method.upper(), "path": route, "file": relative})
-        for target in _CLIENT.findall(text):
-            calls.append({"method": "", "url": target, "file": relative})
+        for method, target in _CLIENT.findall(text):
+            calls.append({"method": method.upper(), "url": target, "file": relative})
         if _SERVICES.search(text):
             notes.append(f"{relative} builds http://{{service}} from a service list. Nami does not turn those names into providers.")
         if path.name == ".env" or path.suffix == ".env":
