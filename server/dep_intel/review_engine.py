@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 from dep_intel.cluster_manifest import ImpactSettings
 from dep_intel.config import Settings
-from dep_intel.graph_models import Snapshot
+from dep_intel.graph_models import Snapshot, node_label
 from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
 from dep_intel.impact import analyze
 from dep_intel.review_context import collect_context
@@ -450,8 +450,10 @@ def _name_paths(snapshot: Snapshot, ranked: list[dict[str, Any]]) -> None:
             target = snapshot.nodes.get(step.get("target"))
             named.append({
                 **step,
-                "source_name": source.qualified_name if source is not None else step.get("source"),
-                "target_name": target.qualified_name if target is not None else step.get("target"),
+                "source_name": node_label(source) if source is not None else "",
+                "target_name": node_label(target) if target is not None else "",
+                "source_file": source.file_path if source is not None else "",
+                "target_file": target.file_path if target is not None else "",
             })
         structural["path"] = named
 

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 
+from dep_intel.paths import bounded_child
 from dep_intel.store import read_json, write_json
 
 _SAFE = re.compile(r"[^a-z0-9]+")
@@ -19,7 +21,10 @@ def new_report_id() -> str:
 
 
 def report_dir(output_dir: Path, report_id: str) -> Path:
-    return output_dir / "reports" / report_id
+    directory = bounded_child(output_dir / "reports", report_id)
+    if directory is None:
+        raise ValueError("invalid report id")
+    return directory
 
 
 def fingerprint(document: dict[str, Any]) -> str:
@@ -41,15 +46,27 @@ def save_report(output_dir: Path, document: dict[str, Any], manifest: dict[str, 
 
 
 def read_report(output_dir: Path, report_id: str) -> dict[str, Any] | None:
-    payload = read_json(report_dir(output_dir, report_id), "report.json")
+    payload = _read_report_file(output_dir, report_id, "report.json")
     if not isinstance(payload, dict) or payload.get("schema") != "nami.intelligence.report":
         return None
     return payload
 
 
 def read_manifest(output_dir: Path, report_id: str) -> dict[str, Any]:
-    payload = read_json(report_dir(output_dir, report_id), "manifest.json")
+    payload = _read_report_file(output_dir, report_id, "manifest.json")
     return payload if isinstance(payload, dict) else {}
+
+
+def _read_report_file(output_dir: Path, report_id: str, filename: str) -> Any:
+    """Read one stored report file. The id cannot escape output/reports."""
+    base = os.path.abspath(output_dir / "reports")
+    candidate = os.path.normpath(os.path.join(base, report_id, filename))
+    prefix = base if base.endswith(os.sep) else base + os.sep
+    if candidate.startswith(prefix):
+        path = Path(candidate)
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return None
 
 
 def list_reports(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:

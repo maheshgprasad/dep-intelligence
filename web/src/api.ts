@@ -152,6 +152,8 @@ export type ImpactRow = {
     target?: string;
     source_name?: string;
     target_name?: string;
+    source_file?: string;
+    target_file?: string;
     evidence?: { status?: string; file?: string; line?: number; source?: string };
   }[];
 };

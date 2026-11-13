@@ -88,22 +88,29 @@ def history_slug(settings: Settings, *, service_id: str = "", repository: str = 
     return "", "repository-to-history mapping could not be resolved."
 
 
-def resolve_repository_path(settings: Settings, repository: str) -> Path:
-    """Map a slug or existing directory to a checkout. The path stays on the server."""
-    candidate = Path(repository)
-    if candidate.is_dir():
-        return candidate
-    if repository and not candidate.is_absolute():
-        rooted = settings.root / repository
-        if rooted.is_dir():
-            return rooted
-    record = load_index(settings).resolve(service_id=repository, repository=repository)
+def resolve_repository_path(settings: Settings, repository: str) -> Path | None:
+    """Map a known slug or repos.txt identity to a checkout.
+
+    The request value is compared with server-side identities. It is never
+    opened, resolved, or passed to git as a path.
+    """
+    text = (repository or "").strip()
+    if not text:
+        return None
+    record = load_index(settings).resolve(service_id=text, repository=text, checkout=text)
     if record and record.checkout and Path(record.checkout).is_dir():
         return Path(record.checkout)
-    checkout = settings.output_dir / "checkouts" / repository
-    if checkout.is_dir():
-        return checkout
-    return candidate
+    from dep_intel.sources import load_repos
+
+    for repo in load_repos(settings):
+        if text not in {repo.raw, repo.slug, repo.name}:
+            continue
+        if repo.path is not None and repo.path.is_dir():
+            return repo.path
+        checkout = settings.output_dir / "checkouts" / repo.slug
+        if checkout.is_dir():
+            return checkout
+    return None
 
 
 def github_name(value: str) -> str:

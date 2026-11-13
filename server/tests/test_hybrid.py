@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -268,6 +269,9 @@ def test_cross_repo_lag_requires_structural_path() -> None:
         provider_name="memory",
     )
     users = next(row for row in hybrid["candidates"] if row["name"] == "listUsers")
+    labels = [label for step in users["structural"]["path"] for label in (step["source_name"], step["target_name"])]
+    assert {"listUsers", "validate", "POST /api/auth/validate"} <= set(labels)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", label) is None for label in labels)
     other_keys = [row["name"] for row in hybrid["candidates"]]
     assert "other" not in other_keys
     kinds = {item["evidence_kind"] for item in users["temporal"]["temporal_path_evidence"]}
