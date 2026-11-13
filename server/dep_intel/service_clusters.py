@@ -132,6 +132,57 @@ def cluster_for_service(snapshot: Snapshot | None, service_id: str) -> dict[str,
     return None
 
 
+def cluster_downstream(snapshot: Snapshot | None, service_id: str) -> dict[str, Any]:
+    """Confirmed consumers of a clustered service.
+
+    A consumer calls this service, or calls another consumer of it. The walk
+    stays inside the cluster. It does not invent file ranks, and a service
+    outside every cluster returns an empty result.
+    """
+    empty = {"cluster_id": "", "services": [], "items": []}
+    if snapshot is None or not service_id:
+        return empty
+    rows = confirmed_relationships(snapshot)
+    cluster = cluster_for_service(snapshot, service_id)
+    if cluster is None:
+        return empty
+    members = set(cluster["services"])
+    incoming: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        provider = str(row.get("to_service") or "")
+        consumer = str(row.get("from_service") or "")
+        if provider in members and consumer in members and provider != consumer:
+            incoming.setdefault(provider, []).append(row)
+    seen = {service_id}
+    queue = [service_id]
+    items: list[dict[str, Any]] = []
+    while queue:
+        current = queue.pop(0)
+        for row in incoming.get(current, []):
+            consumer = str(row.get("from_service") or "")
+            if not consumer or consumer in seen:
+                continue
+            seen.add(consumer)
+            direct = current == service_id
+            items.append({
+                "service_id": consumer,
+                "direct": direct,
+                "via": "" if direct else current,
+                "contract": row.get("contract") or "",
+                "kind": row.get("kind") or "",
+                "caller_symbol": row.get("caller_symbol") or "",
+                "caller_file": row.get("caller_file") or "",
+                "provenance": row.get("provenance") or "",
+            })
+            queue.append(consumer)
+    items.sort(key=lambda item: (not item["direct"], item["service_id"]))
+    return {
+        "cluster_id": cluster["cluster_id"],
+        "services": [item["service_id"] for item in items],
+        "items": items,
+    }
+
+
 def cluster_id_for(services: list[str]) -> str:
     canonical = "\n".join(sorted(services))
     digest = hashlib.sha256(canonical.encode()).hexdigest()[:12]

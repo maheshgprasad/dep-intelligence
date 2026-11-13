@@ -225,6 +225,14 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     lines.extend(["", "Affected services"])
     services = (payload.get("impact") or {}).get("affected_services") or []
     lines.extend([f"- {item}" for item in services] or ["None."])
+    lines.extend(["", "Cluster downstream"])
+    downstream = ((payload.get("impact") or {}).get("cluster_downstream") or {}).get("items") or []
+    if downstream:
+        for item in downstream:
+            path = "direct consumer" if item.get("direct") else f"through {item.get('via') or 'another service'}"
+            lines.append(f"- {item.get('service_id')}: {path}; {item.get('contract') or 'confirmed call'}")
+    else:
+        lines.append("None.")
     lines.extend(["", "Verification"])
     verification = payload.get("verification") or []
     lines.extend([f"- {item.get('id')}: {item.get('status')} exit {item.get('exit_code')}" for item in verification] or ["Not evaluated."])
@@ -399,6 +407,7 @@ def _public_impact(impact: dict[str, Any]) -> dict[str, Any]:
     return {
         "affected_services": impact.get("affected_services") or [],
         "ranked_candidates": candidates,
+        "cluster_downstream": impact.get("cluster_downstream") or {"cluster_id": "", "services": [], "items": []},
         "score_note": impact.get("score_note") or "Ranking scores are not probabilities.",
         "graph_version": impact.get("graph_version"),
     }

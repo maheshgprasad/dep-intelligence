@@ -6,7 +6,7 @@ import hashlib
 from typing import Any
 
 from dep_intel.cluster_manifest import ClusterManifest, resolved_repo
-from dep_intel.contracts import ContractModel, HttpCall, HttpRoute, build_contract_model
+from dep_intel.contracts import ContractModel, HttpCall, HttpRoute, build_contract_model, match_template
 from dep_intel.graph_models import (
     CODE_SYMBOL,
     CONSUMED_BY,
@@ -175,10 +175,14 @@ def repo_for(manifest: ClusterManifest, service_id: str):
 
 
 def http_bridges(partitions, model: ContractModel, overlay, bridges, diagnostics) -> None:
-    route_nodes: dict[tuple[str, str, str, str], GraphNode] = {}
+    grouped: dict[tuple[str, str, str, str], list[HttpRoute]] = {}
     for route in model.routes:
+        grouped.setdefault((route.service_id, route.method, route.path, route.version), []).append(route)
+    route_nodes: dict[tuple[str, str, str, str], GraphNode] = {}
+    for identity_key, routes in grouped.items():
+        route = _prefer_route(partitions, routes)
         node = _http_node(route)
-        route_nodes[(route.service_id, route.method, route.path, route.version)] = node
+        route_nodes[identity_key] = node
         overlay[node.key] = node
         handler, quality = _bind_handler(partitions.get(route.service_id), route)
         if handler is None:
@@ -261,11 +265,12 @@ def expected_bridges(partitions, manifest, overlay, bridges, diagnostics) -> Non
             if relation.kind != "http" or not relation.symbol:
                 continue
             provider = relation.provider or service.id
-            identity = f"http:{relation.version}:{relation.method.upper()}:{relation.path}"
-            key = symbol_key(provider, "", identity, HTTP_CONTRACT)
-            overlay.setdefault(
-                key,
-                GraphNode(
+            method = relation.method.upper()
+            identity = f"http:{relation.version}:{method}:{relation.path}"
+            node = _contract_for_operation(overlay, provider, method, relation.path, relation.version)
+            if node is None:
+                key = symbol_key(provider, "", identity, HTTP_CONTRACT)
+                node = GraphNode(
                     key=key,
                     category=HTTP_CONTRACT,
                     service_id=provider,
@@ -274,13 +279,13 @@ def expected_bridges(partitions, manifest, overlay, bridges, diagnostics) -> Non
                     file_path="",
                     kind=HTTP_CONTRACT,
                     metadata={"identity": identity, "declared": True},
-                ),
-            )
+                )
+                overlay[node.key] = node
             symbol, quality = resolve_symbol(partitions.get(relation.consumer), relation.symbol)
             if symbol is None:
                 diagnostics.append(Diagnostic(code="expected_unresolved", message=f"Expected consumer {relation.consumer}:{relation.symbol} did not resolve", service_id=relation.consumer))
                 continue
-            bridges.append(_bridge(symbol.key, key, CONSUMES_HTTP, "declared", symbol.file_path, symbol.line_start or 0, identity, quality))
+            bridges.append(_bridge(symbol.key, node.key, CONSUMES_HTTP, "declared", symbol.file_path, symbol.line_start or 0, identity, quality))
 
 
 def annotate_bounds(partitions: dict[str, Partition], files_by_service: dict[str, dict[str, str]]) -> None:
@@ -337,6 +342,45 @@ def named_symbols(partition: Partition, file: str, name: str) -> list[GraphNode]
         if node.name == name or node.qualified_name == name or node.qualified_name.endswith(f"::{name}"):
             found.append(node)
     return found
+
+
+def _prefer_route(partitions, routes: list[HttpRoute]) -> HttpRoute:
+    """One contract per operation. A resolved handler beats a second declared copy."""
+
+    def rank(route: HttpRoute) -> tuple[int, int, int]:
+        handler, _quality = _bind_handler(partitions.get(route.service_id), route)
+        source = {"extracted": 0, "openapi": 1, "declared": 2}.get(route.source, 3)
+        return (0 if handler is not None else 1, 0 if route.file else 1, source)
+
+    return min(routes, key=rank)
+
+
+def _contract_by_identity(overlay: dict[str, GraphNode], service_id: str, identity: str) -> GraphNode | None:
+    for node in overlay.values():
+        if node.category == HTTP_CONTRACT and node.service_id == service_id and node.metadata.get("identity") == identity:
+            return node
+    return None
+
+
+def _contract_for_operation(overlay: dict[str, GraphNode], service_id: str, method: str, path: str, version: str) -> GraphNode | None:
+    identity = f"http:{version}:{method}:{path}"
+    exact = _contract_by_identity(overlay, service_id, identity)
+    if exact is not None:
+        return exact
+    matches = []
+    for node in overlay.values():
+        if node.category != HTTP_CONTRACT or node.service_id != service_id:
+            continue
+        recorded = str(node.metadata.get("identity") or "")
+        prefix = f"http:{version}:{method}:"
+        if not recorded.startswith(prefix):
+            continue
+        matched, _static = match_template(path, recorded[len(prefix):])
+        if matched:
+            matches.append(node)
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _http_node(route: HttpRoute) -> GraphNode:

@@ -17,6 +17,8 @@ A workspace, service cluster, or repository report is not a Boundary Gate decisi
 
 Workspace human exports list the detected service groups and the standalone repositories. A standalone repository has no confirmed cross-service relationship in that stored snapshot. Service Cluster human exports show the stored cluster label, cluster id, and membership. A review target outside that membership is an external review target. It does not add the service to the cluster.
 
+On screen, a workspace or service cluster report shows internal cross-service relationships as a table with Consumer, Contract, Provider, Provenance, and Resolution. Contracts are a table with Provider, Contract, and Consumers. A repository report uses the same table layout for contracts provided, contracts consumed, upstream dependencies, and downstream dependents. The dashboard paginates those rows. Markdown and PDF use the same columns. The table shows the rows stored on the report. It does not rebuild the graph when the report is opened.
+
 Nami Rank ranks stored evidence. It is not itself a structural dependency fact. When a warning comes from repository history, the human report names that history as the evidence and names Nami Rank only as ranking context.
 
 ## Point in time

@@ -69,6 +69,8 @@ Exit `0` for pass or warn, `1` for block, and `2` for incomplete or a configurat
 
 `/review` is Review change. The source control shows only the fields for the selected source. Fast uses the published graph. Exact runs as a background job at `/review/<id>`. The result leads with pass, warn, block, or incomplete, then Findings, Impact, Verification, and Change. Feedback is recorded from the finding detail and does not change ranking scores.
 
+When the reviewed service belongs to a service cluster, Impact lists confirmed cluster consumers. Direct callers come first, then callers reached through those services. The walk stays inside the cluster. A service in a cluster with no callers, and a service outside every cluster, show an empty list. These rows are service reach. They are not Nami Rank file candidates, they are not added to findings, and they do not change pass, warn, block, or incomplete. Markdown and JSON exports include the same list under Cluster downstream.
+
 The older static `review_code` scan and the standalone API-dependency report remain available to MCP and tests. They are not dashboard pages. Package, advisory, and coverage scans live under Repository health and are not part of Refresh intelligence.
 
 ## Explainability

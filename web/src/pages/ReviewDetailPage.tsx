@@ -35,6 +35,57 @@ import { StatusTag } from "../components/StatusTag";
 import { hideFilePaths, repoSymbol, symbolName } from "../labels";
 
 
+function downstreamItems(report: ReviewReport) {
+  return report.impact.cluster_downstream?.items ?? [];
+}
+
+function downstreamTarget(report: ReviewReport) {
+  return downstreamItems(report)[0]?.service_id || report.impact.affected_services[0] || "";
+}
+
+function scopeText(report: ReviewReport) {
+  const downstream = downstreamItems(report);
+  if (downstream.length) {
+    const names = downstream.map((item) => item.service_id).join(", ");
+    return `${downstream.length} downstream service${downstream.length === 1 ? "" : "s"} in this cluster: ${names}`;
+  }
+  if (report.impact.cluster_downstream?.cluster_id) {
+    return "This repository is in a service cluster. No confirmed downstream consumer was found.";
+  }
+  if (report.impact.affected_services.length) {
+    const count = report.impact.affected_services.length;
+    return `${count} service${count === 1 ? "" : "s"} affected: ${report.impact.affected_services.join(", ")}`;
+  }
+  return "No other service was identified from the stored evidence.";
+}
+
+function ClusterDownstream({ items }: { items: NonNullable<ReviewReport["impact"]["cluster_downstream"]>["items"] }) {
+  const rows = items ?? [];
+  if (!rows.length) return null;
+  return (
+    <div className="stack-gap">
+      <p className="helper">Confirmed consumers in this service cluster. A direct consumer calls the changed service. Another row calls one of those consumers. These are not file ranks and they do not change the gate decision.</p>
+      <NamiDataTable
+        columns={[
+          { key: "service_id", header: "Downstream service" },
+          { key: "reach", header: "Reach" },
+          { key: "contract", header: "Contract" },
+          { key: "provenance", header: "Evidence" },
+        ]}
+        rows={rows.map((item) => ({
+          id: item.service_id,
+          service_id: item.service_id,
+          reach: item.direct ? "Direct consumer" : `Through ${item.via || "another service"}`,
+          contract: item.contract || "Confirmed call",
+          provenance: item.provenance || "confirmed",
+        }))}
+        emptyTitle="No downstream services"
+        emptyDescription="No confirmed consumer is downstream of this service."
+      />
+    </div>
+  );
+}
+
 const FEEDBACK = [
   ["accepted", "Useful"],
   ["false_positive", "False positive"],
@@ -161,11 +212,11 @@ export function ReviewDetailPage() {
       <DecisionReason rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <Tile>
         <p className="section-title">Affected scope</p>
-        <p>{report.impact.affected_services.length ? `${report.impact.affected_services.length} service${report.impact.affected_services.length === 1 ? "" : "s"} affected: ${report.impact.affected_services.join(", ")}` : "No other service was identified from the stored evidence."}</p>
-        <p className="helper">{report.impact.ranked_candidates?.length ?? 0} downstream files ranked. See the Impact tab for the ranked files. A rank is not a probability of failure.</p>
-        {report.impact.affected_services[0] ? <Link to={`/architecture?service=${encodeURIComponent(report.impact.affected_services[0])}`}>Open architecture</Link> : null}
+        <p>{scopeText(report)}</p>
+        <p className="helper">{report.impact.ranked_candidates?.length ?? 0} downstream files ranked. Confirmed cluster consumers stay listed when no file rank crosses the service boundary. A rank is not a probability of failure.</p>
+        {downstreamTarget(report) ? <Link to={`/architecture?service=${encodeURIComponent(downstreamTarget(report))}`}>Open architecture</Link> : null}
         {" "}
-        {report.impact.affected_services[0] ? <Link to={`/impact?service=${encodeURIComponent(report.impact.affected_services[0])}`}>Explore impact</Link> : null}
+        {downstreamTarget(report) ? <Link to={`/impact?service=${encodeURIComponent(downstreamTarget(report))}`}>Explore impact</Link> : null}
       </Tile>
       <GateChecklist items={report.gate_checklist ?? []} />
       <EvidenceList evidence={report.evidence_catalog ?? []} counter={report.counter_evidence ?? []} suppressed={report.suppressed_findings ?? []} />
@@ -187,7 +238,7 @@ export function ReviewDetailPage() {
       {feedbackError ? <InlineNotification kind="error" title="Error" subtitle={feedbackError} lowContrast hideCloseButton /> : null}
       <Grid>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Changed files</p><p className="stat-value">{report.changed_files.length}</p></Tile></Column>
-        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Affected services</p><p className="stat-value">{report.impact.affected_services.length}</p></Tile></Column>
+        <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Affected services</p><p className="stat-value">{downstreamItems(report).length || report.impact.affected_services.length}</p></Tile></Column>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Review findings</p><p className="stat-value">{report.findings.length}</p></Tile></Column>
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Blocking issues</p><p className="stat-value">{report.gate.blocking_findings.length}</p></Tile></Column>
         <Column sm={4} md={4} lg={4}><Tile><p className="stat-label">Verification</p><p className="stat-value">{report.verification.length ? `${passed(report)} / ${report.verification.length} passed` : "Not run"}</p></Tile></Column>
@@ -259,6 +310,7 @@ export function ReviewDetailPage() {
             />
           </TabPanel>
           <TabPanel>
+            <ClusterDownstream items={report.impact.cluster_downstream?.items ?? []} />
             <p className="helper">Nami Rank orders downstream files using current dependency structure and historical change evidence. It does not decide whether this change is blocked.</p>
             <NamiDataTable
               columns={[

@@ -542,6 +542,11 @@ export type ReviewReport = {
   contract_changes: { kind: string; method: string; path: string; breaking: boolean; message: string; file_path?: string }[];
   impact: {
     affected_services: string[];
+    cluster_downstream?: {
+      cluster_id?: string;
+      services?: string[];
+      items?: { service_id: string; direct?: boolean; via?: string; contract?: string; kind?: string; caller_symbol?: string; provenance?: string }[];
+    };
     ranked_candidates: {
       service_id: string;
       file_path: string;
