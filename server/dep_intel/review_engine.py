@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from dep_intel.cluster_manifest import ImpactSettings
+from dep_intel.service_clusters import cluster_downstream
 from dep_intel.config import Settings
 from dep_intel.graph_models import Snapshot, node_label
 from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
@@ -286,10 +287,12 @@ class ReviewEngine:
                     lines = hunks[0].get("changed_new_lines") or hunks[0].get("changed_old_lines") or []
                     line = lines[0] if lines else None
                 roots.append({"service_id": service_id, "file_path": path, "line_start": line, "qualified_name": path, "key": "", "topology": "previous" if item.get("change_type") == "deleted" else "current"})
+        downstream = cluster_downstream(snapshot, service_id)
         if snapshot is None or (self.cluster is None and not exact):
             return {
                 "affected_services": [],
                 "ranked_candidates": [],
+                "cluster_downstream": downstream,
                 "diagnostics": [diagnostic("graph_missing", "No cluster snapshot is available. Structural impact was not calculated.", severity="warning")],
                 "temporal_cutoff": as_of,
                 "graph_version": "",
@@ -330,6 +333,7 @@ class ReviewEngine:
         return {
             "affected_services": services,
             "ranked_candidates": ranked[:limit],
+            "cluster_downstream": downstream,
             "diagnostics": diagnostics,
             "temporal_cutoff": as_of,
             "graph_version": graph_version,
@@ -643,7 +647,10 @@ def _summary_text(change: dict, gate: dict, impact: dict) -> str:
     names = ", ".join(item.get("new_path") or item.get("old_path") or "" for item in files[:8]) or "no files"
     services = ", ".join((impact.get("affected_services") or [])[:8]) or "none"
     decision = (gate.get("decision") or "incomplete").upper()
-    return f"{decision}. Changed {names}. Downstream services in the ranked evidence: {services}. {SCORE_NOTE}"
+    cluster = impact.get("cluster_downstream") or {}
+    confirmed = ", ".join(cluster.get("services") or [])
+    cluster_note = f" Confirmed cluster downstream: {confirmed}." if confirmed else ""
+    return f"{decision}. Changed {names}. Downstream services in the ranked evidence: {services}. {SCORE_NOTE}{cluster_note}"
 
 
 def _manifest(review_id: str, report: dict, config: dict, mode: str) -> dict[str, Any]:

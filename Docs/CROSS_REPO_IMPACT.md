@@ -68,6 +68,8 @@ Optional contract declarations:
 
 `expected` entries are declared relationships. They stay distinct from edges extracted from source. Unknown schema versions, duplicate ids, ambiguous repository matches, weights outside `[0,1]`, missing services, and paths that escape a repository are errors. Duplicate repository slugs are reported instead of overwriting outputs.
 
+One HTTP operation is one contract node. Identity is `http:{version}:{METHOD}:{path}`. When a manifest declaration, an OpenAPI operation, and an extracted route name the same operation, the copy that binds a handler is kept. A declared caller path that matches exactly one route template, such as `/v1/tenants/demo-tenant` for `/v1/tenants/{tenant_id}`, attaches to that route. It does not create a second contract. The published graph keeps the previous nodes until intelligence is refreshed.
+
 Relative client URLs stay unresolved unless a `client_bindings` entry or a static base URL identifies one provider. The same route on two hosts matches only the host that resolves.
 
 ## Extraction

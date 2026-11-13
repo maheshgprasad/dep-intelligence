@@ -776,3 +776,89 @@ def test_fixture_manifest_links_list_users() -> None:
     names = {item.name for item in impact.affected}
     assert "listUsers" in names
     assert any("/api/users" in item.name for item in impact.affected)
+
+
+def test_declared_and_openapi_copies_collapse_to_the_bound_contract() -> None:
+    from dep_intel.cluster_manifest import ClusterManifest
+    from dep_intel.contracts import ContractModel, HttpRoute
+    from dep_intel.cross_repo_graph import expected_bridges, http_bridges
+
+    handler = _node("auth-service", "validate", file="common/runtime.py")
+    caller = _node("user-service", "validate_key", file="common/runtime.py")
+    partitions = {
+        "auth-service": Partition(service_id="auth-service", repository="auth", nodes={handler.key: handler}),
+        "user-service": Partition(service_id="user-service", repository="user", nodes={caller.key: caller}),
+    }
+    model = ContractModel(routes=[
+        HttpRoute("auth-service", "POST", "/v1/validate", "", "openapi.yaml", 1, "validate", "mapped", 1, "openapi"),
+        HttpRoute("auth-service", "POST", "/v1/validate", "", "", 0, "common/runtime.py::validate", "declared", 0, "declared"),
+    ])
+    overlay: dict[str, GraphNode] = {}
+    bridges: list[GraphEdge] = []
+    http_bridges(partitions, model, overlay, bridges, [])
+    contracts = [node for node in overlay.values() if node.category == HTTP_CONTRACT]
+    assert len(contracts) == 1
+    assert contracts[0].file_path == "openapi.yaml"
+    manifest = ClusterManifest.model_validate({
+        "schema_version": 1,
+        "services": [
+            {"id": "auth-service", "repository": "auth"},
+            {
+                "id": "user-service",
+                "repository": "user",
+                "expected": [{
+                    "kind": "http",
+                    "consumer": "user-service",
+                    "provider": "auth-service",
+                    "method": "POST",
+                    "path": "/v1/validate",
+                    "symbol": "common/runtime.py::validate_key",
+                }],
+            },
+        ],
+    })
+    expected_bridges(partitions, manifest, overlay, bridges, [])
+    assert len([node for node in overlay.values() if node.category == HTTP_CONTRACT]) == 1
+    assert any(edge.relation == CONSUMES_HTTP and edge.target == contracts[0].key and edge.source == caller.key for edge in bridges)
+
+
+def test_concrete_caller_path_reuses_the_route_template() -> None:
+    from dep_intel.cluster_manifest import ClusterManifest
+    from dep_intel.contracts import ContractModel, HttpRoute
+    from dep_intel.cross_repo_graph import expected_bridges, http_bridges
+
+    partitions = {
+        "tenant-service": Partition(service_id="tenant-service", repository="tenant"),
+        "gateway": Partition(service_id="gateway", repository="gateway", nodes={
+            _node("gateway", "load_tenant", file="common/runtime.py").key: _node("gateway", "load_tenant", file="common/runtime.py")
+        }),
+    }
+    caller = next(iter(partitions["gateway"].nodes.values()))
+    model = ContractModel(routes=[
+        HttpRoute("tenant-service", "GET", "/v1/tenants/{tenant_id}", "", "openapi.yaml", 1, "get_tenant", "mapped", 1, "openapi"),
+    ])
+    overlay: dict[str, GraphNode] = {}
+    bridges: list[GraphEdge] = []
+    http_bridges(partitions, model, overlay, bridges, [])
+    manifest = ClusterManifest.model_validate({
+        "schema_version": 1,
+        "services": [
+            {"id": "tenant-service", "repository": "tenant"},
+            {
+                "id": "gateway",
+                "repository": "gateway",
+                "expected": [{
+                    "kind": "http",
+                    "consumer": "gateway",
+                    "provider": "tenant-service",
+                    "method": "GET",
+                    "path": "/v1/tenants/demo-tenant",
+                    "symbol": "common/runtime.py::load_tenant",
+                }],
+            },
+        ],
+    })
+    expected_bridges(partitions, manifest, overlay, bridges, [])
+    contracts = [node for node in overlay.values() if node.category == HTTP_CONTRACT]
+    assert [node.name for node in contracts] == ["GET /v1/tenants/{tenant_id}"]
+    assert any(edge.relation == CONSUMES_HTTP and edge.target == contracts[0].key and edge.source == caller.key for edge in bridges)
