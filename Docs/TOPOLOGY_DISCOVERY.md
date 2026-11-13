@@ -1,6 +1,6 @@
 # Topology discovery
 
-`repos.txt` is the repository allowlist. It does not declare which services call each other.
+`repos.txt` is the source of truth for repositories, stable service ids, and declared cluster membership. It does not declare which services call each other. `cluster-manifest.json` is generated from `repos.txt`. Topology discovery does not define cluster membership.
 
 Discovery reads deterministic sources from those repositories: package names, OpenAPI operations, Kubernetes Service names, Compose service names, HTTP routes, and absolute client URLs. A relative URL such as `POST /api/auth/validate` stays unresolved. Sharing a route path with another service is not enough to name a provider.
 
@@ -12,7 +12,7 @@ aliases:
     service: payment-service
 ```
 
-`cluster-manifest.json` remains a compatibility input for client bindings and host aliases. It is not required when a host already matches an analyzed service.
+A generated `cluster-manifest.json` lists services and declared clusters. An older hand-written manifest can still supply client bindings and host aliases until it is replaced. It is not required when a host already matches an analyzed service. Discovery writes relationship evidence. It does not move a service between clusters.
 
 Artifacts:
 

@@ -70,7 +70,7 @@ def build_workspace_document(
     provider_count = int(topology.get("unique_unresolved_reference_count") or 0)
     gaps = _gaps(stale, topology, history_missing, report_health, failed)
     recommendations = _recommendations(stale, topology, contracts, report_health, history_missing)
-    limitations = _limitations(stale, topology, history_missing, report_health, failed, relation, scope)
+    limitations = _limitations(stale, topology, history_missing, report_health, failed, relation, scope, groups.get("membership_source") or "inferred")
     narrative = _narrative(services, relation, contracts, topology, stale, history_ready, scope, cluster)
     shown = relation["items"]
     identity: dict[str, Any] = {
@@ -86,6 +86,7 @@ def build_workspace_document(
             "cluster_label": cluster["label"],
             "services": cluster["services"],
             "graph_version": snapshot.version,
+            "membership_source": cluster.get("membership_source") or groups.get("membership_source") or "inferred",
         })
     cluster_items = groups["clusters"] if scope == "workspace" else ([cluster] if cluster else [])
     standalone = groups["standalone"] if scope == "workspace" else []
@@ -115,6 +116,7 @@ def build_workspace_document(
             "unresolved_count": provider_count if topology.get("status") != "not_scanned" else 0,
             "failed": failed,
         },
+        "membership_source": groups.get("membership_source") or "inferred",
         "service_clusters": {"count": len(cluster_items), "items": [_public_cluster(item) for item in cluster_items if item]},
         "standalone": standalone,
         "services": services,
@@ -184,6 +186,7 @@ def _public_cluster(item: dict[str, Any]) -> dict[str, Any]:
         "service_count": item.get("service_count"),
         "relationship_count": item.get("relationship_count"),
         "services": item.get("services") or [],
+        "membership_source": item.get("membership_source") or "inferred",
     }
 
 
@@ -302,15 +305,21 @@ def _recommendations(stale, topology, contracts, health, history_missing) -> lis
     return items[:6]
 
 
-def _limitations(stale, topology, history_missing, health, failed, relation, scope: str) -> list[str]:
+def _limitations(stale, topology, history_missing, health, failed, relation, scope: str, membership_source: str = "inferred") -> list[str]:
+    if membership_source == "declared":
+        membership = "Service cluster membership is declared in repos.txt. Confirmed relationships do not add or remove members. A service cluster is not a Kubernetes cluster."
+    else:
+        membership = "A service cluster is a connected component of confirmed cross-service relationships. It is not a Kubernetes cluster."
     items = [
         "This report describes published intelligence. It is not a Boundary Gate decision.",
         "Historical change association is not a structural dependency.",
-        "A service cluster is a connected component of confirmed cross-service relationships. It is not a Kubernetes cluster.",
+        membership,
         "Automatic protobuf, gRPC, and broker discovery are not claimed.",
         "Nami Rank is not executed for this report.",
     ]
-    if scope == "service_cluster":
+    if scope == "service_cluster" and membership_source == "declared":
+        items.append("Membership is the cluster declared in repos.txt. A later review does not add services.")
+    elif scope == "service_cluster":
         items.append("Membership is the confirmed component stored with this report. A later review does not add services.")
     for service in stale:
         items.append(f"{service} graph is out of date.")
@@ -332,7 +341,12 @@ def _limitations(stale, topology, history_missing, health, failed, relation, sco
 def _narrative(services, relation, contracts, topology, stale, history_ready, scope: str, cluster: dict[str, Any] | None) -> str:
     if not services:
         return "No published service intelligence is available."
-    if cluster:
+    if cluster and cluster.get("membership_source") == "declared":
+        lead = (
+            f"{cluster['label']} contains {len(services)} services declared in repos.txt, "
+            f"with {relation['total']} confirmed internal calls."
+        )
+    elif cluster:
         lead = f"{cluster['label']} contains {len(services)} services connected by {relation['total']} confirmed cross-service calls."
     else:
         lead = f"The workspace contains {len(services)} analyzed services"

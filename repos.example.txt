@@ -1,0 +1,20 @@
+# Nami Trace repository configuration
+#
+# Copy this file to repos.txt, then replace the examples with your repositories.
+# The name on the left is the stable service id.
+# The right side is a GitHub URL, an absolute path, or a path relative to this file's project.
+#
+# Cluster membership is declared here.
+# Do not edit cluster membership in cluster-manifest.json.
+# Optional provider aliases belong in nami-topology.yaml.
+
+[cluster:example-platform]
+api-gateway = https://github.com/example/api-gateway
+auth-service = https://github.com/example/auth-service
+
+[cluster:example-messaging]
+email-service = ../services/email-service
+sms-service = ../services/sms-service
+
+[standalone]
+utility = https://github.com/example/utility

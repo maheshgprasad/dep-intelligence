@@ -848,10 +848,12 @@ def service_clusters() -> dict:
                 "service_count": item["service_count"],
                 "relationship_count": item["relationship_count"],
                 "services": item["services"],
+                "membership_source": item.get("membership_source") or groups.get("membership_source") or "inferred",
             }
             for item in groups["clusters"]
         ],
         "standalone": groups["standalone"],
+        "membership_source": groups.get("membership_source") or "inferred",
         "confirmed_calls": groups["confirmed_calls"],
         "provider_discovery": {
             "status": discovery["status"],

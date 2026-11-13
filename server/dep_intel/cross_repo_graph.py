@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from dep_intel.cluster_manifest import ClusterManifest, resolved_repo
+from dep_intel.cluster_manifest import ClusterManifest, declared_membership, resolved_repo
 from dep_intel.contracts import ContractModel, HttpCall, HttpRoute, build_contract_model, match_template
 from dep_intel.graph_models import (
     CODE_SYMBOL,
@@ -53,10 +53,11 @@ def assemble(partitions, manifest, files_by_service, *, version: str, generated_
         bridges=bridges,
         diagnostics=diagnostics,
         fingerprints=fingerprints,
+        declared_clusters=declared_membership(manifest),
     )
 
 
-def index_snapshot(*, version, generated_at, partitions, overlay, bridges, diagnostics, fingerprints) -> Snapshot:
+def index_snapshot(*, version, generated_at, partitions, overlay, bridges, diagnostics, fingerprints, declared_clusters=None, contract_alias_hash: str = "") -> Snapshot:
     nodes: dict[str, GraphNode] = {}
     edges: list[GraphEdge] = []
     for part in partitions.values():
@@ -110,6 +111,8 @@ def index_snapshot(*, version, generated_at, partitions, overlay, bridges, diagn
         revision_vector=revision,
         diagnostics=diagnostics,
         bridge_fingerprints=fingerprints,
+        declared_clusters=declared_clusters,
+        contract_alias_hash=contract_alias_hash,
     )
 
 
@@ -118,6 +121,7 @@ def snapshot_from_published(payload: dict[str, Any]) -> Snapshot:
     overlay = {node["key"]: GraphNode.from_dict(node) for node in payload.get("overlay_nodes") or []}
     bridges = [GraphEdge.from_dict(item) for item in payload.get("edges") or []]
     diagnostics = [Diagnostic(**item) for item in payload.get("diagnostics") or []]
+    declared = payload.get("declared_clusters") if "declared_clusters" in payload else None
     return index_snapshot(
         version=payload["version"],
         generated_at=payload.get("generated_at") or "",
@@ -126,6 +130,8 @@ def snapshot_from_published(payload: dict[str, Any]) -> Snapshot:
         bridges=bridges,
         diagnostics=diagnostics,
         fingerprints=list(payload.get("bridge_fingerprints") or []),
+        declared_clusters=declared,
+        contract_alias_hash=str(payload.get("contract_alias_hash") or ""),
     )
 
 
@@ -133,6 +139,8 @@ def published_dict(snapshot: Snapshot) -> dict[str, Any]:
     partition_keys = {key for part in snapshot.partitions.values() for key in part.nodes}
     body = snapshot.to_dict()
     body["overlay_nodes"] = [node.to_dict() for key, node in snapshot.nodes.items() if key not in partition_keys]
+    body["declared_clusters"] = snapshot.declared_clusters
+    body["contract_alias_hash"] = snapshot.contract_alias_hash
     return body
 
 

@@ -176,10 +176,12 @@ def cross_service_relationships(snapshot: Snapshot | None, *, limit: int | None 
                 "relationships": item["relationship_count"],
                 "cluster_id": item["cluster_id"],
                 "label": item["label"],
+                "membership_source": item.get("membership_source") or groups.get("membership_source") or "inferred",
             }
             for item in groups["clusters"]
         ],
         "individuals": [item["service_id"] for item in groups["standalone"]],
+        "membership_source": groups.get("membership_source") or "inferred",
     }
 
 

@@ -15,9 +15,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dep_intel.paths import contained
+from dep_intel.repo_config import legacy_service_id, valid_identifier
 from dep_intel.sources import RepoRef
 
 SUPPORTED_SCHEMA = 1
+SUPPORTED_SCHEMAS = {1, 2}
+GENERATED_SCHEMA = 2
 log = logging.getLogger("nami.cluster")
 
 
@@ -122,7 +125,7 @@ class ServiceDecl(BaseModel):
     @field_validator("id")
     @classmethod
     def explicit_id(cls, value: str) -> str:
-        if not value or not value[0].isalpha() or any(not (ch.isalnum() or ch in "-_") for ch in value):
+        if not valid_identifier(value):
             raise ValueError(f"service id {value!r} must be an explicit identifier, not a directory name")
         return value
 
@@ -190,13 +193,70 @@ class WorkerSettings(BaseModel):
     crg_sessions: int = Field(default=2, ge=1, le=8)
 
 
+class GeneratedManifestMetadata(BaseModel):
+    """Identity of a manifest produced from repos.txt. No clock is included."""
+
+    model_config = ConfigDict(extra="forbid")
+    generated_by: str
+    source: str
+    source_hash: str
+    membership: Literal["declared", "inferred"] = "inferred"
+
+
+class ClusterDecl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    services: list[str]
+
+    @field_validator("id")
+    @classmethod
+    def explicit_id(cls, value: str) -> str:
+        if not valid_identifier(value):
+            raise ValueError(f"cluster id {value!r} must be an explicit identifier")
+        return value
+
+    @field_validator("services")
+    @classmethod
+    def at_least_two(cls, value: list[str]) -> list[str]:
+        if len(value) < 2:
+            raise ValueError("a cluster must contain at least two services")
+        return value
+
+
 class ClusterManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: int
+    generated: GeneratedManifestMetadata | None = None
+    clusters: list[ClusterDecl] = Field(default_factory=list)
     services: list[ServiceDecl]
     impact: ImpactSettings = Field(default_factory=ImpactSettings)
     watch: WatchSettings = Field(default_factory=WatchSettings)
     workers: WorkerSettings = Field(default_factory=WorkerSettings)
+
+    @model_validator(mode="after")
+    def clusters_reference_services(self) -> "ClusterManifest":
+        known = {service.id for service in self.services}
+        seen_clusters: set[str] = set()
+        seen_services: dict[str, str] = {}
+        errors: list[str] = []
+        for cluster in self.clusters:
+            if cluster.id in seen_clusters:
+                errors.append(f"duplicate cluster id {cluster.id!r}")
+            seen_clusters.add(cluster.id)
+            listed: set[str] = set()
+            for service_id in cluster.services:
+                if service_id not in known:
+                    errors.append(f"cluster {cluster.id!r}: service {service_id!r} is not declared")
+                if service_id in listed:
+                    errors.append(f"cluster {cluster.id!r}: service {service_id!r} is listed more than once")
+                listed.add(service_id)
+                previous = seen_services.get(service_id)
+                if previous and previous != cluster.id:
+                    errors.append(f"service {service_id!r} belongs to both {previous!r} and {cluster.id!r}")
+                seen_services[service_id] = cluster.id
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
 
 
 def manifest_path(root: Path, override: str = "") -> Path | None:
@@ -234,8 +294,9 @@ def load_manifest(path: Path | None, repos: list[RepoRef], root: Path) -> tuple[
     if not isinstance(payload, dict):
         return None, [f"{path}: manifest must be a JSON object"]
     version = payload.get("schema_version")
-    if version != SUPPORTED_SCHEMA:
-        return None, [f"{path}: unsupported schema_version {version!r}; supported version is {SUPPORTED_SCHEMA}"]
+    if version not in SUPPORTED_SCHEMAS:
+        supported = ", ".join(str(item) for item in sorted(SUPPORTED_SCHEMAS))
+        return None, [f"{path}: unsupported schema_version {version!r}; supported versions are {supported}"]
     try:
         manifest = ClusterManifest.model_validate(payload)
     except Exception:
@@ -425,10 +486,37 @@ def manifest_from_repos(repos: list[RepoRef]) -> ClusterManifest:
 
 
 def _service_id(repo: RepoRef) -> str:
-    slug = repo.slug or "repo"
-    if slug[0].isalpha() and all(ch.isalnum() or ch in "-_" for ch in slug):
-        return slug
-    return f"repo-{slug}"
+    return legacy_service_id(repo)
+
+
+def declared_membership(manifest: ClusterManifest | None) -> list[dict[str, Any]] | None:
+    """Normalized cluster membership for a published snapshot.
+
+    ``None`` means membership is still derived from confirmed relationships.
+    A list, including an empty list, means ``repos.txt`` declared membership.
+    """
+    if manifest is None:
+        return None
+    mode = "inferred"
+    if manifest.generated is not None:
+        mode = manifest.generated.membership
+    elif manifest.clusters:
+        mode = "declared"
+    if mode != "declared":
+        return None
+    return [
+        {
+            "cluster_id": cluster.id,
+            "services": list(cluster.services),
+            "membership_source": "declared",
+        }
+        for cluster in manifest.clusters
+    ]
+
+
+def manifest_is_generated(payload: dict[str, Any]) -> bool:
+    generated = payload.get("generated")
+    return isinstance(generated, dict) and generated.get("generated_by") == "nami-trace" and bool(generated.get("source_hash"))
 
 
 def _unused_example(path: Path, repos: list[RepoRef], root: Path) -> bool:

@@ -449,11 +449,20 @@ function ClusterView({
         <Column sm={4} md={2} lg={4}><p className="stat-label">Separate repositories</p><p className="stat-value">{map.individuals.length}</p></Column>
       </Grid>
       {clusters.length === 0 ? (
-        <NamiEmptyState title="No service cluster" description="No service calls another service yet. Each repository can still be opened on its own." />
-      ) : clusters.map((cluster, index) => (
-        <section key={cluster.services.join("-")}>
-          <h2 className="section-title">{clusters.length === 1 ? "Service cluster" : `Service cluster ${index + 1}`}</h2>
-          <p className="helper">{`${cluster.services.length} services are connected by ${cluster.relationships} confirmed cross-service ${cluster.relationships === 1 ? "call" : "calls"}. Direction is kept on each call. Opening a service shows that repository’s internal structure.`}</p>
+        <NamiEmptyState
+          title="No service cluster"
+          description={map.membership_source === "declared"
+            ? "No service cluster is declared in repos.txt. Standalone repositories stay separate."
+            : "No service calls another service yet. Each repository can still be opened on its own."}
+        />
+      ) : clusters.map((cluster, index) => {
+        const declared = cluster.membership_source === "declared" || map.membership_source === "declared";
+        return (
+        <section key={cluster.cluster_id || cluster.services.join("-")}>
+          <h2 className="section-title">{declared && cluster.label ? cluster.label : clusters.length === 1 ? "Service cluster" : `Service cluster ${index + 1}`}</h2>
+          <p className="helper">{declared
+            ? `Membership source: Declared in repos.txt. ${cluster.services.length} services. ${cluster.relationships} confirmed internal ${cluster.relationships === 1 ? "call" : "calls"}. A call into another cluster stays outside this cluster.`
+            : `${cluster.services.length} services are connected by ${cluster.relationships} confirmed cross-service ${cluster.relationships === 1 ? "call" : "calls"}. Direction is kept on each call. Opening a service shows that repository’s internal structure.`}</p>
           <ul className="cluster-members">
             {cluster.services.map((serviceId) => (
               <li key={serviceId}>
@@ -462,7 +471,8 @@ function ClusterView({
             ))}
           </ul>
         </section>
-      ))}
+        );
+      })}
       <h2 className="section-title">Cross-service calls</h2>
       {map.truncated ? <p className="helper">Showing {rows.length} of {map.total}.</p> : null}
       <NamiDataTable

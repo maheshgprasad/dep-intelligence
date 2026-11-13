@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from dep_intel.service_clusters import membership_sentence, standalone_sentence
+
 from dep_intel.reporting.review_summary import human_validation_lines
 
 INTERPRETATION = "Workspace, Service Cluster, and Repository readiness describe intelligence completeness. They are not Boundary Gate decisions."
@@ -102,6 +104,24 @@ def render_markdown(document: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _cluster_scope_lines(source: str) -> list[str]:
+    if source == "declared":
+        return [
+            "Membership comes from repos.txt.",
+            "",
+            "Confirmed calls do not add or remove a member.",
+            "",
+            "Use the Workspace report for the complete repository allowlist.",
+        ]
+    return [
+        "This report contains one connected component of confirmed cross-service relationships.",
+        "",
+        "Repositories outside this component are not included.",
+        "",
+        "Use the Workspace report for the complete repository allowlist.",
+    ]
+
+
 def _scope_sections(document: dict[str, Any]) -> list[str]:
     scope = document.get("scope")
     workspace = document.get("workspace") or {}
@@ -117,11 +137,9 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
             f"Member services: {workspace.get('service_count')}",
             f"Confirmed internal calls: {workspace.get('relationship_count')}",
             "",
-            "This report contains one connected component of confirmed cross-service relationships.",
+            membership_sentence(str(identity.get("membership_source") or document.get("membership_source") or "inferred")),
             "",
-            "Repositories outside this component are not included.",
-            "",
-            "Use the Workspace report for the complete repository allowlist.",
+            *_cluster_scope_lines(str(identity.get("membership_source") or document.get("membership_source") or "inferred")),
             "",
             "## Cluster membership",
             "",
@@ -146,17 +164,21 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
             "",
         ])
         groups = ((document.get("service_clusters") or {}).get("items") or [])
+        source = str(document.get("membership_source") or "inferred")
         if groups:
-            lines.extend(["## Detected service clusters", ""])
+            heading = "Declared service clusters" if source == "declared" else "Detected service clusters"
+            lines.extend([f"## {heading}", ""])
             for item in groups:
                 lines.append(f"- {item.get('label') or 'Connected service group'}. {item.get('service_count')} services. {item.get('relationship_count')} confirmed calls.")
+            lines.append("")
+            lines.append(membership_sentence(source))
             lines.append("")
         standalone = document.get("standalone") or []
         if standalone:
             lines.extend([
                 "## Standalone repositories",
                 "",
-                "A standalone repository or service has no confirmed cross-service relationship in this stored snapshot.",
+                standalone_sentence(source),
                 "",
             ])
             for item in standalone:

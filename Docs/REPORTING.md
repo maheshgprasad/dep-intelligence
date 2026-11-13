@@ -5,17 +5,17 @@ Nami Trace reports four scopes. Workspace, service cluster, and repository repor
 | Scope | Contains |
 | --- | --- |
 | Workspace | Everything in the published snapshot |
-| Service Cluster | One connected component of confirmed service calls |
+| Service Cluster | One declared cluster from `repos.txt`, or one connected component when no clusters are declared |
 | Repository | One repository/service |
 | Change | One Boundary Gate review |
 
 Legacy API value `"cluster"` is an alias for Workspace. A stored report whose scope is `"cluster"` remains a workspace snapshot. It is not reinterpreted as a Service Cluster.
 
-Service Cluster is a Nami reporting and topology concept: a connected component of confirmed cross-service relationships. It is not a Kubernetes cluster. Membership uses confirmed contract calls only. Direction is ignored for connectivity and kept on each displayed call. A repository with no confirmed call is standalone. It stays in the workspace and can have its own repository report. It is not a one-node service cluster.
+Service Cluster is a Nami reporting concept. It is not a Kubernetes cluster. When `repos.txt` declares clusters, that membership is authoritative and a confirmed call does not add or remove a member. A call whose endpoints are in different declared clusters is cross-cluster. When `repos.txt` has no cluster sections, membership is still a connected component of confirmed cross-service relationships. Direction is ignored for that fallback and kept on each displayed call. A repository declared standalone, or left outside every component, stays in the workspace and can have its own repository report. It is not a one-node service cluster.
 
 A workspace, service cluster, or repository report is not a Boundary Gate decision. Workspace, Service Cluster, and Repository readiness describe intelligence completeness. Review counts inside the report are historical gate outcomes, not a quality score. Gate validation and commentary belong to a change review. They do not replace this report.
 
-Workspace human exports list the detected service groups and the standalone repositories. A standalone repository has no confirmed cross-service relationship in that stored snapshot. Service Cluster human exports show the stored cluster label, cluster id, and membership. A review target outside that membership is an external review target. It does not add the service to the cluster.
+Workspace human exports list the service groups and the standalone repositories. Declared membership says it came from `repos.txt`. Inferred membership says it came from confirmed relationships. A standalone repository is outside the declared clusters, or, in the inferred fallback, has no confirmed cross-service relationship in that stored snapshot. Service Cluster human exports show the stored cluster label, cluster id, membership source, and membership. A review target outside that membership is an external review target. It does not add the service to the cluster.
 
 On screen, a workspace or service cluster report shows internal cross-service relationships as a table with Consumer, Contract, Provider, Provenance, and Resolution. Contracts are a table with Provider, Contract, and Consumers. A repository report uses the same table layout for contracts provided, contracts consumed, upstream dependencies, and downstream dependents. The dashboard paginates those rows. Markdown and PDF use the same columns. The table shows the rows stored on the report. It does not rebuild the graph when the report is opened.
 

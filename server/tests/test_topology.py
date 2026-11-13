@@ -35,6 +35,17 @@ def test_relative_route_without_a_host_stays_unresolved() -> None:
     assert result["unresolved"][0]["path"] == "/api/auth/validate"
 
 
+def test_stable_service_id_alias_matches_the_repository_name() -> None:
+    result = resolve(
+        [{"service": "hvrcorp/uocp-billing-service"}],
+        [{"service": "hvrcorp/uocp-tenant-service", "method": "GET", "url": "http://billing:8009/v1/usage", "file": "common/runtime.py"}],
+        [{"alias": "billing", "service": "uocp-billing-service"}],
+        [],
+    )
+    assert result["unresolved"] == []
+    assert result["relationships"][0]["to"] == "hvrcorp/uocp-billing-service"
+
+
 def test_host_match_records_provenance() -> None:
     result = resolve(
         [{"service": "auth-service"}],

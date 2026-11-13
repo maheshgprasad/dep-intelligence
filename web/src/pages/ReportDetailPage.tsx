@@ -7,6 +7,13 @@ import { IntelligenceExportMenu } from "../components/IntelligenceExportMenu";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { PageHeader } from "../components/PageHeader";
 
+function membershipCopy(source: string | undefined): string {
+  if (source === "declared") {
+    return "Membership source: Declared in repos.txt. Confirmed calls do not add or remove a member. Use the Workspace report for the complete repository allowlist.";
+  }
+  return "Membership source: Derived from confirmed cross-service relationships. This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.";
+}
+
 export function ReportDetailPage() {
   const { reportId = "" } = useParams();
   const [report, setReport] = useState<IntelligenceReport | null>(null);
@@ -65,13 +72,14 @@ export function ReportDetailPage() {
           {report.scope === "service_cluster" ? (
             <>
               <p>Cluster {report.identity.cluster_label || "Connected service group"}. Member services {report.identity.services?.length ?? report.workspace.service_count}. Confirmed internal calls {report.workspace.relationship_count}.</p>
-              <p className="helper">This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.</p>
+              <p className="helper">{membershipCopy(report.identity.membership_source || report.membership_source)}</p>
               {report.identity.services?.length ? <p>Cluster membership: {report.identity.services.join(", ")}</p> : null}
             </>
           ) : null}
           {report.scope !== "service_cluster" && report.service_clusters?.items?.length ? (
             <>
-              <h3 className="section-title">Detected service clusters</h3>
+              <h3 className="section-title">{report.membership_source === "declared" ? "Declared service clusters" : "Detected service clusters"}</h3>
+              <p className="helper">{membershipCopy(report.membership_source)}</p>
               <ul className="action-list">
                 {report.service_clusters.items.map((item) => <li key={item.cluster_id}>{item.label}. {item.service_count} services. {item.relationship_count} confirmed calls.</li>)}
               </ul>
@@ -81,7 +89,7 @@ export function ReportDetailPage() {
             <>
               <h3 className="section-title">Standalone repositories</h3>
               <p>{report.standalone.map((item) => item.service_id).join(", ")}</p>
-              <p className="helper">A standalone repository or service has no confirmed cross-service relationship in this stored snapshot.</p>
+              <p className="helper">{report.membership_source === "declared" ? "A standalone repository is outside the clusters declared in repos.txt." : "A standalone repository or service has no confirmed cross-service relationship in this stored snapshot."}</p>
             </>
           ) : null}
         </Tile>

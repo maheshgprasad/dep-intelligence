@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from dep_intel.reporting.review_summary import human_validation_lines
+from dep_intel.service_clusters import membership_sentence, standalone_sentence
 
 INTERPRETATION = "Workspace, Service Cluster, and Repository readiness describe intelligence completeness. They are not Boundary Gate decisions."
 _COUNT_NOTE = "Counts include all stored reviews that matched this report scope at generation time."
@@ -114,7 +115,12 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
         canvas.paragraph(str(identity.get("cluster_label") or "Connected service group"))
         canvas.kv("Member services", workspace.get("service_count"))
         canvas.kv("Confirmed internal calls", workspace.get("relationship_count"))
-        canvas.paragraph("This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.")
+        source = str(identity.get("membership_source") or document.get("membership_source") or "inferred")
+        canvas.paragraph(membership_sentence(source))
+        if source == "declared":
+            canvas.paragraph("Membership comes from repos.txt. Confirmed calls do not add or remove a member. Use the Workspace report for the complete repository allowlist.")
+        else:
+            canvas.paragraph("This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.")
         members = [str(item) for item in (identity.get("services") or []) if item]
         if members:
             canvas.section("Cluster membership")
@@ -132,14 +138,16 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
         canvas.kv("Contracts", workspace.get("contract_count"))
         canvas.kv("Out of date", workspace.get("graph_stale"))
         groups = ((document.get("service_clusters") or {}).get("items") or [])
+        source = str(document.get("membership_source") or "inferred")
         if groups:
-            canvas.section("Detected service clusters")
+            canvas.section("Declared service clusters" if source == "declared" else "Detected service clusters")
             for item in groups:
                 canvas.bullet(f"{item.get('label') or 'Connected service group'}. {item.get('service_count')} services. {item.get('relationship_count')} confirmed calls.")
+            canvas.paragraph(membership_sentence(source))
         standalone = document.get("standalone") or []
         if standalone:
             canvas.section("Standalone repositories")
-            canvas.paragraph("A standalone repository or service has no confirmed cross-service relationship in this stored snapshot.")
+            canvas.paragraph(standalone_sentence(source))
             for item in standalone:
                 canvas.bullet(str(item.get("service_id") or item.get("service") or ""))
 

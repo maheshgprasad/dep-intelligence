@@ -1,0 +1,35 @@
+# Optional provider aliases. These resolve a host name to a service.
+# They do not assign cluster membership. Cluster membership is declared in repos.txt.
+aliases:
+  gateway:
+    service: uocp-api-gateway
+  auth:
+    service: uocp-auth-service
+  tenant:
+    service: uocp-tenant-service
+  routing:
+    service: uocp-routing-service
+  sms:
+    service: uocp-sms-service
+  whatsapp:
+    service: uocp-whatsapp-service
+  email:
+    service: uocp-email-service
+  voice:
+    service: uocp-voice-service
+  webrtc:
+    service: uocp-webrtc-service
+  billing:
+    service: uocp-billing-service
+  campaign:
+    service: uocp-campaign-service
+  analytics:
+    service: uocp-analytics-service
+  webhook:
+    service: uocp-webhook-service
+  notification:
+    service: uocp-notification-service
+  audit:
+    service: uocp-audit-service
+  reporting:
+    service: uocp-reporting-service

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
+from pathlib import Path
 from urllib.parse import urlparse
 
 from dep_intel.cluster_manifest import ClusterManifest, ServiceDecl
+from dep_intel.config import PROJECT_ROOT
 from dep_intel.contract_extractors.javascript import (
     CallHit,
     FileExtract,
@@ -326,7 +328,7 @@ def _candidates(routes: list[HttpRoute], path: str, version: str) -> list[HttpRo
     return unique
 
 
-def _host_index(manifest: ClusterManifest) -> dict[str, list[str]]:
+def _host_index(manifest: ClusterManifest, root: Path | None = None) -> dict[str, list[str]]:
     hosts: dict[str, list[str]] = {}
     for service in manifest.services:
         names = set(service.http.host_aliases)
@@ -336,6 +338,15 @@ def _host_index(manifest: ClusterManifest) -> dict[str, list[str]]:
                 names.add(host)
         for name in names:
             hosts.setdefault(name.lower(), []).append(service.id)
+    known = {service.id for service in manifest.services}
+    from dep_intel.topology.merge import _overrides
+
+    for host, service_id in _overrides((root or PROJECT_ROOT) / "nami-topology.yaml").items():
+        if service_id not in known:
+            continue
+        bucket = hosts.setdefault(host.lower(), [])
+        if service_id not in bucket:
+            bucket.append(service_id)
     return hosts
 
 

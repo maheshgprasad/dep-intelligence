@@ -17,6 +17,7 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
   const [service, setService] = useState(services[0]?.id || "");
   const [clusterId, setClusterId] = useState("");
   const [clusters, setClusters] = useState<ServiceClusterSummary[]>([]);
+  const [membershipSource, setMembershipSource] = useState("inferred");
   const [reports, setReports] = useState<IntelligenceReportSummary[]>([]);
   const [drift, setDrift] = useState<Awaited<ReturnType<typeof releaseDrift>> | null>(null);
   const [confirmPurge, setConfirmPurge] = useState(false);
@@ -28,6 +29,7 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
     void releaseDrift().then(setDrift).catch(() => setDrift(null));
     void getServiceClusters().then((payload) => {
       setClusters(payload.clusters || []);
+      setMembershipSource(payload.membership_source || payload.clusters?.[0]?.membership_source || "inferred");
       setClusterId((current) => current || payload.clusters?.[0]?.cluster_id || "");
     }).catch(() => setClusters([]));
   }, []);
@@ -54,7 +56,7 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
     <div className="stack-gap">
       <PageHeader
         title="Reports"
-        description="Point-in-time intelligence for the workspace, one connected service cluster, or one repository. Generation uses the published snapshot and does not rerun ranking or review."
+        description="Point-in-time intelligence for the workspace, one service cluster, or one repository. Generation uses the published snapshot and does not rerun ranking or review."
         actions={confirmPurge ? (
           <div className="button-row">
             <Button kind="danger" onClick={() => void purge()}>Delete stored reports</Button>
@@ -87,7 +89,7 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
             onChange={({ selectedItem }) => setClusterId(selectedItem?.cluster_id || "")}
           />
         ) : (
-          <NamiEmptyState title="No connected service clusters were detected." description="Use Workspace or Single repository reporting instead." />
+          <NamiEmptyState title={membershipSource === "declared" ? "No service clusters are declared in repos.txt." : "No connected service clusters were detected."} description="Use Workspace or Single repository reporting instead." />
         )
       ) : null}
       {scope === "repository" ? (

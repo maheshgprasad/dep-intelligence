@@ -1,8 +1,14 @@
-"""Connected components of confirmed cross-service relationships.
+"""Service cluster membership.
 
-Membership ignores edge direction. Displayed relationships keep their direction.
-Temporal association, Nami Rank, model output, naming similarity, and unresolved
-symbols do not create membership. A single service is standalone, not a cluster.
+When a published snapshot carries clusters declared in repos.txt, that
+membership is authoritative. Confirmed relationships stay visible, including
+cross-cluster calls, and they do not move a service into another cluster.
+
+Without a declaration, membership is the connected component of confirmed
+cross-service relationships. Direction is ignored for that fallback and kept
+on each displayed relationship. Temporal association, Nami Rank, model output,
+naming similarity, and unresolved symbols do not create membership. A single
+service is standalone, not a cluster.
 """
 
 from __future__ import annotations
@@ -61,15 +67,68 @@ def confirmed_relationships(snapshot: Snapshot | None, *, service: str = "", kin
             "evidence": status,
             "resolution": resolution,
             "provenance": _provenance(status),
+            "cross_cluster": _crosses_cluster(snapshot, caller.service_id, contract.service_id),
         })
     rows.sort(key=lambda item: (item["from_service"], item["to_service"], item["kind"], item["contract"], item["caller_symbol"]))
     return rows
 
 
+DECLARED_MEMBERSHIP = "Declared in repos.txt"
+INFERRED_MEMBERSHIP = "Derived from confirmed cross-service relationships"
+
+
+def membership_sentence(source: str) -> str:
+    if source == "declared":
+        return f"Membership source: {DECLARED_MEMBERSHIP}."
+    return f"Membership source: {INFERRED_MEMBERSHIP}."
+
+
+def standalone_sentence(source: str) -> str:
+    if source == "declared":
+        return "A standalone repository is outside the clusters declared in repos.txt."
+    return "A standalone repository or service has no confirmed cross-service relationship in this stored snapshot."
+
+
 def detect_service_clusters(snapshot: Snapshot | None, rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     if snapshot is None:
-        return {"clusters": [], "standalone": [], "confirmed_calls": 0}
+        return {"clusters": [], "standalone": [], "confirmed_calls": 0, "membership_source": "inferred"}
     edges = list(rows) if rows is not None else confirmed_relationships(snapshot)
+    if snapshot.declared_clusters is not None:
+        return _declared_clusters(snapshot, edges)
+    return _inferred_clusters(snapshot, edges)
+
+
+def _declared_clusters(snapshot: Snapshot, edges: list[dict[str, Any]]) -> dict[str, Any]:
+    clusters = []
+    members: set[str] = set()
+    for item in snapshot.declared_clusters or []:
+        services = [str(service) for service in item.get("services") or [] if service]
+        member_set = set(services)
+        members.update(member_set)
+        internal = [
+            row for row in edges
+            if row.get("from_service") in member_set and row.get("to_service") in member_set
+        ]
+        cluster_id = str(item.get("cluster_id") or "")
+        clusters.append({
+            "cluster_id": cluster_id,
+            "label": cluster_id,
+            "service_count": len(services),
+            "relationship_count": len(internal),
+            "services": services,
+            "graph_version": snapshot.version,
+            "membership_source": "declared",
+        })
+    standalone = _standalone(snapshot, members)
+    return {
+        "clusters": clusters,
+        "standalone": standalone,
+        "confirmed_calls": len(edges),
+        "membership_source": "declared",
+    }
+
+
+def _inferred_clusters(snapshot: Snapshot, edges: list[dict[str, Any]]) -> dict[str, Any]:
     parent: dict[str, str] = {}
 
     def find(service_id: str) -> str:
@@ -107,15 +166,44 @@ def detect_service_clusters(snapshot: Snapshot | None, rows: list[dict[str, Any]
             "relationship_count": len(internal),
             "services": unique,
             "graph_version": snapshot.version,
+            "membership_source": "inferred",
         })
     clusters.sort(key=lambda item: (-item["service_count"], item["cluster_id"]))
+    return {
+        "clusters": clusters,
+        "standalone": _standalone(snapshot, members),
+        "confirmed_calls": len(edges),
+        "membership_source": "inferred",
+    }
+
+
+def _standalone(snapshot: Snapshot, members: set[str]) -> list[dict[str, str]]:
     standalone = []
     for service_id in sorted(snapshot.partitions):
         if service_id in members:
             continue
         part = snapshot.partitions[service_id]
         standalone.append({"service_id": service_id, "repository": part.repository})
-    return {"clusters": clusters, "standalone": standalone, "confirmed_calls": len(edges)}
+    return standalone
+
+
+def _cluster_ids(snapshot: Snapshot | None) -> dict[str, str] | None:
+    if snapshot is None or snapshot.declared_clusters is None:
+        return None
+    index: dict[str, str] = {}
+    for item in snapshot.declared_clusters:
+        cluster_id = str(item.get("cluster_id") or "")
+        for service_id in item.get("services") or []:
+            if service_id:
+                index[str(service_id)] = cluster_id
+    return index
+
+
+def _crosses_cluster(snapshot: Snapshot | None, left: str, right: str) -> bool:
+    index = _cluster_ids(snapshot)
+    if index is None:
+        return False
+    return index.get(left) != index.get(right)
 
 
 def get_service_cluster(snapshot: Snapshot | None, cluster_id: str) -> dict[str, Any] | None:

@@ -138,15 +138,12 @@ def parse_repo_line(line: str, root: Path = PROJECT_ROOT) -> RepoRef:
 
 
 def load_repos(settings: Settings) -> list[RepoRef]:
+    """Flat allowlist. Cluster membership stays on ``load_repo_config``."""
     if not settings.repos_file.is_file():
         return []
-    repos: list[RepoRef] = []
-    for raw in settings.repos_file.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        repos.append(parse_repo_line(line, settings.root))
-    return repos
+    from dep_intel.repo_config import load_repo_config
+
+    return [item.repo for item in load_repo_config(settings).repositories]
 
 
 def _slug(name: str) -> str:

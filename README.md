@@ -13,15 +13,20 @@ The behavior is taken from the notes in [Docs/spec](Docs/spec). This tree is a n
 ```bash
 skills/install-mcp-pydriller/scripts/install.sh
 cd web && npm install && cd ..
+cp repos.example.txt repos.txt
 ```
 
-The install script creates `server/.venv` and installs the MCP server and PyDriller.
+Edit `repos.txt`. The name on the left is the stable service id. The right side is a GitHub URL or a local path. `[cluster:...]` declares a Service Cluster. `[standalone]` lists repositories that stay outside those clusters.
 
-One process serves the dashboard and the API:
+`repos.txt` is the source of truth. `cluster-manifest.json` is generated from `repos.txt`. Do not manually maintain cluster membership in `cluster-manifest.json`. `nami-topology.yaml` is optional and resolves ambiguous provider aliases. Topology discovery finds relationships; it does not define cluster membership.
 
 ```bash
+python scripts/nami-manifest.py validate
+python scripts/nami-manifest.py generate
 ./scripts/nami-trace.sh
 ```
+
+The install script creates `server/.venv` and installs the MCP server and PyDriller. One process serves the dashboard and the API. Startup also generates `cluster-manifest.json` when `repos.txt` changed, so a clean checkout does not need a hand-written manifest. `generate` refuses to overwrite a user-managed schema v1 manifest until you pass `--replace-existing`.
 
 Dashboard: http://127.0.0.1:3002
 
@@ -29,7 +34,7 @@ Startup loads the last files under `output/`. It does not rebuild graphs or watc
 
 The normal flow is:
 
-1. Add repositories to `repos.txt`.
+1. Declare repositories and cluster membership in `repos.txt`.
 2. Start Nami Trace.
 3. Refresh intelligence.
 4. Inspect service topology or repository structure.
@@ -68,7 +73,7 @@ Structural change impact is a separate cluster graph. It reads each repository's
 
 **Nami Boundary Gate** reviews one change. It builds a Change View, asks Nami Rank for downstream files, applies `nami-review.yaml`, and returns pass, warn, block, or incomplete. Ranking scores stay ranking evidence. Gate feedback does not change NRM. Boundary Gate decisions can be independently replayed and validated against explicit evidence requirements. Optional LLM commentary translates validated results into concise operational language but cannot alter Gate decisions. The stored review explains the decision with evidence, inferences, and actions, and can be exported as Markdown, JSON, PDF, or an evidence package. See [Docs/BOUNDARY_GATE.md](Docs/BOUNDARY_GATE.md), [Docs/GATE_VALIDATION.md](Docs/GATE_VALIDATION.md), [Docs/REVIEW_EVIDENCE.md](Docs/REVIEW_EVIDENCE.md), and [Docs/EXPORTS.md](Docs/EXPORTS.md).
 
-Workspace, service cluster, and repository intelligence reports are a separate scope. A service cluster is a connected component of confirmed cross-service calls, not a Kubernetes cluster. Legacy scope `cluster` means the workspace. Reports describe the published snapshot and do not return pass, warn, or block. On a workspace or service cluster report, internal cross-service relationships and contracts are tables. See [Docs/REPORTING.md](Docs/REPORTING.md).
+Workspace, service cluster, and repository intelligence reports are a separate scope. A declared service cluster is the membership written in `repos.txt`. When `repos.txt` has no cluster sections, a service cluster is still a connected component of confirmed cross-service calls. Either way it is not a Kubernetes cluster. A confirmed call does not merge two declared clusters. Legacy scope `cluster` means the workspace. Reports describe the published snapshot and do not return pass, warn, or block. On a workspace or service cluster report, internal cross-service relationships and contracts are tables. See [Docs/REPORTING.md](Docs/REPORTING.md).
 
 When the reviewed service belongs to a cluster, Review Change lists the confirmed consumers inside that cluster. Direct callers come first. The list does not add file ranks and does not change the Boundary Gate decision. One HTTP operation is one contract: a declared copy and an OpenAPI copy of the same method and path share a node, and a caller path that fills a route template attaches to that route. See [Docs/BOUNDARY_GATE.md](Docs/BOUNDARY_GATE.md) and [Docs/CROSS_REPO_IMPACT.md](Docs/CROSS_REPO_IMPACT.md).
 

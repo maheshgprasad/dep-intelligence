@@ -703,6 +703,7 @@ export type IntelligenceReport = {
     cluster_id?: string;
     cluster_label?: string;
     services?: string[];
+    membership_source?: string;
     revision_vector?: Record<string, { workspace_head?: string | null }>;
   };
   executive_summary: { headline?: string; summary?: string; readiness?: string; readiness_label?: string };
@@ -725,6 +726,7 @@ export type IntelligenceReport = {
   };
   services?: { service: string; repository?: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number; symbols?: number; provides?: number; error?: string; explanation?: string }[];
   workspace?: { repository_count?: number; service_count: number; relationship_count: number; contract_count: number; graph_stale: number; unresolved_count: number; history_ready: number };
+  membership_source?: string;
   service_clusters?: { count: number; items: ServiceClusterSummary[] };
   standalone?: { service_id: string; repository?: string }[];
   provider_discovery?: { status?: string; label?: string; unresolved_observation_count?: number; unique_unresolved_reference_count?: number; note?: string };
@@ -761,9 +763,10 @@ export type ServiceClusterSummary = {
   service_count: number;
   relationship_count: number;
   services: string[];
+  membership_source?: string;
 };
 
-export async function getServiceClusters(): Promise<{ clusters: ServiceClusterSummary[]; standalone: { service_id: string }[] }> {
+export async function getServiceClusters(): Promise<{ clusters: ServiceClusterSummary[]; standalone: { service_id: string }[]; membership_source?: string }> {
   const response = await fetch("/api/service-clusters");
   if (!response.ok) return { clusters: [], standalone: [] };
   return response.json();
@@ -917,8 +920,9 @@ export type RelationshipMap = {
   relationships: ServiceRelationship[];
   total: number;
   truncated: boolean;
-  clusters: { services: string[]; relationships: number }[];
+  clusters: { services: string[]; relationships: number; label?: string; cluster_id?: string; membership_source?: string }[];
   individuals: string[];
+  membership_source?: string;
 };
 
 export async function clusterRelationships(limit = 12, signal?: AbortSignal): Promise<RelationshipMap> {

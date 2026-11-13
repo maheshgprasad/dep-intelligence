@@ -8,6 +8,7 @@ in-memory snapshot.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import threading
 import uuid
@@ -179,7 +180,12 @@ class ClusterEngine:
                             severity="warning",
                         )
                     )
-            if previous is not None and _same_structural_index(previous, partitions):
+            alias_hash = _contract_alias_hash(self.settings.root)
+            if (
+                previous is not None
+                and previous.contract_alias_hash == alias_hash
+                and _same_structural_index(previous, partitions)
+            ):
                 return {
                     "status": "ok",
                     "version": previous.version,
@@ -189,6 +195,7 @@ class ClusterEngine:
                 }
             version = fresh_version()
             snapshot = assemble(partitions, manifest, files, version=version)
+            snapshot.contract_alias_hash = alias_hash
             self._publish(snapshot, previous)
             return {
                 "status": "ok",
@@ -470,11 +477,19 @@ class ClusterEngine:
             self._snapshot = snapshot
 
     def _classify(self) -> tuple[Any, list[str]]:
-        repos = load_repos(self.settings)
+        from dep_intel.cluster_manifest_generation import prepare_repository_configuration
+
+        prepared = prepare_repository_configuration(self.settings)
+        self.notices = list(prepared.notices)
+        if prepared.errors:
+            self.config_errors = prepared.errors
+            self.allowlist = []
+            return None, prepared.errors
+        repos = [item.repo for item in prepared.config.repositories] if prepared.config is not None else load_repos(self.settings)
         self.allowlist = [repo.name for repo in repos]
         manifest, errors, notices = applicable_manifest(self._manifest_file(), repos, self.settings.root)
         self.config_errors = errors
-        self.notices = notices
+        self.notices.extend(notices)
         return manifest, errors
 
     def _bind_checkouts(self, manifest) -> None:
@@ -515,6 +530,13 @@ class ClusterEngine:
         for path in snapshots[2:]:
             if path.name not in keep:
                 path.unlink(missing_ok=True)
+
+
+def _contract_alias_hash(root: Path) -> str:
+    path = root / "nami-topology.yaml"
+    if not path.is_file():
+        return "none"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _same_structural_index(previous: Snapshot, partitions: dict[str, Partition]) -> bool:

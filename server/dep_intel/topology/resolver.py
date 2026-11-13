@@ -10,7 +10,9 @@ from dep_intel.topology.models import relationship, unresolved
 def resolve(services: list[dict], calls: list[dict], aliases: list[dict], bindings: list[dict]) -> dict:
     by_alias: dict[str, set[str]] = {}
     for item in aliases:
-        by_alias.setdefault(item["alias"].lower(), set()).add(item["service"])
+        service = _known_service(str(item.get("service") or ""), services)
+        if service:
+            by_alias.setdefault(str(item.get("alias") or "").lower(), set()).add(service)
     for service in services:
         by_alias.setdefault(service["service"].lower(), set()).add(service["service"])
     linked = []
@@ -90,6 +92,18 @@ def _binding(bindings: list[dict], service: str, file: str, client: str) -> str:
     if len(unique) == 1:
         return next(iter(unique))
     return ""
+
+
+def _known_service(target: str, services: list[dict]) -> str:
+    """Map a stable service id onto the analyzed service name when that leaf is unique."""
+    names = [str(item.get("service") or "") for item in services if item.get("service")]
+    if target in names:
+        return target
+    leaf = target.rsplit("/", 1)[-1].lower()
+    matches = [name for name in names if name.rsplit("/", 1)[-1].lower() == leaf]
+    if len(matches) == 1:
+        return matches[0]
+    return target
 
 
 def _unique_service_name(host: str, services: list[dict]) -> str:
