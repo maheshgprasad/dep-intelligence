@@ -6,7 +6,8 @@ import re
 from pathlib import Path
 
 _KIND = re.compile(r"(?m)^kind:\s*Service\s*$")
-_NAME = re.compile(r"(?m)^metadata:\s*\n(?:[ \t]+.+\n)*?[ \t]+name:\s*([A-Za-z0-9._-]+)")
+_METADATA = re.compile(r"^metadata:\s*$")
+_NAME_VALUE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def service_aliases(root: Path, service: str) -> list[dict[str, str]]:
@@ -24,7 +25,26 @@ def service_aliases(root: Path, service: str) -> list[dict[str, str]]:
             continue
         if not _KIND.search(text):
             continue
-        match = _NAME.search(text)
-        if match:
-            rows.append({"alias": match.group(1), "service": service, "source": "kubernetes", "file": str(path.relative_to(root))})
+        alias = _metadata_name(text)
+        if alias:
+            rows.append({"alias": alias, "service": service, "source": "kubernetes", "file": str(path.relative_to(root))})
     return rows
+
+
+def _metadata_name(text: str) -> str | None:
+    """Read the first metadata name. Line scanning stays linear on hostile input."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if _METADATA.fullmatch(line) is None:
+            continue
+        for follower in lines[index + 1:]:
+            if not follower.startswith((" ", "\t")):
+                break
+            stripped = follower.lstrip(" \t")
+            if not stripped.startswith("name:"):
+                continue
+            value = stripped.split(":", 1)[1].strip()
+            if _NAME_VALUE.fullmatch(value):
+                return value
+            return None
+    return None

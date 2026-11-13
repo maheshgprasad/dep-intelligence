@@ -126,6 +126,17 @@ class GraphNode:
         )
 
 
+def node_label(node: GraphNode) -> str:
+    """Symbol or contract name. The content-addressed key is not a label."""
+    name = (node.name or "").strip()
+    if name:
+        return name
+    qualified = (node.qualified_name or "").strip()
+    if qualified:
+        return qualified
+    return str((node.metadata or {}).get("identity") or "").strip()
+
+
 @dataclass
 class GraphEdge:
     source: str

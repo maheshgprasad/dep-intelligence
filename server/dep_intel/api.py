@@ -594,6 +594,8 @@ def review_source_options(repository: str = "") -> dict:
 
     settings = Settings.load()
     repo = resolve_repository_path(settings, repository) if repository else settings.root
+    if repo is None:
+        return {"repository": repository, "error": "repository_not_allowed", "checkout_status": "unavailable"}
     payload = source_options(repo, settings)
     payload["repository"] = repository
     payload["checkout_status"] = "available" if repo.is_dir() else "unavailable"
@@ -817,7 +819,7 @@ def _with_checkout(payload: dict) -> dict:
         return payload
     settings = Settings.load()
     resolved = resolve_repository_path(settings, requested)
-    if resolved.is_dir():
+    if resolved is not None and resolved.is_dir():
         source["repository"] = str(resolved)
     return {**payload, "source": source}
 

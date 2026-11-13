@@ -8,12 +8,15 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import logging
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
 from dep_intel.review_models import DEFAULT_BUDGETS, diagnostic
+
+log = logging.getLogger("nami.review")
 
 POLICY_TYPES = {
     "forbidden_pattern",
@@ -67,8 +70,9 @@ def load_review_config(repo: Path | None, settings_root: Path | None = None, raw
         if candidate.is_file():
             try:
                 loaded = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
-            except yaml.YAMLError as exc:
-                return {}, [diagnostic("invalid_policy", f"{candidate.name} is not valid YAML: {exc}", severity="error")]
+            except yaml.YAMLError:
+                log.warning("%s is not valid YAML", candidate.name, exc_info=True)
+                return {}, [diagnostic("invalid_policy", f"{candidate.name} is not valid YAML.", severity="error")]
             if not isinstance(loaded, dict):
                 return {}, [diagnostic("invalid_policy", f"{candidate.name} must be a mapping.", severity="error")]
             config, errors = validate_config(loaded)

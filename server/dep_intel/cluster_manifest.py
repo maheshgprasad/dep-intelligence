@@ -8,6 +8,7 @@ directory names.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,6 +18,7 @@ from dep_intel.paths import contained
 from dep_intel.sources import RepoRef
 
 SUPPORTED_SCHEMA = 1
+log = logging.getLogger("nami.cluster")
 
 
 class ManifestError(ValueError):
@@ -236,8 +238,9 @@ def load_manifest(path: Path | None, repos: list[RepoRef], root: Path) -> tuple[
         return None, [f"{path}: unsupported schema_version {version!r}; supported version is {SUPPORTED_SCHEMA}"]
     try:
         manifest = ClusterManifest.model_validate(payload)
-    except Exception as exc:
-        return None, [f"{path}: {exc}"]
+    except Exception:
+        log.warning("cluster manifest %s failed validation", path, exc_info=True)
+        return None, [f"{path}: manifest validation failed"]
     errors = _cross_check(manifest, repos, root)
     if errors:
         return None, errors

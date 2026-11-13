@@ -27,7 +27,9 @@ from dep_intel.graph_models import (
     AffectedNode,
     GraphNode,
     ImpactResult,
+    PathStep,
     Snapshot,
+    node_label,
 )
 from dep_intel.temporal_providers import (
     PairEvidence,
@@ -372,7 +374,7 @@ def _file_row(slot: dict[str, Any], snapshot: Snapshot, alpha: float, beta: floa
             "aggregation": "max_symbol_path",
             "score_kind": SCORE_KIND,
             "hops": strongest.hops if strongest is not None else 0,
-            "path": [step.to_dict() for step in strongest.path] if strongest is not None else [],
+            "path": _named_steps(snapshot, strongest.path) if strongest is not None else [],
             "strongest_symbol": (
                 {
                     "name": strongest.name,
@@ -492,6 +494,20 @@ def _hybrid_score(
     s = structural if structural_available else 0.0
     t = temporal if temporal_available else 0.0
     return _clamp(alpha * s + beta * t)
+
+
+def _named_steps(snapshot: Snapshot, steps: list[PathStep]) -> list[dict[str, Any]]:
+    named = []
+    for step in steps:
+        source = snapshot.nodes.get(step.source)
+        target = snapshot.nodes.get(step.target)
+        payload = step.to_dict()
+        payload["source_name"] = node_label(source) if source is not None else ""
+        payload["target_name"] = node_label(target) if target is not None else ""
+        payload["source_file"] = source.file_path if source is not None else ""
+        payload["target_file"] = target.file_path if target is not None else ""
+        named.append(payload)
+    return named
 
 
 def _structural_payload(item: AffectedNode) -> dict[str, Any]:
