@@ -251,26 +251,29 @@ def _repository(canvas: _Canvas, document: dict[str, Any]) -> None:
     contracts = document.get("contracts") or {}
     canvas.section("Contracts provided")
     provided = contracts.get("provided") or []
-    if provided:
-        for item in provided[:TABLE_CAP]:
-            consumers = ", ".join(item.get("consumers") or []) or "none recorded"
-            canvas.bullet(f"{item.get('name')} ({item.get('kind') or 'contract'}). Consumers: {consumers}")
-            if item.get("explanation"):
-                canvas.muted(str(item["explanation"]))
-        if len(provided) > TABLE_CAP:
-            canvas.muted(f"Showing {TABLE_CAP} of {len(provided)}.")
+    shown, note = _cap(provided)
+    if shown:
+        canvas.table(
+            ["Contract", "Kind", "Consumers"],
+            [220, 100, 196],
+            [[str(item.get("name") or ""), str(item.get("kind") or "contract"), ", ".join(item.get("consumers") or []) or "none recorded"] for item in shown],
+        )
+        if note:
+            canvas.muted(note)
     else:
         canvas.muted("No exposed contracts are recorded.")
 
     canvas.section("Contracts consumed")
     consumed = contracts.get("consumed") or []
-    if consumed:
-        for item in consumed[:TABLE_CAP]:
-            canvas.bullet(f"{item.get('name')} from {item.get('provider') or 'an unresolved provider'}")
-            if item.get("explanation"):
-                canvas.muted(str(item["explanation"]))
-        if len(consumed) > TABLE_CAP:
-            canvas.muted(f"Showing {TABLE_CAP} of {len(consumed)}.")
+    shown, note = _cap(consumed)
+    if shown:
+        canvas.table(
+            ["Contract", "Provider"],
+            [258, 258],
+            [[str(item.get("name") or ""), str(item.get("provider") or "Provider unresolved")] for item in shown],
+        )
+        if note:
+            canvas.muted(note)
     else:
         canvas.muted("No consumed contracts are recorded.")
 
@@ -436,11 +439,20 @@ def _links(canvas: _Canvas, rows: list[dict[str, Any]], field: str, _verb: str) 
     if not shown:
         canvas.muted("None recorded.")
         return
-    for item in shown:
-        caller = str(item.get("caller_symbol") or "")
-        file_path = str(item.get("caller_file") or "")
-        extra = f" ({caller}, {file_path})" if caller and file_path else f" ({caller})" if caller else ""
-        canvas.bullet(f"{item.get(field) or '-'} via {item.get('contract') or '-'}{extra}")
+    label = "Provider" if field == "to_service" else "Consumer"
+    canvas.table(
+        [label, "Contract", "Caller", "File"],
+        [130, 176, 110, 100],
+        [
+            [
+                str(item.get(field) or ""),
+                str(item.get("contract") or ""),
+                str(item.get("caller_symbol") or ""),
+                str(item.get("caller_file") or ""),
+            ]
+            for item in shown
+        ],
+    )
     if note:
         canvas.muted(note)
 

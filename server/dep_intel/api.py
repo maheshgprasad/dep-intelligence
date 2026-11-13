@@ -602,6 +602,13 @@ def review_source_options(repository: str = "") -> dict:
     return payload
 
 
+@app.post("/api/reviews/purge")
+def purge_stored_reviews() -> dict:
+    from dep_intel.review_store import purge_reviews
+
+    return purge_reviews(Settings.load().output_dir)
+
+
 @app.get("/api/reviews")
 def reviews_list(limit: int = 20) -> dict:
     from dep_intel.path_hygiene import scrub_value
@@ -853,6 +860,13 @@ def service_clusters() -> dict:
             "unique_unresolved": discovery.get("unique_unresolved_reference_count") or 0,
         },
     }
+
+
+@app.post("/api/reports/purge")
+def purge_intelligence_reports() -> dict:
+    from dep_intel.reporting.store import purge_reports
+
+    return purge_reports(Settings.load().output_dir)
 
 
 @app.get("/api/reports")

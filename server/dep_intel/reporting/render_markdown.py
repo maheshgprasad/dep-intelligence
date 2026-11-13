@@ -41,18 +41,19 @@ def render_markdown(document: dict[str, Any]) -> str:
     if scope in {"cluster", "workspace", "service_cluster"}:
         lines.extend(_scope_sections(document))
     else:
-        lines.extend(["", "## Contracts provided", ""])
+        lines.extend(["", "## Contracts provided", "", "| Contract | Kind | Consumers |", "| --- | --- | --- |"])
         for row in (document.get("contracts") or {}).get("provided") or []:
             consumers = ", ".join(row.get("consumers") or []) or "none recorded"
-            lines.append(f"- {row.get('name')} ({row.get('kind')}). Consumers: {consumers}")
-            if row.get("explanation"):
-                lines.append(f"  {row['explanation']}")
-        lines.extend(["", "## Upstream dependencies", ""])
+            lines.append(f"| {_cell(row.get('name'))} | {_cell(row.get('kind'))} | {_cell(consumers)} |")
+        lines.extend(["", "## Contracts consumed", "", "| Contract | Provider |", "| --- | --- |"])
+        for row in (document.get("contracts") or {}).get("consumed") or []:
+            lines.append(f"| {_cell(row.get('name'))} | {_cell(row.get('provider') or 'Provider unresolved')} |")
+        lines.extend(["", "## Upstream dependencies", "", "| Provider | Contract | Caller | File |", "| --- | --- | --- | --- |"])
         for row in (document.get("relationships") or {}).get("upstream") or []:
-            lines.extend(_relationship_lines(row, f"{row.get('to_service')} via {row.get('contract')}"))
-        lines.extend(["", "## Downstream dependents", ""])
+            lines.append(f"| {_cell(row.get('to_service'))} | {_cell(row.get('contract'))} | {_cell(row.get('caller_symbol'))} | {_cell(row.get('caller_file'))} |")
+        lines.extend(["", "## Downstream dependents", "", "| Consumer | Contract | Caller | File |", "| --- | --- | --- | --- |"])
         for row in (document.get("relationships") or {}).get("downstream") or []:
-            lines.extend(_relationship_lines(row, f"{row.get('from_service')} via {row.get('contract')}"))
+            lines.append(f"| {_cell(row.get('from_service'))} | {_cell(row.get('contract'))} | {_cell(row.get('caller_symbol'))} | {_cell(row.get('caller_file'))} |")
     lines.extend(_review_section(document.get("review_activity") or {}))
     lines.extend(["", "## Key observations", ""])
     observations = document.get("inferences") or []
@@ -168,9 +169,11 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
         )
     relation = document.get("relationships") or {}
     heading = "Internal cross-service relationships" if scope == "service_cluster" else "Cross-service relationships"
-    lines.extend(["", f"## {heading}", ""])
+    lines.extend(["", f"## {heading}", "", "| Consumer | Contract | Provider | Provenance | Resolution |", "| --- | --- | --- | --- | --- |"])
     for row in (relation.get("items") or [])[:100]:
-        lines.append(f"- {row.get('from_service')} → {row.get('to_service')} via {row.get('contract')}")
+        lines.append(
+            f"| {_cell(row.get('from_service'))} | {_cell(row.get('contract'))} | {_cell(row.get('to_service'))} | {_cell(row.get('provenance'))} | {_cell(row.get('resolution'))} |"
+        )
     if relation.get("items"):
         lines.append("")
         lines.append("Confirmed contract edges. Repository history is not used for these relationships or for cluster membership.")
@@ -186,10 +189,7 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
         lines.extend(["", "These counts describe stored relationship evidence. They do not imply that every relationship was automatically discovered."])
     lines.extend(["", "## Contracts", "", "| Provider | Contract | Consumers |", "| --- | --- | --- |"])
     for row in (document.get("contracts") or {}).get("table") or []:
-        lines.append(f"| {row.get('provider')} | {row.get('contract')} | {', '.join(row.get('consumers') or [])} |")
-    for row in (document.get("contracts") or {}).get("table") or []:
-        if row.get("explanation"):
-            lines.append(f"- {row['explanation']}")
+        lines.append(f"| {_cell(row.get('provider'))} | {_cell(row.get('contract'))} | {_cell(', '.join(row.get('consumers') or []) or 'none recorded')} |")
     discovery = document.get("provider_discovery")
     if isinstance(discovery, dict) and discovery:
         lines.extend(["", "## Provider discovery", ""])
@@ -207,11 +207,9 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _relationship_lines(row: dict[str, Any], headline: str) -> list[str]:
-    caller = str(row.get("caller_symbol") or "")
-    file_path = str(row.get("caller_file") or "")
-    extra = f" ({caller}, {file_path})" if caller and file_path else f" ({caller})" if caller else f" ({file_path})" if file_path else ""
-    return [f"- {headline}{extra}"]
+def _cell(value: Any) -> str:
+    text = str(value or "—").replace("|", "/").replace("\n", " ")
+    return text
 
 
 def _entity_lines(item: dict[str, Any]) -> list[str]:

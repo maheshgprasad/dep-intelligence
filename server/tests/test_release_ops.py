@@ -5,7 +5,8 @@ from pathlib import Path
 from dep_intel.graph_models import HTTP_CONTRACT, Partition, GraphNode, symbol_key
 from dep_intel.cross_repo_graph import index_snapshot
 from dep_intel.release_ops import check_summary, drift_since_last_report, hygiene_rows, match_owner, parse_codeowners
-from dep_intel.reporting.store import save_report
+from dep_intel.reporting.store import purge_reports, save_report
+from dep_intel.review_store import purge_reviews
 from dep_intel.store import write_json
 from test_intelligence_reports import _settings
 
@@ -17,6 +18,38 @@ def test_block_fails_the_check_and_warn_stays_green() -> None:
     assert "POST /v1/validate" in blocked["text"]
     assert "user-service" in blocked["text"]
     assert warned["exit_code"] == 0
+
+
+def test_purge_reports_keeps_reviews_and_does_not_follow_links(tmp_path: Path) -> None:
+    report = tmp_path / "reports" / "rpt-one"
+    report.mkdir(parents=True)
+    (report / "report.json").write_text("{}", encoding="utf-8")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "keep.txt").write_text("keep", encoding="utf-8")
+    (tmp_path / "reports" / "escape").symlink_to(reviews)
+    result = purge_reports(tmp_path)
+    assert result["removed"] == 2
+    assert not report.exists()
+    assert (reviews / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_purge_reviews_keeps_reports(tmp_path: Path) -> None:
+    review = tmp_path / "reviews" / "rev-1"
+    review.mkdir(parents=True)
+    (review / "report.json").write_text("{}", encoding="utf-8")
+    cache = tmp_path / "reviews" / "_cache"
+    cache.mkdir()
+    (cache / "pointer.json").write_text("{}", encoding="utf-8")
+    report = tmp_path / "reports" / "rpt-one"
+    report.mkdir(parents=True)
+    (report / "report.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "reviews" / "escape").symlink_to(report)
+    result = purge_reviews(tmp_path)
+    assert result["removed"] == 3
+    assert not review.exists()
+    assert not cache.exists()
+    assert (report / "report.json").read_text(encoding="utf-8") == "{}"
 
 
 def test_codeowners_last_match_wins() -> None:

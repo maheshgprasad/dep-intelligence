@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, ContentSwitcher, Dropdown, Switch, Tile } from "@carbon/react";
-import { getServiceClusters, listIntelligenceReports, releaseDrift, type AppState, type IntelligenceReportSummary, type ServiceClusterSummary } from "../api";
+import { Button, ContentSwitcher, Dropdown, InlineNotification, Switch, Tile } from "@carbon/react";
+import { getServiceClusters, listIntelligenceReports, purgeIntelligenceReports, releaseDrift, type AppState, type IntelligenceReportSummary, type ServiceClusterSummary } from "../api";
 import { GenerateReportButton } from "../components/GenerateReportButton";
 import { reportTarget, reportType } from "../reportPresentation";
 import { NamiDataTable } from "../components/NamiDataTable";
@@ -19,6 +19,9 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
   const [clusters, setClusters] = useState<ServiceClusterSummary[]>([]);
   const [reports, setReports] = useState<IntelligenceReportSummary[]>([]);
   const [drift, setDrift] = useState<Awaited<ReturnType<typeof releaseDrift>> | null>(null);
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [purgeNote, setPurgeNote] = useState("");
+  const [purgeError, setPurgeError] = useState("");
 
   useEffect(() => {
     void listIntelligenceReports().then(setReports).catch(() => setReports([]));
@@ -29,12 +32,41 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
     }).catch(() => setClusters([]));
   }, []);
 
+  async function purge() {
+    setPurgeError("");
+    try {
+      const result = await purgeIntelligenceReports();
+      setConfirmPurge(false);
+      setPurgeNote(`Removed ${result.removed} stored reports. Reviews were kept.`);
+      setReports([]);
+      const [nextReports, nextDrift] = await Promise.all([
+        listIntelligenceReports().catch(() => []),
+        releaseDrift().catch(() => null),
+      ]);
+      setReports(nextReports);
+      setDrift(nextDrift);
+    } catch (exc) {
+      setPurgeError(exc instanceof Error ? exc.message : "Stored reports could not be removed.");
+    }
+  }
+
   return (
     <div className="stack-gap">
       <PageHeader
         title="Reports"
         description="Point-in-time intelligence for the workspace, one connected service cluster, or one repository. Generation uses the published snapshot and does not rerun ranking or review."
+        actions={confirmPurge ? (
+          <div className="button-row">
+            <Button kind="danger" onClick={() => void purge()}>Delete stored reports</Button>
+            <Button kind="secondary" onClick={() => setConfirmPurge(false)}>Cancel</Button>
+          </div>
+        ) : (
+          <Button kind="danger--tertiary" onClick={() => { setPurgeNote(""); setPurgeError(""); setConfirmPurge(true); }}>Purge reports</Button>
+        )}
       />
+      {confirmPurge ? <InlineNotification kind="warning" title="Purge stored reports" subtitle="This deletes every stored intelligence report. Reviews are kept." lowContrast hideCloseButton /> : null}
+      {purgeNote ? <InlineNotification kind="success" title="Reports" subtitle={purgeNote} lowContrast hideCloseButton /> : null}
+      {purgeError ? <InlineNotification kind="error" title="Reports" subtitle={purgeError} lowContrast hideCloseButton /> : null}
       <ContentSwitcher
         selectedIndex={scope === "service_cluster" ? 1 : scope === "repository" ? 2 : 0}
         onChange={({ index }) => setScope(index === 1 ? "service_cluster" : index === 2 ? "repository" : "workspace")}

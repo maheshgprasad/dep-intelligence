@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,29 @@ def list_reviews(output_dir: Path, limit: int | None = 20) -> list[dict[str, Any
         row.pop("_mtime", None)
         cleaned.append(row)
     return cleaned
+
+
+def purge_reviews(output_dir: Path) -> dict[str, int]:
+    """Delete stored review changes and their result cache. Reports stay in place."""
+    root = (output_dir / "reviews").resolve()
+    if not root.is_dir():
+        return {"removed": 0}
+    removed = 0
+    for child in list(root.iterdir()):
+        if child.name.startswith("."):
+            continue
+        if child.is_symlink():
+            child.unlink()
+            removed += 1
+            continue
+        if not child.is_dir():
+            continue
+        resolved = child.resolve()
+        if root != resolved and root not in resolved.parents:
+            continue
+        shutil.rmtree(child)
+        removed += 1
+    return {"removed": removed}
 
 
 def read_review(output_dir: Path, review_id: str) -> dict[str, Any] | None:

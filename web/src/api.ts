@@ -779,6 +779,12 @@ export async function createIntelligenceReport(body: { scope: "workspace" | "ser
   return response.json();
 }
 
+export async function purgeIntelligenceReports(): Promise<{ removed: number }> {
+  const response = await fetch("/api/reports/purge", { method: "POST" });
+  if (!response.ok) throw new Error("Stored reports could not be removed.");
+  return response.json();
+}
+
 export async function listIntelligenceReports(): Promise<IntelligenceReportSummary[]> {
   const response = await fetch("/api/reports?limit=20");
   if (!response.ok) return [];
@@ -966,6 +972,12 @@ export async function previewChange(body: Record<string, unknown>): Promise<{
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error("The change preview could not be built.");
+  return response.json();
+}
+
+export async function purgeReviews(): Promise<{ removed: number }> {
+  const response = await fetch("/api/reviews/purge", { method: "POST" });
+  if (!response.ok) throw new Error("Stored reviews could not be removed.");
   return response.json();
 }
 

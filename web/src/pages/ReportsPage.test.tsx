@@ -11,6 +11,7 @@ vi.mock("../api", () => ({
   }),
   createIntelligenceReport: vi.fn(),
   releaseDrift: vi.fn().mockResolvedValue({ status: "unavailable", note: "No earlier workspace report is stored." }),
+  purgeIntelligenceReports: vi.fn(),
 }));
 
 const snapshot = {
