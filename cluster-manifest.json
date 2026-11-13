@@ -28,8 +28,38 @@
           },
           {
             "method": "POST",
+            "path": "/send/sms",
+            "handler": "common/runtime.py::send"
+          },
+          {
+            "method": "POST",
+            "path": "/send/email",
+            "handler": "common/runtime.py::send"
+          },
+          {
+            "method": "POST",
+            "path": "/send/whatsapp",
+            "handler": "common/runtime.py::send"
+          },
+          {
+            "method": "POST",
+            "path": "/send/voice",
+            "handler": "common/runtime.py::send"
+          },
+          {
+            "method": "POST",
+            "path": "/send/webrtc",
+            "handler": "common/runtime.py::send"
+          },
+          {
+            "method": "POST",
             "path": "/send/{channel}",
             "handler": "common/runtime.py::send"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/messages/{correlation_id}",
+            "handler": "common/runtime.py::message_status"
           }
         ]
       },
@@ -40,15 +70,31 @@
           "provider": "uocp-auth-service",
           "method": "POST",
           "path": "/v1/validate",
-          "symbol": "common/runtime.py::send"
+          "symbol": "common/runtime.py::validate_key"
         },
         {
           "kind": "http",
           "consumer": "uocp-api-gateway",
           "provider": "uocp-tenant-service",
           "method": "GET",
-          "path": "/v1/tenants/{tenant_id}",
-          "symbol": "common/runtime.py::send"
+          "path": "/v1/tenants/demo-tenant",
+          "symbol": "common/runtime.py::load_tenant"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-api-gateway",
+          "provider": "uocp-tenant-service",
+          "method": "GET",
+          "path": "/v1/tenants/demo-tenant/limits",
+          "symbol": "common/runtime.py::load_limits"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-api-gateway",
+          "provider": "uocp-auth-service",
+          "method": "POST",
+          "path": "/v1/rbac/check",
+          "symbol": "common/runtime.py::check_role"
         },
         {
           "kind": "http",
@@ -56,7 +102,7 @@
           "provider": "uocp-routing-service",
           "method": "POST",
           "path": "/v1/route",
-          "symbol": "common/runtime.py::send"
+          "symbol": "common/runtime.py::ask_route"
         }
       ]
     },
@@ -84,10 +130,42 @@
             "method": "POST",
             "path": "/v1/validate",
             "handler": "common/runtime.py::validate"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/tokens",
+            "handler": "common/runtime.py::issue_token"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/rbac/check",
+            "handler": "common/runtime.py::check_rbac"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/api-keys",
+            "handler": "common/runtime.py::issue_api_key"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-auth-service",
+          "provider": "uocp-tenant-service",
+          "method": "GET",
+          "path": "/v1/tenants/demo-tenant",
+          "symbol": "common/runtime.py::bind_tenant"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-auth-service",
+          "provider": "uocp-audit-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::record_auth"
+        }
+      ]
     },
     {
       "id": "uocp-tenant-service",
@@ -113,10 +191,37 @@
             "method": "GET",
             "path": "/v1/tenants/{tenant_id}",
             "handler": "common/runtime.py::get_tenant"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/tenants/{tenant_id}/limits",
+            "handler": "common/runtime.py::tenant_limits"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/tenants/{tenant_id}/channels",
+            "handler": "common/runtime.py::tenant_channels"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-tenant-service",
+          "provider": "uocp-billing-service",
+          "method": "GET",
+          "path": "/v1/usage",
+          "symbol": "common/runtime.py::read_usage"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-tenant-service",
+          "provider": "uocp-audit-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::record_tenant"
+        }
+      ]
     },
     {
       "id": "uocp-routing-service",
@@ -151,40 +256,40 @@
           "consumer": "uocp-routing-service",
           "provider": "uocp-sms-service",
           "method": "POST",
-          "path": "/v1/send",
-          "symbol": "common/runtime.py::route"
+          "path": "/v1/sms/messages",
+          "symbol": "common/runtime.py::send_sms"
         },
         {
           "kind": "http",
           "consumer": "uocp-routing-service",
           "provider": "uocp-whatsapp-service",
           "method": "POST",
-          "path": "/v1/send",
-          "symbol": "common/runtime.py::route"
+          "path": "/v1/whatsapp/messages",
+          "symbol": "common/runtime.py::send_whatsapp"
         },
         {
           "kind": "http",
           "consumer": "uocp-routing-service",
           "provider": "uocp-email-service",
           "method": "POST",
-          "path": "/v1/send",
-          "symbol": "common/runtime.py::route"
+          "path": "/v1/email/messages",
+          "symbol": "common/runtime.py::send_email"
         },
         {
           "kind": "http",
           "consumer": "uocp-routing-service",
           "provider": "uocp-voice-service",
           "method": "POST",
-          "path": "/v1/send",
-          "symbol": "common/runtime.py::route"
+          "path": "/v1/voice/calls",
+          "symbol": "common/runtime.py::send_voice"
         },
         {
           "kind": "http",
           "consumer": "uocp-routing-service",
           "provider": "uocp-webrtc-service",
           "method": "POST",
-          "path": "/v1/send",
-          "symbol": "common/runtime.py::route"
+          "path": "/v1/webrtc/sessions",
+          "symbol": "common/runtime.py::send_webrtc"
         },
         {
           "kind": "http",
@@ -192,7 +297,7 @@
           "provider": "uocp-billing-service",
           "method": "POST",
           "path": "/v1/events",
-          "symbol": "common/runtime.py::emit_event"
+          "symbol": "common/runtime.py::notify_billing"
         },
         {
           "kind": "http",
@@ -200,7 +305,7 @@
           "provider": "uocp-analytics-service",
           "method": "POST",
           "path": "/v1/events",
-          "symbol": "common/runtime.py::emit_event"
+          "symbol": "common/runtime.py::notify_analytics"
         },
         {
           "kind": "http",
@@ -208,23 +313,23 @@
           "provider": "uocp-audit-service",
           "method": "POST",
           "path": "/v1/events",
-          "symbol": "common/runtime.py::emit_event"
+          "symbol": "common/runtime.py::notify_audit"
         },
         {
           "kind": "http",
           "consumer": "uocp-routing-service",
           "provider": "uocp-webhook-service",
           "method": "POST",
-          "path": "/v1/events",
-          "symbol": "common/runtime.py::emit_event"
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::notify_webhook"
         },
         {
           "kind": "http",
           "consumer": "uocp-routing-service",
           "provider": "uocp-notification-service",
           "method": "POST",
-          "path": "/v1/events",
-          "symbol": "common/runtime.py::emit_event"
+          "path": "/v1/notify",
+          "symbol": "common/runtime.py::notify_notification"
         }
       ]
     },
@@ -250,12 +355,52 @@
         "http": [
           {
             "method": "POST",
+            "path": "/v1/sms/messages",
+            "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
             "path": "/v1/send",
             "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/sms/otp",
+            "handler": "common/runtime.py::send_otp"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/sms/sender-ids",
+            "handler": "common/runtime.py::sender_ids"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-sms-service",
+          "provider": "uocp-webhook-service",
+          "method": "POST",
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::report_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-sms-service",
+          "provider": "uocp-billing-service",
+          "method": "POST",
+          "path": "/v1/charges",
+          "symbol": "common/runtime.py::charge_usage"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-sms-service",
+          "provider": "uocp-analytics-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::track_delivery"
+        }
+      ]
     },
     {
       "id": "uocp-whatsapp-service",
@@ -279,12 +424,52 @@
         "http": [
           {
             "method": "POST",
+            "path": "/v1/whatsapp/messages",
+            "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
             "path": "/v1/send",
             "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/whatsapp/templates",
+            "handler": "common/runtime.py::save_template"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/whatsapp/otp",
+            "handler": "common/runtime.py::send_otp"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-whatsapp-service",
+          "provider": "uocp-webhook-service",
+          "method": "POST",
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::report_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-whatsapp-service",
+          "provider": "uocp-billing-service",
+          "method": "POST",
+          "path": "/v1/charges",
+          "symbol": "common/runtime.py::charge_usage"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-whatsapp-service",
+          "provider": "uocp-analytics-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::track_delivery"
+        }
+      ]
     },
     {
       "id": "uocp-email-service",
@@ -308,12 +493,47 @@
         "http": [
           {
             "method": "POST",
+            "path": "/v1/email/messages",
+            "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
             "path": "/v1/send",
             "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/email/domains/verify",
+            "handler": "common/runtime.py::verify_domain"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-email-service",
+          "provider": "uocp-webhook-service",
+          "method": "POST",
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::report_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-email-service",
+          "provider": "uocp-billing-service",
+          "method": "POST",
+          "path": "/v1/charges",
+          "symbol": "common/runtime.py::charge_usage"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-email-service",
+          "provider": "uocp-analytics-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::track_delivery"
+        }
+      ]
     },
     {
       "id": "uocp-voice-service",
@@ -337,12 +557,60 @@
         "http": [
           {
             "method": "POST",
+            "path": "/v1/voice/calls",
+            "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
             "path": "/v1/send",
             "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/voice/otp",
+            "handler": "common/runtime.py::send_otp"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/voice/click-to-call",
+            "handler": "common/runtime.py::click_to_call"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-voice-service",
+          "provider": "uocp-webhook-service",
+          "method": "POST",
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::report_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-voice-service",
+          "provider": "uocp-billing-service",
+          "method": "POST",
+          "path": "/v1/charges",
+          "symbol": "common/runtime.py::charge_usage"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-voice-service",
+          "provider": "uocp-analytics-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::track_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-voice-service",
+          "provider": "uocp-webrtc-service",
+          "method": "POST",
+          "path": "/v1/webrtc/sessions",
+          "symbol": "common/runtime.py::open_session"
+        }
+      ]
     },
     {
       "id": "uocp-webrtc-service",
@@ -366,12 +634,63 @@
         "http": [
           {
             "method": "POST",
+            "path": "/v1/webrtc/sessions",
+            "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
             "path": "/v1/send",
             "handler": "common/runtime.py::send_channel"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/webrtc/click-to-call",
+            "handler": "common/runtime.py::click_to_call"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-webrtc-service",
+          "provider": "uocp-webhook-service",
+          "method": "POST",
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::report_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-webrtc-service",
+          "provider": "uocp-billing-service",
+          "method": "POST",
+          "path": "/v1/charges",
+          "symbol": "common/runtime.py::charge_usage"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-webrtc-service",
+          "provider": "uocp-analytics-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::track_delivery"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-webrtc-service",
+          "provider": "uocp-voice-service",
+          "method": "POST",
+          "path": "/v1/voice/calls",
+          "symbol": "common/runtime.py::bridge_voice"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-webrtc-service",
+          "provider": "uocp-auth-service",
+          "method": "POST",
+          "path": "/v1/tokens",
+          "symbol": "common/runtime.py::issue_agent_token"
+        }
+      ]
     },
     {
       "id": "uocp-billing-service",
@@ -399,13 +718,40 @@
             "handler": "common/runtime.py::receive_event"
           },
           {
+            "method": "POST",
+            "path": "/v1/charges",
+            "handler": "common/runtime.py::charge"
+          },
+          {
             "method": "GET",
             "path": "/v1/usage",
             "handler": "common/runtime.py::usage"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/rates",
+            "handler": "common/runtime.py::rates"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-billing-service",
+          "provider": "uocp-tenant-service",
+          "method": "GET",
+          "path": "/v1/tenants/demo-tenant",
+          "symbol": "common/runtime.py::load_tenant"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-billing-service",
+          "provider": "uocp-audit-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::record_charge"
+        }
+      ]
     },
     {
       "id": "uocp-campaign-service",
@@ -431,6 +777,26 @@
             "method": "POST",
             "path": "/v1/campaigns",
             "handler": "common/runtime.py::campaign"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/campaigns/schedule",
+            "handler": "common/runtime.py::schedule_campaign"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/campaigns",
+            "handler": "common/runtime.py::list_campaigns"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/templates",
+            "handler": "common/runtime.py::save_template"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/contacts/import",
+            "handler": "common/runtime.py::import_contacts"
           }
         ]
       },
@@ -441,7 +807,39 @@
           "provider": "uocp-routing-service",
           "method": "POST",
           "path": "/v1/route",
-          "symbol": "common/runtime.py::campaign"
+          "symbol": "common/runtime.py::dispatch"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-campaign-service",
+          "provider": "uocp-tenant-service",
+          "method": "GET",
+          "path": "/v1/tenants/demo-tenant/limits",
+          "symbol": "common/runtime.py::load_limits"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-campaign-service",
+          "provider": "uocp-billing-service",
+          "method": "GET",
+          "path": "/v1/rates",
+          "symbol": "common/runtime.py::load_rates"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-campaign-service",
+          "provider": "uocp-notification-service",
+          "method": "POST",
+          "path": "/v1/notify",
+          "symbol": "common/runtime.py::notify_done"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-campaign-service",
+          "provider": "uocp-analytics-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::track_campaign"
         }
       ]
     },
@@ -474,10 +872,29 @@
             "method": "GET",
             "path": "/v1/summary",
             "handler": "common/runtime.py::summary"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/channels/health",
+            "handler": "common/runtime.py::channel_health"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/engagement",
+            "handler": "common/runtime.py::engagement"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-analytics-service",
+          "provider": "uocp-webhook-service",
+          "method": "GET",
+          "path": "/v1/callbacks",
+          "symbol": "common/runtime.py::delivery_feed"
+        }
+      ]
     },
     {
       "id": "uocp-webhook-service",
@@ -503,10 +920,42 @@
             "method": "POST",
             "path": "/v1/events",
             "handler": "common/runtime.py::receive_event"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/callbacks",
+            "handler": "common/runtime.py::accept_callback"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/callbacks",
+            "handler": "common/runtime.py::list_callbacks"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/subscriptions",
+            "handler": "common/runtime.py::subscribe"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-webhook-service",
+          "provider": "uocp-tenant-service",
+          "method": "GET",
+          "path": "/v1/tenants/demo-tenant",
+          "symbol": "common/runtime.py::load_tenant"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-webhook-service",
+          "provider": "uocp-audit-service",
+          "method": "POST",
+          "path": "/v1/events",
+          "symbol": "common/runtime.py::record_callback"
+        }
+      ]
     },
     {
       "id": "uocp-notification-service",
@@ -532,10 +981,32 @@
             "method": "POST",
             "path": "/v1/events",
             "handler": "common/runtime.py::receive_event"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/notify",
+            "handler": "common/runtime.py::notify_operator"
           }
         ]
       },
-      "expected": []
+      "expected": [
+        {
+          "kind": "http",
+          "consumer": "uocp-notification-service",
+          "provider": "uocp-email-service",
+          "method": "POST",
+          "path": "/v1/email/messages",
+          "symbol": "common/runtime.py::send_email"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-notification-service",
+          "provider": "uocp-sms-service",
+          "method": "POST",
+          "path": "/v1/sms/messages",
+          "symbol": "common/runtime.py::send_sms"
+        }
+      ]
     },
     {
       "id": "uocp-audit-service",
@@ -561,6 +1032,11 @@
             "method": "POST",
             "path": "/v1/events",
             "handler": "common/runtime.py::receive_event"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/logs",
+            "handler": "common/runtime.py::audit_logs"
           }
         ]
       },
@@ -590,6 +1066,16 @@
             "method": "GET",
             "path": "/v1/report",
             "handler": "common/runtime.py::report"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/reports/delivery",
+            "handler": "common/runtime.py::delivery_report"
+          },
+          {
+            "method": "GET",
+            "path": "/v1/reports/billing",
+            "handler": "common/runtime.py::billing_report"
           }
         ]
       },
@@ -600,7 +1086,7 @@
           "provider": "uocp-billing-service",
           "method": "GET",
           "path": "/v1/usage",
-          "symbol": "common/runtime.py::report"
+          "symbol": "common/runtime.py::load_usage"
         },
         {
           "kind": "http",
@@ -608,7 +1094,23 @@
           "provider": "uocp-analytics-service",
           "method": "GET",
           "path": "/v1/summary",
-          "symbol": "common/runtime.py::report"
+          "symbol": "common/runtime.py::load_summary"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-reporting-service",
+          "provider": "uocp-audit-service",
+          "method": "GET",
+          "path": "/v1/logs",
+          "symbol": "common/runtime.py::load_logs"
+        },
+        {
+          "kind": "http",
+          "consumer": "uocp-reporting-service",
+          "provider": "uocp-campaign-service",
+          "method": "GET",
+          "path": "/v1/campaigns",
+          "symbol": "common/runtime.py::load_campaigns"
         }
       ]
     },

@@ -13,6 +13,17 @@ from dep_intel.topology.resolver import resolve
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_literal_httpx_call_keeps_method_and_url(tmp_path: Path) -> None:
+    from dep_intel.topology.sources.http import scan
+
+    (tmp_path / "client.py").write_text(
+        'import httpx\n\ndef validate_key():\n    return httpx.post("http://auth:8001/v1/validate", json={})\n',
+        encoding="utf-8",
+    )
+    found = scan(tmp_path)
+    assert found["calls"] == [{"method": "POST", "url": "http://auth:8001/v1/validate", "file": "client.py"}]
+
+
 def test_relative_route_without_a_host_stays_unresolved() -> None:
     result = resolve(
         [{"service": "auth-service"}, {"service": "user-service"}],
