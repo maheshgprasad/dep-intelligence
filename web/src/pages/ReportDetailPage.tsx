@@ -4,6 +4,7 @@ import { Accordion, AccordionItem, InlineLoading, InlineNotification, Structured
 import { getIntelligenceReport, type IntelligenceReport } from "../api";
 import { evidenceLine, externalTargetNote, legacySummary, providerDiscoveryText, rankingLine, scopeDescription, validationLines } from "../reportPresentation";
 import { IntelligenceExportMenu } from "../components/IntelligenceExportMenu";
+import { NamiDataTable } from "../components/NamiDataTable";
 import { PageHeader } from "../components/PageHeader";
 
 export function ReportDetailPage() {
@@ -195,9 +196,9 @@ function StoredReport({ report }: { report: IntelligenceReport }) {
 
 function WorkspaceSections({ report }: { report: IntelligenceReport }) {
   const rows = report.relationships?.items || [];
-  const shown = rows.slice(0, 24);
   const contracts = report.contracts?.table || [];
   const provenance = report.relationships?.provenance || {};
+  const relationshipTotal = report.relationships?.total || rows.length;
   return (
     <>
       <Tile>
@@ -225,23 +226,46 @@ function WorkspaceSections({ report }: { report: IntelligenceReport }) {
           </StructuredListWrapper>
         ) : <p>No services are recorded in this snapshot.</p>}
       </Tile>
-      <Tile>
-        <h2 className="section-title">{report.scope === "service_cluster" ? "Internal cross-service relationships" : "Cross-service relationships"}</h2>
-        {shown.length ? shown.map((item) => (
-          <p key={`${item.from_service}-${item.contract}-${item.to_service}`}>{item.from_service} → {item.to_service} · {item.contract} · Provenance {item.provenance || "recorded"}{item.resolution ? ` · Resolution ${item.resolution}` : ""}</p>
-        )) : <p>No cross-service relationships are recorded in this snapshot.</p>}
-        {shown.length ? <p className="helper">Confirmed contract edges. Repository history is not used for these relationships or for cluster membership.</p> : null}
-        {rows.length > shown.length ? <p className="helper">Showing {shown.length} of {report.relationships?.total || rows.length} relationships. Use the JSON or Evidence Package for the stored set.</p> : null}
-      </Tile>
-      <Tile>
-        <h2 className="section-title">Contracts</h2>
-        {contracts.length ? contracts.slice(0, 24).map((item) => (
-          <div key={`${item.provider}-${item.contract}`}>
-            <p>{item.provider} provides {item.contract}. Consumers: {(item.consumers || []).slice(0, 3).join(", ") || "none recorded"}{(item.consumers || []).length > 3 ? `, +${item.consumers.length - 3} more` : ""}.</p>
-            {item.explanation ? <p>{item.explanation}</p> : null}
-          </div>
-        )) : <p>No contracts are recorded in this snapshot.</p>}
-      </Tile>
+      <NamiDataTable
+        title={report.scope === "service_cluster" ? "Internal cross-service relationships" : "Cross-service relationships"}
+        description={rows.length ? "Confirmed contract edges. Repository history is not used for these relationships or for cluster membership." : undefined}
+        density="condensed"
+        columns={[
+          { key: "consumer", header: "Consumer" },
+          { key: "contract", header: "Contract" },
+          { key: "provider", header: "Provider" },
+          { key: "provenance", header: "Provenance" },
+          { key: "resolution", header: "Resolution" },
+        ]}
+        rows={rows.map((item, index) => ({
+          id: `${item.from_service}-${item.contract}-${item.to_service}-${index}`,
+          consumer: item.from_service || "—",
+          contract: item.contract || "—",
+          provider: item.to_service || "—",
+          provenance: item.provenance || "recorded",
+          resolution: item.resolution || "—",
+        }))}
+        emptyTitle="No cross-service relationships"
+        emptyDescription={rows.length < relationshipTotal ? `Showing ${rows.length} of ${relationshipTotal} relationships. Use the JSON or Evidence Package for the stored set.` : "No cross-service relationships are recorded in this snapshot."}
+      />
+      {rows.length && rows.length < relationshipTotal ? <p className="helper">Showing {rows.length} of {relationshipTotal} relationships. Use the JSON or Evidence Package for the stored set.</p> : null}
+      <NamiDataTable
+        title="Contracts"
+        density="condensed"
+        columns={[
+          { key: "provider", header: "Provider" },
+          { key: "contract", header: "Contract" },
+          { key: "consumers", header: "Consumers" },
+        ]}
+        rows={contracts.map((item, index) => ({
+          id: `${item.provider}-${item.contract}-${index}`,
+          provider: item.provider || "—",
+          contract: item.contract || "—",
+          consumers: (item.consumers || []).join(", ") || "none recorded",
+        }))}
+        emptyTitle="No contracts"
+        emptyDescription="No contracts are recorded in this snapshot."
+      />
       <Tile>
         <h2 className="section-title">Dependency concentration</h2>
         <p>{report.concentration?.note || "Dependency concentration describes confirmed reach. It is not a risk score."}</p>
@@ -292,40 +316,76 @@ function RepositorySections({ report }: { report: IntelligenceReport }) {
         <p>These metrics describe internal repository structure, not cross-service impact.</p>
         <p>{architecture?.files ?? "—"} files. {architecture?.symbols ?? report.service?.symbols ?? "—"} symbols. {architecture?.internal_relationships ?? "—"} internal relationships.</p>
       </Tile>
-      <Tile>
-        <h2 className="section-title">Contracts provided</h2>
-        {report.contracts?.provided?.length ? report.contracts.provided.map((item) => (
-          <div key={item.name}>
-            <p>{item.name} ({item.kind || "contract"}). Consumers: {(item.consumers || []).join(", ") || "none recorded"}.</p>
-            {item.explanation ? <p>{item.explanation}</p> : null}
-          </div>
-        )) : <p>No provided contracts are recorded.</p>}
-      </Tile>
-      <Tile>
-        <h2 className="section-title">Contracts consumed</h2>
-        {report.contracts?.consumed?.length ? report.contracts.consumed.map((item) => (
-          <div key={`${item.provider}-${item.name}`}>
-            <p>{item.name || "Contract"}. Provider: {item.provider || "Provider unresolved"}.</p>
-            {item.explanation ? <p>{item.explanation}</p> : null}
-          </div>
-        )) : <p>No consumed contracts are recorded.</p>}
-      </Tile>
-      <Tile>
-        <h2 className="section-title">This service depends on</h2>
-        {report.relationships?.upstream?.length ? report.relationships.upstream.map((item) => (
-          <div key={`${item.to_service}-${item.contract}`}>
-            <p>{item.to_service} via {item.contract}{item.caller_symbol ? ` · ${item.caller_symbol}` : ""}{item.caller_file ? ` · ${item.caller_file}` : ""}</p>
-          </div>
-        )) : <p>No upstream dependencies are recorded.</p>}
-      </Tile>
-      <Tile>
-        <h2 className="section-title">Services that depend on this service</h2>
-        {report.relationships?.downstream?.length ? report.relationships.downstream.map((item) => (
-          <div key={`${item.from_service}-${item.contract}`}>
-            <p>{item.from_service} via {item.contract}{item.caller_symbol ? ` · ${item.caller_symbol}` : ""}{item.caller_file ? ` · ${item.caller_file}` : ""}</p>
-          </div>
-        )) : <p>No downstream dependents are recorded.</p>}
-      </Tile>
+      <NamiDataTable
+        title="Contracts provided"
+        density="condensed"
+        columns={[
+          { key: "contract", header: "Contract" },
+          { key: "kind", header: "Kind" },
+          { key: "consumers", header: "Consumers" },
+        ]}
+        rows={(report.contracts?.provided || []).map((item, index) => ({
+          id: `${item.name}-${index}`,
+          contract: item.name || "—",
+          kind: item.kind || "contract",
+          consumers: (item.consumers || []).join(", ") || "none recorded",
+        }))}
+        emptyTitle="No provided contracts"
+        emptyDescription="No provided contracts are recorded."
+      />
+      <NamiDataTable
+        title="Contracts consumed"
+        density="condensed"
+        columns={[
+          { key: "contract", header: "Contract" },
+          { key: "provider", header: "Provider" },
+        ]}
+        rows={(report.contracts?.consumed || []).map((item, index) => ({
+          id: `${item.provider}-${item.name}-${index}`,
+          contract: item.name || "—",
+          provider: item.provider || "Provider unresolved",
+        }))}
+        emptyTitle="No consumed contracts"
+        emptyDescription="No consumed contracts are recorded."
+      />
+      <NamiDataTable
+        title="This service depends on"
+        density="condensed"
+        columns={[
+          { key: "provider", header: "Provider" },
+          { key: "contract", header: "Contract" },
+          { key: "caller", header: "Caller" },
+          { key: "file", header: "File" },
+        ]}
+        rows={(report.relationships?.upstream || []).map((item, index) => ({
+          id: `${item.to_service}-${item.contract}-${index}`,
+          provider: item.to_service || "—",
+          contract: item.contract || "—",
+          caller: item.caller_symbol || "—",
+          file: item.caller_file || "—",
+        }))}
+        emptyTitle="No upstream dependencies"
+        emptyDescription="No upstream dependencies are recorded."
+      />
+      <NamiDataTable
+        title="Services that depend on this service"
+        density="condensed"
+        columns={[
+          { key: "consumer", header: "Consumer" },
+          { key: "contract", header: "Contract" },
+          { key: "caller", header: "Caller" },
+          { key: "file", header: "File" },
+        ]}
+        rows={(report.relationships?.downstream || []).map((item, index) => ({
+          id: `${item.from_service}-${item.contract}-${index}`,
+          consumer: item.from_service || "—",
+          contract: item.contract || "—",
+          caller: item.caller_symbol || "—",
+          file: item.caller_file || "—",
+        }))}
+        emptyTitle="No downstream dependents"
+        emptyDescription="No downstream dependents are recorded."
+      />
       <Tile>
         <h2 className="section-title">History</h2>
         <p>{report.history?.label || "Unavailable"}</p>

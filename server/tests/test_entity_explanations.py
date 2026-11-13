@@ -117,7 +117,7 @@ def test_repository_report_explains_the_upstream_edge(tmp_path: Path) -> None:
     assert "src/users.js" in upstream["explanation"]
     assert "Contract edge, not history." in upstream["explanation"]
     text = render_markdown(document)
-    assert "auth-service via POST /api/auth/validate (listUsers, src/users.js)" in text
+    assert "| auth-service | POST /api/auth/validate | listUsers | src/users.js |" in text
     assert upstream["explanation"] not in text
     assert document["service"]["explanation"]
     assert document["service"]["explanation"].startswith("user-service: contract edges.")

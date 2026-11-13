@@ -13,7 +13,7 @@ import {
   TextInput,
   Toggle,
 } from "@carbon/react";
-import { previewChange, recentReviews, reviewConfig, reviewSourceOptions, runReview, type AppState } from "../api";
+import { previewChange, purgeReviews, recentReviews, reviewConfig, reviewSourceOptions, runReview, type AppState } from "../api";
 import { hideFilePaths } from "../labels";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
@@ -64,6 +64,9 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const [options, setOptions] = useState<Awaited<ReturnType<typeof reviewSourceOptions>> | null>(null);
   const [preview, setPreview] = useState<{ files: number; symbols: number; contracts: number; alignment: string; notes: string[] } | null>(null);
   const [reviews, setReviews] = useState<Awaited<ReturnType<typeof recentReviews>>>([]);
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [purgeNote, setPurgeNote] = useState("");
+  const [purgeError, setPurgeError] = useState("");
 
   const defaultRepository = repos[0]?.slug || "";
   useEffect(() => {
@@ -143,6 +146,18 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
     }
   }
 
+  async function purge() {
+    setPurgeError("");
+    try {
+      const result = await purgeReviews();
+      setConfirmPurge(false);
+      setPurgeNote(`Removed ${result.removed} stored reviews. Reports were kept.`);
+      setReviews(await recentReviews().catch(() => []));
+    } catch (exc) {
+      setPurgeError(exc instanceof Error ? exc.message : "Stored reviews could not be removed.");
+    }
+  }
+
   const commits = options?.recent_commits ?? [];
   const branches = options?.branches ?? [];
 
@@ -152,7 +167,18 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
         title="Review change"
         eyebrow="Powered by Nami Boundary Gate"
         description="Analyze an actual change and determine what it affects, why it matters, what can be verified, and whether anything should block it."
+        actions={confirmPurge ? (
+          <div className="button-row">
+            <Button kind="danger" onClick={() => void purge()}>Delete stored reviews</Button>
+            <Button kind="secondary" onClick={() => setConfirmPurge(false)}>Cancel</Button>
+          </div>
+        ) : (
+          <Button kind="danger--tertiary" onClick={() => { setPurgeNote(""); setPurgeError(""); setConfirmPurge(true); }}>Purge reviews</Button>
+        )}
       />
+      {confirmPurge ? <InlineNotification kind="warning" title="Purge stored reviews" subtitle="This deletes every stored review change. Reports are kept." lowContrast hideCloseButton /> : null}
+      {purgeNote ? <InlineNotification kind="success" title="Reviews" subtitle={purgeNote} lowContrast hideCloseButton /> : null}
+      {purgeError ? <InlineNotification kind="error" title="Reviews" subtitle={purgeError} lowContrast hideCloseButton /> : null}
       {error ? <InlineNotification kind="error" title="Review did not start" subtitle={error} lowContrast hideCloseButton /> : null}
       <Grid>
         <Column sm={4} md={4} lg={8}>

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,29 @@ def list_reports(output_dir: Path, limit: int = 20) -> list[dict[str, Any]]:
         row.pop("_mtime", None)
         cleaned.append(row)
     return cleaned
+
+
+def purge_reports(output_dir: Path) -> dict[str, int]:
+    """Delete stored intelligence reports. Reviews and other output stay in place."""
+    root = (output_dir / "reports").resolve()
+    if not root.is_dir():
+        return {"removed": 0}
+    removed = 0
+    for child in list(root.iterdir()):
+        if child.name.startswith("."):
+            continue
+        if child.is_symlink():
+            child.unlink()
+            removed += 1
+            continue
+        if not child.is_dir():
+            continue
+        resolved = child.resolve()
+        if root != resolved and root not in resolved.parents:
+            continue
+        shutil.rmtree(child)
+        removed += 1
+    return {"removed": removed}
 
 
 def safe_service_name(service: str | None) -> str:
