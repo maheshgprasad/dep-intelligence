@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, InlineLoading, InlineNotification, Tab, TabList, TabPanel, TabPanels, Tabs } from "@carbon/react";
-import { downloadSecurityReport, healthPackages, healthSecurity, healthTests, refreshHealth, reviewJob } from "../api";
+import { downloadSecurityReport, healthPackages, healthSecurity, healthTests, refreshHealth, releaseHygiene, reviewJob } from "../api";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -13,11 +13,13 @@ export function RepositoryHealthPage({ loaded }: { loaded: boolean }) {
   const [tests, setTests] = useState<Awaited<ReturnType<typeof healthTests>> | null>(null);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
+  const [hygiene, setHygiene] = useState<Awaited<ReturnType<typeof releaseHygiene>> | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     if (section === "packages") {
       void healthPackages(controller.signal).then(setPackages).catch(() => undefined);
+      void releaseHygiene().then(setHygiene).catch(() => setHygiene(null));
     } else if (section === "security") {
       void healthSecurity(controller.signal).then(setSecurity).catch(() => undefined);
     } else {
@@ -102,6 +104,29 @@ export function RepositoryHealthPage({ loaded }: { loaded: boolean }) {
                   )}
                   emptyTitle="No updates recorded"
                   emptyDescription="Update lookup has not been run, or every package is current."
+                />
+                <h2 className="section-title">Updates by service</h2>
+                <p className="helper">{hygiene?.note || "Not scanned means the repository is absent from the stored package check."}</p>
+                <NamiDataTable
+                  columns={[
+                    { key: "service", header: "Service" },
+                    { key: "package", header: "Package" },
+                    { key: "current", header: "Current" },
+                    { key: "fixed", header: "Fixed" },
+                    { key: "reachable", header: "Reachable contract" },
+                    { key: "status", header: "Status" },
+                  ]}
+                  rows={(hygiene?.rows || []).map((item, index) => ({
+                    id: `${item.service}-${item.package}-${index}`,
+                    service: item.service,
+                    package: item.package || "—",
+                    current: item.current || "—",
+                    fixed: item.fixed || "—",
+                    reachable: item.reachable ? "Yes" : "No",
+                    status: item.status,
+                  }))}
+                  emptyTitle="Not scanned"
+                  emptyDescription="No repository in the snapshot is named by the stored package check."
                 />
               </>
             )}

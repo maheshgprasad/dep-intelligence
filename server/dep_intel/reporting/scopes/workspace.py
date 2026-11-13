@@ -20,6 +20,7 @@ from dep_intel.reporting.collect import (
     reviews_for,
     topology_for,
 )
+from dep_intel.reporting.explanations import explain_contract
 from dep_intel.reporting.service_summary import service_summary
 from dep_intel.service_clusters import detect_service_clusters
 
@@ -200,7 +201,13 @@ def _contracts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         key = (row.get("to_service") or "", row.get("contract") or "", row.get("kind") or "")
         grouped.setdefault(key, set()).add(row.get("from_service") or "")
     table = [
-        {"provider": provider, "contract": contract, "kind": kind, "consumers": sorted(consumers)}
+        {
+            "provider": provider,
+            "contract": contract,
+            "kind": kind,
+            "consumers": sorted(consumers),
+            "explanation": explain_contract(provider, contract, sorted(consumers)),
+        }
         for (provider, contract, kind), consumers in grouped.items()
     ]
     table.sort(key=lambda item: (-len(item["consumers"]), item["provider"], item["contract"]))

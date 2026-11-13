@@ -667,7 +667,21 @@ export type ReportReviewCard = {
   evidence?: { source?: string; what?: string; statement?: string }[];
   primary_rule?: { rule_id?: string; title?: string; decision?: string } | null;
   reason_codes?: string[];
-  targets?: { total_findings?: number; unique_file_count?: number; items?: { file?: string; service?: string; contract?: string }[]; omitted?: number };
+  targets?: { total_findings?: number; unique_file_count?: number; items?: { file?: string; service?: string; contract?: string; explanation?: EntityExplanation }[]; omitted?: number };
+  entity_explanations?: EntityExplanation[];
+};
+
+export type EntityExplanation = {
+  entity?: string;
+  kind?: string;
+  label?: string;
+  service?: string;
+  explanation?: string;
+  why_selected?: string;
+  why_tagged?: string;
+  evidence_basis?: string;
+  claim?: string;
+  inspect?: string;
 };
 
 export type IntelligenceReport = {
@@ -704,24 +718,24 @@ export type IntelligenceReport = {
     attention_reviews?: ReportReviewCard[];
     reviews?: ReportReviewCard[];
   };
-  services?: { service: string; repository?: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number; symbols?: number; provides?: number; error?: string }[];
+  services?: { service: string; repository?: string; graph_label: string; history_label: string; health_label: string; downstream: number; upstream: number; symbols?: number; provides?: number; error?: string; explanation?: string }[];
   workspace?: { repository_count?: number; service_count: number; relationship_count: number; contract_count: number; graph_stale: number; unresolved_count: number; history_ready: number };
   service_clusters?: { count: number; items: ServiceClusterSummary[] };
   standalone?: { service_id: string; repository?: string }[];
   provider_discovery?: { status?: string; label?: string; unresolved_observation_count?: number; unique_unresolved_reference_count?: number; note?: string };
   relationships?: {
-    items?: { from_service?: string; to_service?: string; contract?: string; kind?: string; provenance?: string; resolution?: string }[];
-    upstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string }[];
-    downstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string }[];
+    items?: { from_service?: string; to_service?: string; contract?: string; kind?: string; provenance?: string; resolution?: string; explanation?: string }[];
+    upstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string; explanation?: string; caller_symbol?: string; caller_file?: string }[];
+    downstream?: { from_service?: string; to_service?: string; contract?: string; provenance?: string; explanation?: string; caller_symbol?: string; caller_file?: string }[];
     total?: number;
     included?: number;
     truncated?: boolean;
     provenance?: Record<string, number>;
   };
   contracts?: {
-    table?: { provider: string; contract: string; kind?: string; consumers: string[] }[];
-    provided?: { name: string; kind?: string; consumers?: string[] }[];
-    consumed?: { name?: string; provider?: string; provenance?: string }[];
+    table?: { provider: string; contract: string; kind?: string; consumers: string[]; explanation?: string }[];
+    provided?: { name: string; kind?: string; consumers?: string[]; explanation?: string }[];
+    consumed?: { name?: string; provider?: string; provenance?: string; explanation?: string }[];
   };
   concentration?: {
     widest_downstream?: { service: string; count: number } | null;
@@ -731,9 +745,9 @@ export type IntelligenceReport = {
   };
   history?: { status?: string; label?: string; missing?: string[]; note?: string; ready?: number };
   health?: Record<string, { status?: string; label?: string; detail?: string }>;
-  unresolved?: { service?: string; name?: string; host?: string }[];
+  unresolved?: { service?: string; name?: string; host?: string; explanation?: string }[];
   architecture?: { files?: number; symbols?: number; internal_relationships?: number; status?: string };
-  service?: { service?: string; repository?: string; symbols?: number; provides?: number; downstream?: number; upstream?: number; graph_label?: string; history_label?: string };
+  service?: { service?: string; repository?: string; symbols?: number; provides?: number; downstream?: number; upstream?: number; graph_label?: string; history_label?: string; explanation?: string };
 };
 
 export type ServiceClusterSummary = {
@@ -965,6 +979,36 @@ export async function recentReviews(): Promise<{ review_id: string; decision: st
 export async function cancelJob(jobId: string): Promise<void> {
   const response = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
   if (!response.ok) throw new Error("The review could not be cancelled.");
+}
+
+export type ReleaseContext = {
+  owners: { status?: string; source?: string; items?: { file?: string; service?: string; owner?: string }[] };
+  deployment_note?: string;
+  notification?: { text?: string; decision?: string };
+};
+
+export async function reviewRelease(reviewId: string): Promise<ReleaseContext> {
+  const response = await fetch(`/api/review/${reviewId}/release`);
+  if (!response.ok) throw new Error("Release context could not be loaded.");
+  return response.json();
+}
+
+export async function notifyReview(reviewId: string): Promise<{ delivered?: string; text?: string }> {
+  const response = await fetch(`/api/review/${reviewId}/notify`, { method: "POST" });
+  if (!response.ok) throw new Error("The notice could not be stored.");
+  return response.json();
+}
+
+export async function releaseDrift(): Promise<{ status?: string; note?: string; added_count?: number; removed_count?: number; unresolved_delta?: number | null; stale?: string[]; added?: { from_service: string; to_service: string; contract: string }[]; removed?: { from_service: string; to_service: string; contract: string }[] }> {
+  const response = await fetch("/api/release/drift");
+  if (!response.ok) throw new Error("Drift could not be loaded.");
+  return response.json();
+}
+
+export async function releaseHygiene(): Promise<{ status?: string; note?: string; rows?: { service: string; repository?: string; status: string; package?: string; current?: string; fixed?: string; reachable?: boolean }[] }> {
+  const response = await fetch("/api/release/hygiene");
+  if (!response.ok) throw new Error("Hygiene could not be loaded.");
+  return response.json();
 }
 
 export async function healthPackages(signal?: AbortSignal): Promise<{ matrix: Snapshot["matrix"]; updates: Snapshot["updates"] }> {

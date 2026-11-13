@@ -186,6 +186,7 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
         )
         if note or relation.get("truncated"):
             canvas.muted(note or "Relationship rows were truncated.")
+        canvas.muted("Confirmed contract edges. Repository history is not used for these relationships or for cluster membership.")
     else:
         canvas.muted("No cross-service relationships are recorded.")
     provenance = relation.get("provenance") or {}
@@ -254,6 +255,8 @@ def _repository(canvas: _Canvas, document: dict[str, Any]) -> None:
         for item in provided[:TABLE_CAP]:
             consumers = ", ".join(item.get("consumers") or []) or "none recorded"
             canvas.bullet(f"{item.get('name')} ({item.get('kind') or 'contract'}). Consumers: {consumers}")
+            if item.get("explanation"):
+                canvas.muted(str(item["explanation"]))
         if len(provided) > TABLE_CAP:
             canvas.muted(f"Showing {TABLE_CAP} of {len(provided)}.")
     else:
@@ -264,6 +267,8 @@ def _repository(canvas: _Canvas, document: dict[str, Any]) -> None:
     if consumed:
         for item in consumed[:TABLE_CAP]:
             canvas.bullet(f"{item.get('name')} from {item.get('provider') or 'an unresolved provider'}")
+            if item.get("explanation"):
+                canvas.muted(str(item["explanation"]))
         if len(consumed) > TABLE_CAP:
             canvas.muted(f"Showing {TABLE_CAP} of {len(consumed)}.")
     else:
@@ -308,11 +313,14 @@ def _provider(canvas: _Canvas, document: dict[str, Any]) -> None:
     canvas.section("Provider discovery")
     if discovery.get("status") == "not_scanned":
         canvas.paragraph("Not scanned")
-        return
-    canvas.kv("Status", discovery.get("label") or "Completed")
-    canvas.kv("Unique unresolved references", discovery.get("unique_unresolved_reference_count"))
-    canvas.kv("Unresolved observations", discovery.get("unresolved_observation_count"))
+    else:
+        canvas.kv("Status", discovery.get("label") or "Completed")
+        canvas.kv("Unique unresolved references", discovery.get("unique_unresolved_reference_count"))
+        canvas.kv("Unresolved observations", discovery.get("unresolved_observation_count"))
     canvas.muted("Provider discovery is separate from the confirmed service graph.")
+    for item in (document.get("unresolved") or [])[:8]:
+        if isinstance(item, dict) and item.get("explanation"):
+            canvas.bullet(str(item["explanation"]))
 
 
 def _why_text(item: dict[str, Any]) -> str:
@@ -376,6 +384,7 @@ def _reviews(canvas: _Canvas, activity: dict[str, Any]) -> None:
             extra = max(0, int(targets.get("unique_file_count") or 0) - len(files))
             suffix = f" + {extra} more" if extra else ""
             canvas.muted(f"Review targets: {targets.get('unique_file_count') or len(files)} files, {targets.get('total_findings') or 0} supporting findings. " + ", ".join(str(path) for path in files) + suffix)
+        _entity_explanations(canvas, item)
         if item.get("why_it_matters"):
             canvas.muted(f"Why it matters: {_why_text(item)}")
         evidence = item.get("evidence") or []
@@ -412,13 +421,26 @@ def _observations(canvas: _Canvas, document: dict[str, Any]) -> None:
             canvas.bullet(str(item))
 
 
+def _entity_explanations(canvas: _Canvas, item: dict[str, Any]) -> None:
+    explanations = [entry for entry in (item.get("entity_explanations") or []) if isinstance(entry, dict)][:8]
+    if not explanations:
+        return
+    canvas.paragraph("Why Nami tagged these items")
+    for entry in explanations:
+        text = entry.get("explanation") or entry.get("why_selected") or ""
+        canvas.muted(f"{entry.get('label') or 'Item'}: {text}")
+
+
 def _links(canvas: _Canvas, rows: list[dict[str, Any]], field: str, _verb: str) -> None:
     shown, note = _cap(rows)
     if not shown:
         canvas.muted("None recorded.")
         return
     for item in shown:
-        canvas.bullet(f"{item.get(field) or '-'} via {item.get('contract') or '-'}")
+        caller = str(item.get("caller_symbol") or "")
+        file_path = str(item.get("caller_file") or "")
+        extra = f" ({caller}, {file_path})" if caller and file_path else f" ({caller})" if caller else ""
+        canvas.bullet(f"{item.get(field) or '-'} via {item.get('contract') or '-'}{extra}")
     if note:
         canvas.muted(note)
 

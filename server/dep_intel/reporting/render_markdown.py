@@ -45,12 +45,14 @@ def render_markdown(document: dict[str, Any]) -> str:
         for row in (document.get("contracts") or {}).get("provided") or []:
             consumers = ", ".join(row.get("consumers") or []) or "none recorded"
             lines.append(f"- {row.get('name')} ({row.get('kind')}). Consumers: {consumers}")
+            if row.get("explanation"):
+                lines.append(f"  {row['explanation']}")
         lines.extend(["", "## Upstream dependencies", ""])
         for row in (document.get("relationships") or {}).get("upstream") or []:
-            lines.append(f"- {row.get('to_service')} via {row.get('contract')}")
+            lines.extend(_relationship_lines(row, f"{row.get('to_service')} via {row.get('contract')}"))
         lines.extend(["", "## Downstream dependents", ""])
         for row in (document.get("relationships") or {}).get("downstream") or []:
-            lines.append(f"- {row.get('from_service')} via {row.get('contract')}")
+            lines.extend(_relationship_lines(row, f"{row.get('from_service')} via {row.get('contract')}"))
     lines.extend(_review_section(document.get("review_activity") or {}))
     lines.extend(["", "## Key observations", ""])
     observations = document.get("inferences") or []
@@ -169,6 +171,9 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
     lines.extend(["", f"## {heading}", ""])
     for row in (relation.get("items") or [])[:100]:
         lines.append(f"- {row.get('from_service')} → {row.get('to_service')} via {row.get('contract')}")
+    if relation.get("items"):
+        lines.append("")
+        lines.append("Confirmed contract edges. Repository history is not used for these relationships or for cluster membership.")
     provenance = relation.get("provenance") or {}
     if provenance:
         lines.extend([
@@ -182,6 +187,9 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
     lines.extend(["", "## Contracts", "", "| Provider | Contract | Consumers |", "| --- | --- | --- |"])
     for row in (document.get("contracts") or {}).get("table") or []:
         lines.append(f"| {row.get('provider')} | {row.get('contract')} | {', '.join(row.get('consumers') or [])} |")
+    for row in (document.get("contracts") or {}).get("table") or []:
+        if row.get("explanation"):
+            lines.append(f"- {row['explanation']}")
     discovery = document.get("provider_discovery")
     if isinstance(discovery, dict) and discovery:
         lines.extend(["", "## Provider discovery", ""])
@@ -193,6 +201,27 @@ def _scope_sections(document: dict[str, Any]) -> list[str]:
             lines.append(f"Unresolved observations: {discovery.get('unresolved_observation_count')}")
         lines.append("")
         lines.append("Provider discovery is separate from the confirmed service graph.")
+        for item in (document.get("unresolved") or [])[:8]:
+            if isinstance(item, dict) and item.get("explanation"):
+                lines.append(f"- {item['explanation']}")
+    return lines
+
+
+def _relationship_lines(row: dict[str, Any], headline: str) -> list[str]:
+    caller = str(row.get("caller_symbol") or "")
+    file_path = str(row.get("caller_file") or "")
+    extra = f" ({caller}, {file_path})" if caller and file_path else f" ({caller})" if caller else f" ({file_path})" if file_path else ""
+    return [f"- {headline}{extra}"]
+
+
+def _entity_lines(item: dict[str, Any]) -> list[str]:
+    explanations = [entry for entry in (item.get("entity_explanations") or []) if isinstance(entry, dict)][:8]
+    if not explanations:
+        return []
+    lines = ["Why Nami tagged these items"]
+    for entry in explanations:
+        text = entry.get("explanation") or entry.get("why_selected") or ""
+        lines.append(f"- {entry.get('label') or 'Item'}: {text}")
     return lines
 
 
@@ -244,6 +273,7 @@ def _review_section(activity: dict[str, Any]) -> list[str]:
             omitted = max(0, int(targets.get("unique_file_count") or 0) - len(files))
             if omitted:
                 lines.append(f"- + {omitted} more")
+        lines.extend(_entity_lines(item))
         why = _why_text(item)
         if why:
             lines.append(f"Why it matters: {why}")

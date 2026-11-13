@@ -10,6 +10,7 @@ from dep_intel.app_state import cross_service_relationships
 from dep_intel.config import Settings
 from dep_intel.graph_models import CODE_SYMBOL, EVENT_CONTRACT, GRPC_CONTRACT, HTTP_CONTRACT, UNRESOLVED, Snapshot
 from dep_intel.path_hygiene import scrub_text
+from dep_intel.reporting.explanations import explain_contract, explain_relationship, explain_unresolved
 from dep_intel.reporting.models import STATUS_LABELS
 from dep_intel.reporting.review_summary import summarize_reviews
 from dep_intel.repository_identity import github_name, history_slug, load_index
@@ -41,8 +42,10 @@ def relationships(snapshot: Snapshot, service: str = "", members: set[str] | Non
     for item in payload.get("relationships") or []:
         if members is not None and (item.get("from_service") not in members or item.get("to_service") not in members):
             continue
-        provenance = _provenance(str(item.get("evidence") or ""))
-        rows.append({**item, "provenance": provenance, "resolution": item.get("resolution") or ""})
+        provenance = _provenance(str(item.get("evidence") or item.get("provenance") or ""))
+        copied = {**item, "provenance": provenance, "resolution": item.get("resolution") or ""}
+        copied["explanation"] = explain_relationship(copied)
+        rows.append(copied)
     shown = rows[:100]
     return {
         "relationships": rows,
@@ -145,7 +148,7 @@ def _filter_health(data: dict[str, Any], keys: set[str]) -> dict[str, Any] | Non
     packages = _section_for_repo(data.get("packages"), keys, ("repositories", "repos"))
     security = _security_for_repo(data.get("security"), keys)
     coverage = _section_for_repo(data.get("coverage"), keys, ("repositories", "repos"))
-    updates = _section_for_repo(data.get("updates"), keys, ("repositories", "repos"))
+    updates = _updates_for_repo(data.get("updates"), keys)
     if packages is None and security is None and coverage is None and updates is None:
         return None
     note = "Counts are limited to stored records for this repository."
@@ -156,6 +159,40 @@ def _filter_health(data: dict[str, Any], keys: set[str]) -> dict[str, Any] | Non
         "coverage": coverage or {"status": "not_scanned", "label": label("not_scanned"), "detail": "No repository coverage artifact was stored.", "finding_count": None},
         "note": note,
     }
+
+
+def _updates_for_repo(payload: Any, keys: set[str]) -> dict[str, Any] | None:
+    """Update rows are stored by severity, with a repo on each row, not under repositories."""
+    found = _section_for_repo(payload, keys, ("repositories", "repos"))
+    if found:
+        return found
+    if not isinstance(payload, dict):
+        return None
+    buckets = payload.get("updates")
+    rows: list[dict[str, Any]] = []
+    if isinstance(buckets, dict):
+        for items in buckets.values():
+            if not isinstance(items, list):
+                continue
+            rows.extend(
+                item for item in items
+                if isinstance(item, dict) and _key_matches(str(item.get("repo") or item.get("repository") or ""), keys)
+            )
+    if rows:
+        return {
+            "status": "available",
+            "label": label("available"),
+            "detail": f"{len(rows)} newer releases are stored for this repository.",
+            "finding_count": len(rows),
+        }
+    if payload.get("meta") or payload.get("summary") or isinstance(buckets, dict):
+        return {
+            "status": "not_scanned",
+            "label": label("not_scanned"),
+            "detail": "The stored update check does not name this repository.",
+            "finding_count": None,
+        }
+    return None
 
 
 def _section_for_repo(payload: Any, keys: set[str], containers: tuple[str, ...]) -> dict[str, Any] | None:
@@ -330,6 +367,7 @@ def contracts_of(snapshot: Snapshot, service_id: str, rows: list[dict[str, Any]]
             "identity": str(node.metadata.get("identity") or node.qualified_name or ""),
             "provenance": str(node.metadata.get("provenance") or node.metadata.get("source") or ""),
             "consumers": consumers,
+            "explanation": explain_contract(service_id, node.name or node.qualified_name, consumers),
         })
     consumed = []
     for row in rows:
@@ -341,6 +379,7 @@ def contracts_of(snapshot: Snapshot, service_id: str, rows: list[dict[str, Any]]
             "identity": row.get("contract_identity"),
             "provider": row.get("to_service"),
             "provenance": row.get("provenance"),
+            "explanation": row.get("explanation") or explain_relationship(row),
         })
     provided.sort(key=lambda item: (item["kind"], item["name"]))
     consumed.sort(key=lambda item: (item.get("provider") or "", item.get("name") or ""))
@@ -364,6 +403,7 @@ def unresolved_of(snapshot: Snapshot, service_id: str = "") -> list[dict[str, An
             "service": node.service_id,
             "name": node.name or node.qualified_name,
             "identity": str(node.metadata.get("identity") or ""),
+            "explanation": explain_unresolved({"service": node.service_id, "name": node.name or node.qualified_name}),
         })
     rows.sort(key=lambda item: (item["service"], item["name"]))
     return rows
@@ -405,7 +445,14 @@ def topology_for(settings: Settings, members: set[str] | None = None) -> dict[st
         )
         current = grouped.get(key)
         if current is None:
-            grouped[key] = {**item, "observations": 1, "service": key[0], "host": key[3], "name": key[3] or key[2]}
+            grouped[key] = {
+                **item,
+                "observations": 1,
+                "service": key[0],
+                "host": key[3],
+                "name": key[3] or key[2],
+                "explanation": explain_unresolved({"service": key[0], "name": key[3] or key[2] or "a provider"}),
+            }
         else:
             current["observations"] = int(current.get("observations") or 1) + 1
     items = sorted(grouped.values(), key=lambda item: (str(item.get("service") or ""), str(item.get("host") or ""), str(item.get("path") or "")))

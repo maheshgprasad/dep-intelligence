@@ -18,7 +18,7 @@ import {
   Tabs,
   Tile,
 } from "@carbon/react";
-import { cancelJob, getReview, reviewJob, sendReviewFeedback, type ReviewFinding, type ReviewReport } from "../api";
+import { cancelJob, getReview, notifyReview, reviewJob, reviewRelease, sendReviewFeedback, type ReleaseContext, type ReviewFinding, type ReviewReport } from "../api";
 import { ActionList } from "../components/ActionList";
 import { AssessmentSummary } from "../components/AssessmentSummary";
 import { DecisionReason } from "../components/DecisionReason";
@@ -56,6 +56,8 @@ export function ReviewDetailPage() {
   const [feedbackError, setFeedbackError] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [progress, setProgress] = useState({ stage: "resolve_change", label: "Selecting the change", percent: 11, index: 1, count: 9 });
+  const [release, setRelease] = useState<ReleaseContext | null>(null);
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     if (!reviewId) return;
@@ -63,6 +65,7 @@ export function ReviewDetailPage() {
     void getReview(reviewId)
       .then(setReport)
       .catch((exc: unknown) => setError(exc instanceof Error ? exc.message : "The review could not be loaded."));
+    void reviewRelease(reviewId).then(setRelease).catch(() => setRelease(null));
   }, [reviewId, isJob]);
 
   useEffect(() => {
@@ -189,6 +192,36 @@ export function ReviewDetailPage() {
         <Column sm={4} md={2} lg={3}><Tile><p className="stat-label">Blocking issues</p><p className="stat-value">{report.gate.blocking_findings.length}</p></Tile></Column>
         <Column sm={4} md={4} lg={4}><Tile><p className="stat-label">Verification</p><p className="stat-value">{report.verification.length ? `${passed(report)} / ${report.verification.length} passed` : "Not run"}</p></Tile></Column>
       </Grid>
+      {release ? (
+        <Grid>
+          <Column sm={4} md={4} lg={5}>
+            <Tile>
+              <h2 className="section-title">Who should look</h2>
+              {release.owners.status === "not_recorded" ? <p className="helper">No CODEOWNERS file is stored for this checkout.</p> : null}
+              <NamiDataTable
+                columns={[{ key: "file", header: "File" }, { key: "owner", header: "Owner" }]}
+                rows={(release.owners.items || []).map((item) => ({ id: item.file || item.service || "file", file: item.file || "—", owner: item.owner || "—" }))}
+                emptyTitle="No files"
+                emptyDescription="This review did not record a file to match."
+              />
+            </Tile>
+          </Column>
+          <Column sm={4} md={4} lg={6}>
+            <Tile>
+              <h2 className="section-title">Deployed revision</h2>
+              <p>{release.deployment_note}</p>
+            </Tile>
+          </Column>
+          <Column sm={4} md={8} lg={5}>
+            <Tile>
+              <h2 className="section-title">Notice</h2>
+              <p>{release.notification?.text}</p>
+              <Button kind="tertiary" size="sm" onClick={() => void notifyReview(report.review_id).then((result) => setNotice(result.delivered || "stored")).catch(() => setNotice("The notice could not be stored."))}>Store notice</Button>
+              {notice ? <p className="helper">{notice}</p> : null}
+            </Tile>
+          </Column>
+        </Grid>
+      ) : null}
       <Tabs>
         <TabList aria-label="Review sections">
           <Tab>Findings</Tab>

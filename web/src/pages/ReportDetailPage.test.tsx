@@ -33,6 +33,12 @@ function report(overrides: Record<string, unknown> = {}) {
         service: "auth-service",
         primary_rule: { rule_id: "BG-TEMPORAL-001", title: "Historical association is not a blocker" },
         targets: { unique_file_count: 1, total_findings: 1, items: [{ file: "src/app.py" }] },
+        entity_explanations: [{
+          label: "src/app.py",
+          kind: "temporal_only",
+          explanation: "History associates it with the change. Temporal target, not a dependency.",
+          why_selected: "History associates it with the change.",
+        }],
         why_it_matters: "Historical association is not a blocker.",
         evidence: [{ source: "Repository history", statement: "Repository history identified src/app.py." }],
         ranking_context: { source: "Nami Rank", statement: "Nami Rank prioritized this target." },
@@ -63,6 +69,8 @@ describe("Report detail", () => {
     expect(screen.getByText(/outside the selected Service Cluster/)).toBeInTheDocument();
     expect(screen.getByText("Decision logic: Validation failed")).toBeInTheDocument();
     expect(screen.getByText(/Review src\/app.py before deployment/)).toBeInTheDocument();
+    expect(screen.getByText(/Why Nami tagged these items/)).toBeInTheDocument();
+    expect(screen.getByText(/src\/app.py: History associates it with the change. Temporal target, not a dependency./)).toBeInTheDocument();
     expect(screen.queryByText(/validated evidence/i)).not.toBeInTheDocument();
   });
 

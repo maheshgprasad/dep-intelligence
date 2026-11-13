@@ -7,6 +7,7 @@ from typing import Any
 from dep_intel.config import Settings
 from dep_intel.graph_models import HTTP_CONTRACT, GRPC_CONTRACT, EVENT_CONTRACT, Snapshot
 from dep_intel.reporting.collect import label
+from dep_intel.reporting.explanations import explain_service
 
 CONTRACTS = {HTTP_CONTRACT, GRPC_CONTRACT, EVENT_CONTRACT}
 
@@ -58,4 +59,5 @@ def service_summary(
         "health_status": health_status,
         "health_label": label(health_status),
         "error": part.error or "",
+        "explanation": explain_service(service_id, provides=provides, upstream=upstream, downstream=downstream),
     }

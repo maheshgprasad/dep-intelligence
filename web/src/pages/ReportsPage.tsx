@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, ContentSwitcher, Dropdown, Switch } from "@carbon/react";
-import { getServiceClusters, listIntelligenceReports, type AppState, type IntelligenceReportSummary, type ServiceClusterSummary } from "../api";
+import { Button, ContentSwitcher, Dropdown, Switch, Tile } from "@carbon/react";
+import { getServiceClusters, listIntelligenceReports, releaseDrift, type AppState, type IntelligenceReportSummary, type ServiceClusterSummary } from "../api";
 import { GenerateReportButton } from "../components/GenerateReportButton";
 import { reportTarget, reportType } from "../reportPresentation";
 import { NamiDataTable } from "../components/NamiDataTable";
@@ -18,9 +18,11 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
   const [clusterId, setClusterId] = useState("");
   const [clusters, setClusters] = useState<ServiceClusterSummary[]>([]);
   const [reports, setReports] = useState<IntelligenceReportSummary[]>([]);
+  const [drift, setDrift] = useState<Awaited<ReturnType<typeof releaseDrift>> | null>(null);
 
   useEffect(() => {
     void listIntelligenceReports().then(setReports).catch(() => setReports([]));
+    void releaseDrift().then(setDrift).catch(() => setDrift(null));
     void getServiceClusters().then((payload) => {
       setClusters(payload.clusters || []);
       setClusterId((current) => current || payload.clusters?.[0]?.cluster_id || "");
@@ -67,6 +69,16 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
           onChange={({ selectedItem }) => setService(selectedItem?.id || "")}
         />
       ) : null}
+      <Tile>
+        <h2 className="section-title">Since the last workspace report</h2>
+        <p className="helper">{drift?.note || "Drift is compared with the latest stored workspace report."}</p>
+        {drift?.status === "available" ? (
+          <>
+            <p>{drift.added_count ?? 0} added edges. {drift.removed_count ?? 0} removed edges. Unresolved symbols {drift.unresolved_delta ?? 0}. Newly stale: {(drift.stale || []).join(", ") || "none"}.</p>
+            {(drift.added || []).slice(0, 5).map((item) => <p key={`added-${item.from_service}-${item.contract}`}>{item.from_service} → {item.to_service} · {item.contract}</p>)}
+          </>
+        ) : <p>No earlier workspace report is stored.</p>}
+      </Tile>
       <GenerateReportButton scope={scope} service={service} clusterId={clusterId} staleCount={snapshot?.cluster?.stale_services?.length || 0} />
       <NamiDataTable
         title="Recent reports"
