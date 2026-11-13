@@ -11,6 +11,7 @@ from typing import Any
 
 from dep_intel.path_hygiene import scrub_text
 from dep_intel.review_explain import GATE_RULES
+from dep_intel.reporting.explanations import explain_cross_cluster, explain_review_entity, has_named_path
 from dep_intel.review_store import read_review
 
 _SOURCES = {
@@ -95,11 +96,13 @@ def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str]
         "validation_status": validation["status"],
         "validation": validation["sentence"],
         "validation_detail": validation,
+        "entity_explanations": [item["explanation"] for item in (targets.get("items") or []) if item.get("explanation")],
     }
     outside = _outside(report, members, known)
     if outside:
         card["cross_cluster_targets"] = outside
         card["cross_cluster_note"] = "Cross-cluster review target"
+        card["entity_explanations"].extend(explain_cross_cluster(name) for name in outside)
     return card
 
 
@@ -185,8 +188,14 @@ def _primary(rules: list[dict[str, Any]], decision: str) -> dict[str, Any] | Non
 
 
 def _targets(report: dict[str, Any]) -> dict[str, Any]:
-    found: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
+    found: list[dict[str, Any]] = []
+    ranks: list[int] = []
+    gate = report.get("gate") if isinstance(report.get("gate"), dict) else {}
+    temporal_review = "temporal_only_review_target" in (gate.get("reason_codes") or []) or any(
+        "TEMPORAL" in str(rule.get("rule_id") or "")
+        for rule in (gate.get("decision_rules") or [])
+        if isinstance(rule, dict)
+    )
     findings = report.get("findings") if isinstance(report.get("findings"), list) else []
     candidates = ((report.get("impact") or {}).get("ranked_candidates") or []) if isinstance(report.get("impact"), dict) else []
     changes = ((report.get("change") or {}).get("contract_changes") or []) if isinstance(report.get("change"), dict) else []
@@ -202,18 +211,36 @@ def _targets(report: dict[str, Any]) -> dict[str, Any]:
         contract = str(item.get("contract") or "")
         if not file_path and not symbol and not contract:
             continue
-        key = (service, file_path, symbol or contract)
-        if key in seen:
+        rank = _origin_rank(item)
+        index = _target_index(found, service, file_path, symbol, contract)
+        if index is not None and rank < ranks[index]:
             continue
-        seen.add(key)
-        row = {"service": service, "origin": str(item.get("evidence_origin") or item.get("source") or "")}
+        if index is not None and rank == ranks[index] and not has_named_path(item):
+            continue
+        row = {"service": service or (found[index]["service"] if index is not None else ""), "origin": str(item.get("evidence_origin") or item.get("source") or "")}
         if file_path:
             row["file"] = file_path
         if symbol and not _looks_like_path(symbol):
             row["symbol"] = symbol
+        elif index is not None and found[index].get("symbol"):
+            row["symbol"] = found[index]["symbol"]
         if contract:
             row["contract"] = contract
-        found.append(row)
+        elif index is not None and found[index].get("contract"):
+            row["contract"] = found[index]["contract"]
+        row["explanation"] = explain_review_entity({
+            **item,
+            "file_path": file_path,
+            "symbol": row.get("symbol") or "",
+            "contract": row.get("contract") or "",
+            "service_id": row["service"],
+        }, temporal_review=temporal_review and rank == 0)
+        if index is None:
+            found.append(row)
+            ranks.append(rank)
+        else:
+            found[index] = row
+            ranks[index] = rank
     unique_files = {item.get("file") for item in found if item.get("file")}
     return {
         "total_findings": len(findings),
@@ -223,6 +250,31 @@ def _targets(report: dict[str, Any]) -> dict[str, Any]:
         "truncated": len(found) > 5,
         "omitted": max(0, len(found) - 5),
     }
+
+
+def _origin_rank(item: dict[str, Any]) -> int:
+    origin = str(item.get("evidence_origin") or item.get("source") or "").lower()
+    if origin in {"temporal_only", "git_history"}:
+        return 3
+    if origin in {"hybrid", "both"}:
+        return 3
+    if origin:
+        return 2
+    return 0
+
+
+def _target_index(found: list[dict[str, Any]], service: str, file_path: str, symbol: str, contract: str) -> int | None:
+    identity = symbol or contract
+    for index, row in enumerate(found):
+        same_file = bool(file_path) and row.get("file") == file_path
+        same_identity = bool(identity) and (row.get("symbol") or row.get("contract")) == identity
+        if not same_file and not same_identity:
+            continue
+        existing = str(row.get("service") or "")
+        if service and existing and service != existing:
+            continue
+        return index
+    return None
 
 
 def _evidence(report: dict[str, Any], primary: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, str] | None]:

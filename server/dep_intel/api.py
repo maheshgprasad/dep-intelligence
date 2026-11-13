@@ -905,6 +905,60 @@ async def intelligence_export_evidence(report_id: str) -> FileResponse:
     return await asyncio.to_thread(_intelligence_export, report_id, "zip", "application/zip")
 
 
+@app.get("/api/release/drift")
+def release_drift() -> dict:
+    from dep_intel.release_ops import drift_since_last_report
+
+    settings = Settings.load()
+    return drift_since_last_report(settings, get_engine(settings).current())
+
+
+@app.get("/api/release/hygiene")
+def release_hygiene() -> dict:
+    from dep_intel.release_ops import hygiene_rows
+
+    settings = Settings.load()
+    return hygiene_rows(settings, get_engine(settings).current())
+
+
+@app.get("/api/release/deployments")
+def release_deployments() -> dict:
+    from dep_intel.release_ops import load_deployments
+
+    return load_deployments(Settings.load())
+
+
+@app.get("/api/review/{review_id}/release")
+def review_release(review_id: str) -> dict:
+    from dep_intel.release_ops import deployment_note, load_deployments, notification_for, owners_for_review
+    from dep_intel.review_store import read_review
+
+    settings = Settings.load()
+    report = read_review(settings.output_dir, review_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail={"code": "review_not_found"})
+    snapshot = get_engine(settings).current()
+    return {
+        "owners": owners_for_review(settings, report),
+        "deployments": load_deployments(settings),
+        "deployment_note": deployment_note(settings, snapshot, report),
+        "notification": notification_for(report),
+        "check": {"exit_code": 1 if str((report.get("gate") or {}).get("decision") or "") == "block" else 0},
+    }
+
+
+@app.post("/api/review/{review_id}/notify")
+def review_notify(review_id: str) -> dict:
+    from dep_intel.release_ops import deliver_notification
+    from dep_intel.review_store import read_review
+
+    settings = Settings.load()
+    report = read_review(settings.output_dir, review_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail={"code": "review_not_found"})
+    return deliver_notification(settings, report)
+
+
 @app.get("/")
 def dashboard() -> FileResponse:
     return _ui("")

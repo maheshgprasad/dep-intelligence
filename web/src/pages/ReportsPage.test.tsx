@@ -10,6 +10,7 @@ vi.mock("../api", () => ({
     clusters: [{ cluster_id: "svc-cluster-fixture", label: "AUTH service cluster", service_count: 3, relationship_count: 2, services: ["auth-service", "user-service", "reporting-service"] }],
   }),
   createIntelligenceReport: vi.fn(),
+  releaseDrift: vi.fn().mockResolvedValue({ status: "unavailable", note: "No earlier workspace report is stored." }),
 }));
 
 const snapshot = {
