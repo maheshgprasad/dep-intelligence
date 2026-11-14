@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from dep_intel.config import Settings
@@ -88,6 +89,31 @@ def history_slug(settings: Settings, *, service_id: str = "", repository: str = 
     return "", "repository-to-history mapping could not be resolved."
 
 
+def partition_service(settings: Settings, snapshot: Any, requested: str = "", checkout: Path | None = None) -> str:
+    """Map a service id, checkout slug, repository URL, or checkout directory to a snapshot partition.
+
+    GitHub checkouts keep an owner_repo slug. Cluster membership uses the service id from repos.txt.
+    """
+    if snapshot is None:
+        return ""
+    requested = (requested or "").strip()
+    partitions = getattr(snapshot, "partitions", None) or {}
+    if requested and requested in partitions:
+        return requested
+    aliases = {item for item in (requested, checkout.name if checkout is not None else "") if item}
+    if aliases:
+        from dep_intel.sources import load_repos
+
+        for ref in load_repos(settings):
+            names = {ref.slug, ref.service_id, ref.name, ref.raw}
+            if aliases & names:
+                aliases.update(item for item in names if item)
+    for part in partitions.values():
+        if part.service_id in aliases or part.repository in aliases:
+            return part.service_id
+    return ""
+
+
 def resolve_repository_path(settings: Settings, repository: str) -> Path | None:
     """Map a known slug or repos.txt identity to a checkout.
 
@@ -103,7 +129,7 @@ def resolve_repository_path(settings: Settings, repository: str) -> Path | None:
     from dep_intel.sources import load_repos
 
     for repo in load_repos(settings):
-        if text not in {repo.raw, repo.slug, repo.name}:
+        if text not in {repo.raw, repo.slug, repo.name, repo.service_id}:
             continue
         if repo.path is not None and repo.path.is_dir():
             return repo.path

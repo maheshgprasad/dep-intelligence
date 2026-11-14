@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createIntelligenceReport } from "../api";
 import { ReportsPage } from "./ReportsPage";
 
 vi.mock("../api", () => ({
@@ -29,6 +30,10 @@ describe("Reports page", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it("offers workspace, service cluster, and repository scopes", async () => {
     render(<MemoryRouter><ReportsPage snapshot={snapshot} /></MemoryRouter>);
     expect(screen.getByRole("tab", { name: "Entire workspace" })).toBeInTheDocument();
@@ -40,5 +45,19 @@ describe("Reports page", () => {
     const repository = await screen.findByRole("combobox", { name: "Repository" });
     await userEvent.click(repository);
     expect(await screen.findByRole("option", { name: "tooling-repo" })).toBeInTheDocument();
+  });
+
+  it("sends the displayed service cluster when refreshing intelligence", async () => {
+    vi.mocked(createIntelligenceReport).mockResolvedValue({ report_id: "rpt-1", scope: "service_cluster", graph_version: "v1" });
+    render(<MemoryRouter><ReportsPage snapshot={snapshot} /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("tab", { name: "Service cluster" }));
+    expect(await screen.findByText(/AUTH service cluster — 3 services · 2 confirmed calls/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh intelligence first" }));
+    expect(createIntelligenceReport).toHaveBeenCalledWith({
+      scope: "service_cluster",
+      service: "auth-service",
+      cluster_id: "svc-cluster-fixture",
+      refresh: true,
+    });
   });
 });

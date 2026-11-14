@@ -18,6 +18,27 @@ from dep_intel.reporting.store import fingerprint, list_reports, save_report
 from dep_intel.store import write_json
 
 
+def test_repository_report_accepts_the_checkout_slug(tmp_path: Path) -> None:
+    repos = tmp_path / "repos.txt"
+    repos.write_text(
+        "[cluster:omnichannel]\nuocp-billing-service = https://github.com/hvrcorp/uocp-billing-service\n",
+        encoding="utf-8",
+    )
+    settings = Settings(root=tmp_path, repos_file=repos, output_dir=tmp_path, github_token="", ghe_token="")
+    part = Partition(service_id="uocp-billing-service", repository="https://github.com/hvrcorp/uocp-billing-service", quality="ok")
+    snapshot = index_snapshot(
+        version="g-billing",
+        generated_at="2026-01-01T00:00:00+00:00",
+        partitions={"uocp-billing-service": part},
+        overlay={},
+        bridges=[],
+        diagnostics=[],
+        fingerprints=[],
+    )
+    document = generate_report(settings, snapshot, "repository", "hvrcorp_uocp_billing_service")
+    assert document["identity"]["service"] == "uocp-billing-service"
+
+
 def test_repository_report_records_identity_contracts_and_hash(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     _history(tmp_path, "auth-service", commits=4)

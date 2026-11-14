@@ -335,7 +335,7 @@ def _match_repo(reference: str, repos: list[RepoRef], root: Path) -> list[RepoRe
         target = (root / target).resolve()
     matches: list[RepoRef] = []
     for repo in repos:
-        if reference in {repo.raw, repo.name, repo.slug}:
+        if reference in {repo.raw, repo.name, repo.slug, repo.service_id}:
             matches.append(repo)
             continue
         if repo.path is not None and repo.path.resolve() == target:
@@ -425,6 +425,8 @@ def manifest_from_repos(repos: list[RepoRef]) -> ClusterManifest:
 
 
 def _service_id(repo: RepoRef) -> str:
+    if repo.service_id:
+        return repo.service_id
     slug = repo.slug or "repo"
     if slug[0].isalpha() and all(ch.isalnum() or ch in "-_" for ch in slug):
         return slug

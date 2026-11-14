@@ -95,8 +95,10 @@ class ClusterEngine:
 
     def catalog(self, service: str) -> dict[str, Any]:
         from dep_intel.app_state import service_catalog
+        from dep_intel.repository_identity import partition_service
 
-        return service_catalog(self.current(), service)
+        resolved = partition_service(self.settings, self.current(), service) or service
+        return service_catalog(self.current(), resolved)
 
     def relationships(self, limit: int = 50, service: str = "", kind: str = "") -> dict[str, Any]:
         from dep_intel.app_state import cross_service_relationships
