@@ -859,7 +859,7 @@ export async function refreshCluster(): Promise<{ job_id: string; status: string
 export type AppState = {
   schema_version: number;
   running: boolean;
-  repositories: { slug: string; name: string; checkout?: string; checkout_status?: string; error: string | null }[];
+  repositories: { slug: string; name: string; service_id?: string; checkout?: string; checkout_status?: string; error: string | null }[];
   cluster: ClusterSummary;
   intelligence: {
     overall: string;

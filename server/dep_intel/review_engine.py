@@ -90,7 +90,7 @@ class ReviewEngine:
         fatal = [item for item in resolved.get("diagnostics") or [] if item.get("severity") == "error"]
         snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
         previous = self.cluster.previous() if self.cluster is not None and hasattr(self.cluster, "previous") else None
-        service_id = _service_id(snapshot, body.get("service") or source.get("service_id") or "", repo)
+        service_id = _service_id(self.settings, snapshot, body.get("service") or source.get("service_id") or "", repo)
         if fatal:
             return self._finish_incomplete(review_id, repo, source, fatal, started, timings, resolved=resolved, service_id=service_id, requested_mode=requested_mode)
         stage = time.perf_counter()
@@ -221,7 +221,7 @@ class ReviewEngine:
         config, config_errors = load_review_config(repo if repo.exists() else None, self.settings.root, body.get("config"))
         resolved = resolve_change(repo, source, self.settings, config.get("budgets"))
         snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
-        service_id = _service_id(snapshot, body.get("service") or source.get("service_id") or "", repo)
+        service_id = _service_id(self.settings, snapshot, body.get("service") or source.get("service_id") or "", repo)
         alignment = graph_alignment(snapshot, service_id, resolved.get("base_sha"), resolved.get("head_sha"), dirty=resolved.get("kind") in {"working_tree", "staged"})
         change = build_change_view(
             resolved,
@@ -684,14 +684,14 @@ def _repository_path(source: dict[str, Any], settings: Settings) -> Path:
     return path
 
 
-def _service_id(snapshot: Snapshot | None, requested: str, repo: Path) -> str:
+def _service_id(settings: Settings, snapshot: Snapshot | None, requested: str, repo: Path) -> str:
+    from dep_intel.repository_identity import partition_service
+
+    resolved = partition_service(settings, snapshot, requested, checkout=repo)
+    if resolved:
+        return resolved
     if requested:
         return requested
-    if snapshot is None:
-        return repo.name
-    for part in snapshot.partitions.values():
-        if part.service_id == repo.name or Path(part.repository).name == repo.name:
-            return part.service_id
     return repo.name
 
 

@@ -82,6 +82,30 @@ def test_shallow_checkout_is_removed_after_reports(tmp_path: Path, monkeypatch) 
     assert "shallow checkout is deleted" in coverage["message"]
 
 
+def test_cluster_sections_keep_the_service_id_and_the_clone_url(tmp_path: Path) -> None:
+    repos = tmp_path / "repos.txt"
+    repos.write_text(
+        "\n".join([
+            "# grouped allowlist",
+            "[standalone]",
+            "local-tool = fixtures/auth-service",
+            "[cluster:omnichannel]",
+            "uocp-api-gateway = https://github.com/hvrcorp/uocp-api-gateway",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    settings = Settings(root=ROOT, repos_file=repos, output_dir=tmp_path, github_token="", ghe_token="")
+    loaded = load_repos(settings)
+    assert [(item.service_id, item.cluster, item.kind, item.raw, item.slug) for item in loaded] == [
+        ("local-tool", "", "local", "fixtures/auth-service", "local_tool"),
+        ("uocp-api-gateway", "omnichannel", "github", "https://github.com/hvrcorp/uocp-api-gateway", "hvrcorp_uocp_api_gateway"),
+    ]
+    assert loaded[1].owner == "hvrcorp"
+    assert loaded[1].repo == "uocp-api-gateway"
+    assert loaded[0].path == (ROOT / "fixtures" / "auth-service").resolve()
+
+
 def test_local_allowlist_path_is_not_deleted(tmp_path: Path) -> None:
     repos = tmp_path / "repos.txt"
     repos.write_text("fixtures/auth-service\n", encoding="utf-8")

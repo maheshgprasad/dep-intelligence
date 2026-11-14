@@ -43,7 +43,7 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
   const service = params.get("service") || "";
   const explicitView = params.get("view");
   const view = explicitView === "cluster" || explicitView === "repository" ? explicitView : service ? "repository" : "cluster";
-  const selected = repos.find((repo) => repo.slug === service || repo.name === service) ?? repos[0];
+  const selected = repos.find((repo) => repo.slug === service || repo.name === service || repo.service_id === service) ?? repos[0];
   const [topologyNote, setTopologyNote] = useState("");
   const [topology, setTopology] = useState<{ relationships?: { from: string; to: string; method?: string; path?: string; reasons?: string[] }[]; unresolved?: { from: string; message: string; override_snippet?: string }[]; services?: unknown[]; overrides?: unknown[]; notes?: string[]; not_scanned?: string[] } | null>(null);
   const [relations, setRelations] = useState<RelationshipMap | null>(null);
@@ -237,8 +237,8 @@ export function ArchitecturePage({ snapshot, loaded, error }: { snapshot: AppSta
       />
       <GenerateReportButton
         scope="repository"
-        service={snapshot?.cluster?.services?.find((item) => item.id === selected?.slug || item.id === selected?.name)?.id || selected?.slug || ""}
-        staleCount={snapshot?.cluster?.stale_services?.includes(selected?.slug || "") ? 1 : 0}
+        service={selected?.service_id || snapshot?.cluster?.services?.find((item) => item.id === selected?.slug || item.id === selected?.name || item.id === selected?.service_id)?.id || ""}
+        staleCount={snapshot?.cluster?.stale_services?.some((item) => item === selected?.service_id || item === selected?.slug) ? 1 : 0}
       />
       <Tabs>
         <TabList aria-label="Architecture">

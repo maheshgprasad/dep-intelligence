@@ -86,6 +86,8 @@ class RepoRef:
     host: str = ""
     owner: str = ""
     repo: str = ""
+    service_id: str = ""
+    cluster: str = ""
 
 
 @dataclass
@@ -137,15 +139,45 @@ def parse_repo_line(line: str, root: Path = PROJECT_ROOT) -> RepoRef:
     return RepoRef(raw=line, name=name, slug=_slug(name), kind="local", path=path.resolve())
 
 
+_SECTION = re.compile(r"^\[(standalone|cluster:([A-Za-z][A-Za-z0-9_-]*))\]$")
+_BINDING = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(\S+)$")
+
+
 def load_repos(settings: Settings) -> list[RepoRef]:
+    """Read the allowlist.
+
+    A line is a local path, an https URL, or ``service-id = path-or-url``.
+    ``[standalone]`` and ``[cluster:name]`` group those entries. The service id
+    stays on the left. The checkout slug for a GitHub URL stays derived from
+    that URL so an existing clone is reused.
+    """
     if not settings.repos_file.is_file():
         return []
     repos: list[RepoRef] = []
+    cluster = ""
     for raw in settings.repos_file.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        repos.append(parse_repo_line(line, settings.root))
+        if line.startswith("[") and line.endswith("]"):
+            section = _SECTION.fullmatch(line)
+            if section is None:
+                raise ValueError(f"Unknown repository section: {line}")
+            cluster = section.group(2) or ""
+            continue
+        service_id = ""
+        body = line
+        binding = _BINDING.fullmatch(line)
+        if binding is not None:
+            service_id = binding.group(1)
+            body = binding.group(2)
+        ref = parse_repo_line(body, settings.root)
+        ref.cluster = cluster
+        if service_id:
+            ref.service_id = service_id
+            if ref.kind == "local":
+                ref.slug = _slug(service_id)
+        repos.append(ref)
     return repos
 
 

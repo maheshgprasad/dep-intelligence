@@ -87,6 +87,9 @@ def _one(workspace: Workspace, settings: Settings, *, rebuild: bool) -> tuple[di
     base = {
         "slug": workspace.ref.slug,
         "name": workspace.ref.name,
+        "service_id": workspace.ref.service_id,
+        "cluster": workspace.ref.cluster,
+        "repository": workspace.ref.raw,
         "url": workspace.ref.raw,
         "checkout": "",
         "builtAt": now(),

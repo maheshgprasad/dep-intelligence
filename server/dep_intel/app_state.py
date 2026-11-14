@@ -32,6 +32,7 @@ def build_app_state(settings: Settings, summary: dict[str, Any] | None, running:
         repositories.append({
             "slug": slug,
             "name": repo.get("name") or slug,
+            "service_id": str(repo.get("service_id") or ""),
             "checkout_status": "available" if checkout and Path(checkout).is_dir() else "unavailable",
             "error": repo.get("error"),
         })
