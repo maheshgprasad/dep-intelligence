@@ -17,7 +17,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from dep_intel.cluster_manifest import ImpactSettings
-from dep_intel.service_clusters import cluster_downstream
+from dep_intel.review_scope import (
+    apply_impact_boundary,
+    confirm_pull_request_origin,
+    ensure_cluster_reference,
+    out_of_scope_note,
+    present_review_scope,
+    resolve_review_scope,
+    scoped_downstream,
+)
 from dep_intel.config import Settings
 from dep_intel.graph_models import Snapshot, node_label
 from dep_intel.hybrid_impact import HybridSettings, analyze_hybrid
@@ -77,6 +85,8 @@ class ReviewEngine:
         requested_mode = str(body.get("mode") or "fast")
         verify = bool(body.get("verify", True))
         model_enabled = bool((body.get("model") or {}).get("enabled", False))
+        early_snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
+        ensure_cluster_reference(early_snapshot, body.get("review_scope"), body.get("cluster_id"))
         config, config_errors = load_review_config(repo if repo.exists() else None, self.settings.root, body.get("config"))
         if config_errors:
             report = self._finish_incomplete(review_id, repo, source, config_errors, started, timings, requested_mode=requested_mode)
@@ -91,8 +101,9 @@ class ReviewEngine:
         snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
         previous = self.cluster.previous() if self.cluster is not None and hasattr(self.cluster, "previous") else None
         service_id = _service_id(self.settings, snapshot, body.get("service") or source.get("service_id") or "", repo)
+        scope = self._review_scope(body, snapshot, service_id, resolved, source)
         if fatal:
-            return self._finish_incomplete(review_id, repo, source, fatal, started, timings, resolved=resolved, service_id=service_id, requested_mode=requested_mode)
+            return self._finish_incomplete(review_id, repo, source, fatal, started, timings, resolved=resolved, service_id=service_id, requested_mode=requested_mode, review_scope=scope)
         stage = time.perf_counter()
         worktrees: list[Path] = []
         alignment = graph_alignment(snapshot, service_id, resolved.get("base_sha"), resolved.get("head_sha"), dirty=resolved.get("kind") in {"working_tree", "staged"})
@@ -117,7 +128,16 @@ class ReviewEngine:
         )
         _mark_tested(change.get("changed_symbols") or [], active_snapshot)
         log.info("change_view.completed")
-        cache_key = _cache_key(resolved, config, active_snapshot.version if active_snapshot is not None else "", mode, verify, model_enabled)
+        cache_key = _cache_key(
+            resolved,
+            config,
+            active_snapshot.version if active_snapshot is not None else "",
+            mode,
+            verify,
+            model_enabled,
+            review_scope=str(scope.get("mode") or "repository"),
+            cluster_id=str(scope.get("cluster_id") or ""),
+        )
         cached = _read_cache(self.settings.output_dir, cache_key)
         if cached is not None and "gate_validation" not in cached:
             cached = None
@@ -133,7 +153,7 @@ class ReviewEngine:
         as_of = resolved.get("committed_at") if resolved.get("kind") in {"commit", "range", "github_pr"} else None
         self._progress(review_id, "calculate_impact", job_id)
         stage = time.perf_counter()
-        impact = self._impact(active_snapshot, change, as_of, service_id, exact=exact_snapshot is not None)
+        impact = self._impact(active_snapshot, change, as_of, service_id, exact=exact_snapshot is not None, scope=scope)
         timings["impact_ms"] = _ms(stage)
         log.info("impact.completed")
         self._progress(review_id, "apply_policies", job_id)
@@ -151,6 +171,7 @@ class ReviewEngine:
         timings["model_ms"] = _ms(stage) if model_enabled else 0.0
         self._progress(review_id, "collect_findings", job_id)
         findings = build_findings(policies, impact, change, model_findings=model_findings)
+        findings = _qualify_finding_titles(findings, scope)
         self._progress(review_id, "verify_findings", job_id)
         stage = time.perf_counter()
         self._event("verification_started", {"review_id": review_id})
@@ -198,6 +219,7 @@ class ReviewEngine:
             requested_mode=requested_mode,
             resolved_mode=mode,
             cancelled=cancelled,
+            review_scope=scope,
         )
         public_change = {key: value for key, value in change.items() if key != "_files"}
         write_review(self.settings.output_dir, review_id, {
@@ -223,10 +245,13 @@ class ReviewEngine:
         """Resolve and classify a change. Stops before impact, policy, model, verification, and the gate."""
         source = dict(body.get("source") or {})
         repo = _repository_path(source, self.settings)
+        early_snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
+        ensure_cluster_reference(early_snapshot, body.get("review_scope"), body.get("cluster_id"))
         config, config_errors = load_review_config(repo if repo.exists() else None, self.settings.root, body.get("config"))
         resolved = resolve_change(repo, source, self.settings, config.get("budgets"))
         snapshot = self.cluster.current() if self.cluster is not None and hasattr(self.cluster, "current") else None
         service_id = _service_id(self.settings, snapshot, body.get("service") or source.get("service_id") or "", repo)
+        self._review_scope(body, snapshot, service_id, resolved, source)
         alignment = graph_alignment(snapshot, service_id, resolved.get("base_sha"), resolved.get("head_sha"), dirty=resolved.get("kind") in {"working_tree", "staged"})
         change = build_change_view(
             resolved,
@@ -260,7 +285,11 @@ class ReviewEngine:
     def feedback(self, review_id: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return record_feedback(self.settings.output_dir, review_id, body)
 
-    def _impact(self, snapshot: Snapshot | None, change: dict[str, Any], as_of: str | None, service_id: str, *, exact: bool) -> dict[str, Any]:
+    def _review_scope(self, body: dict[str, Any], snapshot: Snapshot | None, service_id: str, resolved: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+        scope = resolve_review_scope(snapshot, body.get("review_scope"), body.get("cluster_id"), service_id)
+        return confirm_pull_request_origin(scope, snapshot, self.settings, resolved, source)
+
+    def _impact(self, snapshot: Snapshot | None, change: dict[str, Any], as_of: str | None, service_id: str, *, exact: bool, scope: dict[str, Any] | None = None) -> dict[str, Any]:
         roots = list(change.get("changed_symbols") or [])
         for contract in change.get("contract_changes") or []:
             contract_id = next((item.get("contract_id") for item in contract.get("consumers") or [] if item.get("contract_id")), "")
@@ -292,12 +321,13 @@ class ReviewEngine:
                     lines = hunks[0].get("changed_new_lines") or hunks[0].get("changed_old_lines") or []
                     line = lines[0] if lines else None
                 roots.append({"service_id": service_id, "file_path": path, "line_start": line, "qualified_name": path, "key": "", "topology": "previous" if item.get("change_type") == "deleted" else "current"})
-        downstream = cluster_downstream(snapshot, service_id)
+        downstream = scoped_downstream(snapshot, service_id, scope)
         if snapshot is None or (self.cluster is None and not exact):
             return {
                 "affected_services": [],
                 "ranked_candidates": [],
                 "cluster_downstream": downstream,
+                "out_of_scope_targets": [],
                 "diagnostics": [diagnostic("graph_missing", "No cluster snapshot is available. Structural impact was not calculated.", severity="warning")],
                 "temporal_cutoff": as_of,
                 "graph_version": "",
@@ -327,18 +357,22 @@ class ReviewEngine:
         ranked.sort(key=lambda item: (-(item.get("hybrid_score") or 0), item.get("service_id") or "", item.get("file_path") or ""))
         if snapshot is not None:
             _name_paths(snapshot, ranked)
-        for index, item in enumerate(ranked, start=1):
-            item["rank"] = index
+        for item in ranked:
             origin = item.get("evidence_origin") or "structural_only"
             item["statement"] = ORIGIN_STATEMENT.get(origin, "")
             if origin == "temporal_only":
                 item["statement"] = f"{item['statement']} {TEMPORAL_LIMIT}"
             item["score_note"] = SCORE_NOTE
-        services = sorted({item.get("service_id") for item in ranked if item.get("service_id")})
+        bounded, outside = apply_impact_boundary(ranked, scope)
+        bounded = bounded[:limit]
+        for index, item in enumerate(bounded, start=1):
+            item["rank"] = index
+        services = sorted({item.get("service_id") for item in bounded if item.get("service_id")})
         return {
             "affected_services": services,
-            "ranked_candidates": ranked[:limit],
+            "ranked_candidates": bounded,
             "cluster_downstream": downstream,
+            "out_of_scope_targets": outside,
             "diagnostics": diagnostics,
             "temporal_cutoff": as_of,
             "graph_version": graph_version,
@@ -396,7 +430,7 @@ class ReviewEngine:
         except Exception:
             log.info(name)
 
-    def _finish_incomplete(self, review_id: str, repo: Path, source: dict, errors: list[dict], started: float, timings: dict, resolved: dict | None = None, service_id: str = "", requested_mode: str = "fast") -> dict[str, Any]:
+    def _finish_incomplete(self, review_id: str, repo: Path, source: dict, errors: list[dict], started: float, timings: dict, resolved: dict | None = None, service_id: str = "", requested_mode: str = "fast", review_scope: dict | None = None) -> dict[str, Any]:
         change = {
             "repository": str(repo),
             "service_id": service_id,
@@ -413,7 +447,7 @@ class ReviewEngine:
         gate["decision"] = "incomplete"
         gate["evidence_complete"] = False
         timings["total_ms"] = _ms(started)
-        report = _report(review_id, change, {"ranked_candidates": [], "affected_services": []}, [], gate, [], {"items": []}, errors, timings, {"config_hash": ""}, "", requested_mode, None, requested_mode=requested_mode, resolved_mode=requested_mode, pre_gate_abort=True)
+        report = _report(review_id, change, {"ranked_candidates": [], "affected_services": []}, [], gate, [], {"items": []}, errors, timings, {"config_hash": ""}, "", requested_mode, None, requested_mode=requested_mode, resolved_mode=requested_mode, pre_gate_abort=True, review_scope=review_scope or {"mode": "repository", "origin_service_id": service_id})
         write_review(self.settings.output_dir, review_id, {"manifest.json": _manifest(review_id, report, {}, ""), "report.json": report, "report.md": render_markdown(report)})
         self._event("review_failed", {"review_id": review_id, "decision": "incomplete"})
         return report
@@ -598,10 +632,11 @@ def _merge_candidate(merged: dict[tuple[str, str], dict[str, Any]], candidate: d
         row["paths"] = [((candidate.get("structural") or {}).get("path") or [])] + list(row.get("paths") or [])[:3]
 
 
-def _report(review_id: str, change: dict, impact: dict, policies: list, gate: dict, verification: list, context: dict, diagnostics: list, timings: dict, config: dict, model_summary: str, mode: str, as_of: str | None, requested_mode: str | None = None, resolved_mode: str | None = None, *, pre_gate_abort: bool = False, cancelled: bool = False) -> dict[str, Any]:
+def _report(review_id: str, change: dict, impact: dict, policies: list, gate: dict, verification: list, context: dict, diagnostics: list, timings: dict, config: dict, model_summary: str, mode: str, as_of: str | None, requested_mode: str | None = None, resolved_mode: str | None = None, *, pre_gate_abort: bool = False, cancelled: bool = False, review_scope: dict | None = None) -> dict[str, Any]:
     files = change.get("changed_files") or []
+    scope = present_review_scope(review_scope, impact, gate.get("findings") or [])
     summary = {
-        "text": _summary_text(change, gate, impact),
+        "text": _summary_text(change, gate, impact, scope),
         "changed_file_count": len(files),
         "finding_count": len(gate.get("findings") or []),
         "model_summary": model_summary,
@@ -641,6 +676,7 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
         "score_note": SCORE_NOTE,
         "cache": {"hit": False},
         "review_control": {"pre_gate_abort": pre_gate_abort, "cancelled": cancelled},
+        "review_scope": scope,
     }
     body = attach_explanation(body, config)
     body = attach_gate_validation(body, config)
@@ -648,7 +684,7 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
     return attach_commentary(body)
 
 
-def _summary_text(change: dict, gate: dict, impact: dict) -> str:
+def _summary_text(change: dict, gate: dict, impact: dict, scope: dict | None = None) -> str:
     files = change.get("changed_files") or []
     names = ", ".join(item.get("new_path") or item.get("old_path") or "" for item in files[:8]) or "no files"
     services = ", ".join((impact.get("affected_services") or [])[:8]) or "none"
@@ -656,7 +692,30 @@ def _summary_text(change: dict, gate: dict, impact: dict) -> str:
     cluster = impact.get("cluster_downstream") or {}
     confirmed = ", ".join(cluster.get("services") or [])
     cluster_note = f" Confirmed cluster downstream: {confirmed}." if confirmed else ""
-    return f"{decision}. Changed {names}. Downstream services in the ranked evidence: {services}. {SCORE_NOTE}{cluster_note}"
+    text = f"{decision}. Changed {names}. Downstream services in the ranked evidence: {services}. {SCORE_NOTE}{cluster_note}"
+    if not scope or scope.get("mode") != "service_cluster":
+        return text
+    label = scope.get("cluster_label") or "Service Cluster"
+    origin = scope.get("origin_service_id") or "the selected service"
+    affected = scope.get("affected_member_count")
+    members = scope.get("member_count")
+    count_text = f" {affected} of {members} cluster services have evidenced impact." if members else ""
+    outside = out_of_scope_note(scope.get("out_of_scope_targets") or [])
+    outside_text = f" {outside}" if outside else ""
+    return f"{text} Review scope: {label}. The change originates from {origin}.{count_text}{outside_text}"
+
+
+def _qualify_finding_titles(findings: list[dict], scope: dict | None) -> list[dict]:
+    if not scope or scope.get("mode") != "service_cluster":
+        return findings
+    qualified = []
+    for item in findings:
+        service = str(item.get("service_id") or "")
+        title = str(item.get("title") or "")
+        if service and title and not title.startswith(f"{service} —") and not title.startswith(f"{service}:"):
+            item = {**item, "title": f"{service} — {title}"}
+        qualified.append(item)
+    return qualified
 
 
 def _manifest(review_id: str, report: dict, config: dict, mode: str) -> dict[str, Any]:
@@ -708,7 +767,7 @@ def _mark_tested(symbols: list[dict], snapshot: Snapshot | None) -> None:
         symbol["tested_by"] = any(edge.relation == "TESTED_BY" and edge.source == symbol.get("key") for edge in snapshot.edges)
 
 
-def _cache_key(resolved: dict, config: dict, graph_version: str, mode: str, verify: bool, model_enabled: bool) -> str:
+def _cache_key(resolved: dict, config: dict, graph_version: str, mode: str, verify: bool, model_enabled: bool, review_scope: str = "repository", cluster_id: str = "") -> str:
     payload = {
         "base": resolved.get("base_sha"),
         "head": resolved.get("head_sha"),
@@ -720,6 +779,8 @@ def _cache_key(resolved: dict, config: dict, graph_version: str, mode: str, veri
         "model": model_enabled,
         "validator": VALIDATOR_VERSION,
         "commentary": COMMENTARY_VERSION,
+        "review_scope": review_scope or "repository",
+        "cluster_id": cluster_id or "",
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
 

@@ -583,6 +583,8 @@ class ReviewRunBody(BaseModel):
     verify: bool = True
     model: dict[str, Any] = Field(default_factory=dict)
     service: str = ""
+    review_scope: str = "repository"
+    cluster_id: str = ""
 
 
 class ReviewFeedbackBody(BaseModel):
@@ -602,7 +604,7 @@ def _review_engine():
 @app.post("/api/review/change-view")
 async def review_change_view(body: ReviewRunBody) -> dict:
     engine = _review_engine()
-    return await asyncio.to_thread(engine.change_view, _with_checkout(body.model_dump()))
+    return await asyncio.to_thread(_call_review, engine.change_view, _with_checkout(body.model_dump()))
 
 
 @app.get("/api/review/source-options")
@@ -655,7 +657,16 @@ async def review_run(body: ReviewRunBody) -> dict:
 
         job = cluster.submit("boundary_review", _job)
         return {"job_id": job.id, "review_id": review_id, "status": job.status, "name": job.name}
-    return await asyncio.to_thread(engine.run, payload)
+    return await asyncio.to_thread(_call_review, engine.run, payload)
+
+
+def _call_review(method, payload: dict) -> dict:
+    from dep_intel.review_scope import ReviewScopeError
+
+    try:
+        return method(payload)
+    except ReviewScopeError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.get("/api/review/config")
@@ -850,10 +861,16 @@ def _with_checkout(payload: dict) -> dict:
     return {**payload, "source": source}
 
 
+def _cluster_display_label(item: dict) -> str:
+    from dep_intel.review_scope import display_cluster_label
+
+    return display_cluster_label(item)
+
+
 @app.get("/api/service-clusters")
 def service_clusters() -> dict:
     from dep_intel.reporting.collect import topology_for
-    from dep_intel.service_clusters import detect_service_clusters
+    from dep_intel.service_clusters import detect_service_clusters, membership_source_label
 
     settings = Settings.load()
     snapshot = get_engine(settings).current()
@@ -861,13 +878,16 @@ def service_clusters() -> dict:
     discovery = topology_for(settings)
     return {
         "clusters": [
-            {
-                "cluster_id": item["cluster_id"],
-                "label": item["label"],
-                "service_count": item["service_count"],
-                "relationship_count": item["relationship_count"],
-                "services": item["services"],
-            }
+        {
+            "cluster_id": item["cluster_id"],
+            "label": item["label"],
+            "display_label": _cluster_display_label(item),
+            "service_count": item["service_count"],
+            "relationship_count": item["relationship_count"],
+            "services": item["services"],
+            "membership_source": item.get("membership_source") or groups.get("membership_source") or "",
+            "membership_source_label": membership_source_label(str(item.get("membership_source") or groups.get("membership_source") or "")),
+        }
             for item in groups["clusters"]
         ],
         "standalone": groups["standalone"],

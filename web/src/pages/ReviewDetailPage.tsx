@@ -33,30 +33,11 @@ import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
 import { hideFilePaths, repoSymbol, symbolName } from "../labels";
+import { orderedFindings, serviceGroups } from "../reviewPresentation";
 
 
 function downstreamItems(report: ReviewReport) {
   return report.impact.cluster_downstream?.items ?? [];
-}
-
-function downstreamTarget(report: ReviewReport) {
-  return downstreamItems(report)[0]?.service_id || report.impact.affected_services[0] || "";
-}
-
-function scopeText(report: ReviewReport) {
-  const downstream = downstreamItems(report);
-  if (downstream.length) {
-    const names = downstream.map((item) => item.service_id).join(", ");
-    return `${downstream.length} downstream service${downstream.length === 1 ? "" : "s"} in this cluster: ${names}`;
-  }
-  if (report.impact.cluster_downstream?.cluster_id) {
-    return "This repository is in a service cluster. No confirmed downstream consumer was found.";
-  }
-  if (report.impact.affected_services.length) {
-    const count = report.impact.affected_services.length;
-    return `${count} service${count === 1 ? "" : "s"} affected: ${report.impact.affected_services.join(", ")}`;
-  }
-  return "No other service was identified from the stored evidence.";
 }
 
 function ClusterDownstream({ items }: { items: NonNullable<ReviewReport["impact"]["cluster_downstream"]>["items"] }) {
@@ -109,6 +90,7 @@ export function ReviewDetailPage() {
   const [progress, setProgress] = useState({ stage: "resolve_change", label: "Selecting the change", percent: 11, index: 1, count: 9 });
   const [release, setRelease] = useState<ReleaseContext | null>(null);
   const [notice, setNotice] = useState("");
+  const [showAllTargets, setShowAllTargets] = useState(false);
 
   useEffect(() => {
     if (!reviewId) return;
@@ -206,20 +188,10 @@ export function ReviewDetailPage() {
         }
       />
       <AssessmentSummary report={report} />
-      <NamiCommentary report={report} />
-      <DecisionReason summary={report.gate_evidence_summary} rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <ActionList actions={report.actions ?? []} />
       <GateValidationSummary validation={report.gate_validation} />
-      <Tile>
-        <p className="section-title">Affected scope</p>
-        <p>{scopeText(report)}</p>
-        <p className="helper">{report.impact.ranked_candidates?.length ?? 0} downstream files ranked. Confirmed cluster consumers stay listed when no file rank crosses the service boundary. A rank is not a probability of failure.</p>
-        {downstreamTarget(report) ? <Link to={`/architecture?service=${encodeURIComponent(downstreamTarget(report))}`}>Open architecture</Link> : null}
-        {" "}
-        {downstreamTarget(report) ? <Link to={`/impact?service=${encodeURIComponent(downstreamTarget(report))}`}>Explore impact</Link> : null}
-      </Tile>
-      <GateChecklist items={report.gate_checklist ?? []} />
-      <EvidenceList evidence={report.evidence_catalog ?? []} counter={report.counter_evidence ?? []} suppressed={report.suppressed_findings ?? []} />
+      <DecisionReason summary={report.gate_evidence_summary} rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
+      <NamiCommentary report={report} />
       {report.gate.reason_codes?.includes("cancelled") ? <InlineNotification kind="info" title="Review cancelled" subtitle="This review stopped before a policy decision." lowContrast hideCloseButton /> : null}
       {report.diagnostics.some((item) => item.severity === "error") ? <InlineNotification kind="error" title="Review processing issue" subtitle={report.diagnostics.find((item) => item.severity === "error")?.message || "A processing issue was recorded."} lowContrast hideCloseButton /> : null}
       <Accordion>
@@ -290,7 +262,7 @@ export function ReviewDetailPage() {
                 { key: "evidence_strength", header: "Evidence", render: (row) => <StatusTag status={row.evidence_strength} /> },
                 { key: "status", header: "Status", render: (row) => <StatusTag status={findingTone(row.finding_id, report)} label={findingClass(row.finding_id, report)} /> },
               ]}
-              rows={report.findings.map((finding) => ({
+              rows={orderedFindings(report).map((finding) => ({
                 ...finding,
                 id: finding.finding_id,
                 location: repoSymbol(report.change.service_id || "", symbolName(finding.file_path || finding.title)),
@@ -310,8 +282,10 @@ export function ReviewDetailPage() {
             />
           </TabPanel>
           <TabPanel>
+            <ImpactPreview report={report} showAll={showAllTargets} onToggle={() => setShowAllTargets((value) => !value)} />
             <ClusterDownstream items={report.impact.cluster_downstream?.items ?? []} />
-            <p className="helper">Nami Rank orders downstream files using current dependency structure and historical change evidence. It does not decide whether this change is blocked.</p>
+            <p className="helper">Nami Rank orders downstream files using current dependency structure and historical change evidence. It does not decide whether this change is blocked. Ranking scores are not probabilities.</p>
+            <p className="helper">{candidateWindow(report.impact.ranked_candidates.length)}</p>
             <NamiDataTable
               columns={[
                 { key: "rank", header: "Rank" },
@@ -402,8 +376,35 @@ export function ReviewDetailPage() {
           </TabPanel>
         </TabPanels>
       </Tabs>
+      <GateChecklist items={report.gate_checklist ?? []} />
+      <EvidenceList evidence={report.evidence_catalog ?? []} counter={report.counter_evidence ?? []} suppressed={report.suppressed_findings ?? []} />
     </div>
   );
+}
+
+function ImpactPreview({ report, showAll, onToggle }: { report: ReviewReport; showAll: boolean; onToggle: () => void }) {
+  const groups = serviceGroups(report);
+  const visible = showAll ? groups : groups.slice(0, 3);
+  const hidden = Math.max(groups.length - 3, 0);
+  if (!groups.length) return null;
+  return (
+    <div className="stack-gap">
+      <p>{groups.length} evidenced downstream services. {report.impact.ranked_candidates.length} ranked candidates.</p>
+      {visible.map((group) => (
+        <div key={group.serviceId}>
+          <p><strong>{group.serviceId}</strong></p>
+          {group.files.slice(0, showAll ? group.files.length : 3).map((file) => <p key={file} className="helper">{file}</p>)}
+          {!showAll && group.files.length > 3 ? <p className="helper">Showing 3 of {group.files.length} files in {group.serviceId}.</p> : null}
+        </div>
+      ))}
+      {hidden > 0 ? <Button kind="ghost" size="sm" onClick={onToggle}>{showAll ? "Show fewer services" : `Show all ${groups.length} services`}</Button> : null}
+    </div>
+  );
+}
+
+function candidateWindow(total: number): string {
+  if (total > 10) return `Showing 10 of ${total} ranked candidates at a time. All ${total} remain in this review.`;
+  return `Showing ${total} of ${total} ranked candidates.`;
 }
 
 function FindingDetail({ finding, reviewId, busy, onSuccess, onError, onBusy }: { finding: ReviewFinding & { id: string }; reviewId: string; busy: boolean; onSuccess: (message: string) => void; onError: (message: string) => void; onBusy: (value: boolean) => void }) {

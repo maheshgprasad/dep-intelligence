@@ -85,15 +85,19 @@ function GateEvidence({ summary }: { summary: GateEvidenceSummary }) {
             <p>{item.why}</p>
             <p>{item.meaning}</p>
             <p className="section-title">Evidence</p>
-            {item.evidence.length ? item.evidence.map((fact) => (
-              <div key={fact.evidence_id}>
-                <p><strong>{fact.supports}</strong></p>
-                <p>{fact.statement}</p>
-                <p className="helper">Source: {fact.source_label || fact.source || "Stored evidence"}</p>
-                {fact.freshness ? <p className="helper">Freshness: {fact.freshness}</p> : null}
-                <p className="helper">{fact.evidence_id}</p>
-              </div>
-            )) : <p>No linked evidence was stored for this rule.</p>}
+            {item.evidence.length ? (
+              <>
+                <p>{item.evidence.map((fact) => fact.evidence_id).join(", ")}</p>
+                {item.evidence.slice(0, 2).map((fact) => (
+                  <div key={fact.evidence_id}>
+                    <p><strong>{fact.supports}</strong></p>
+                    <p>{fact.statement}</p>
+                    <p className="helper">Source: {fact.source_label || fact.source || "Stored evidence"}</p>
+                  </div>
+                ))}
+                {item.evidence.length > 2 ? <p className="helper">Showing 2 of {item.evidence.length} evidence statements. Every evidence id for this rule is listed above.</p> : null}
+              </>
+            ) : <p>No linked evidence was stored for this rule.</p>}
             <p className="section-title">{item.action_label}</p>
             <p>{item.action}</p>
             <p className="helper">Decision rule {item.rule_id} · {item.title}</p>

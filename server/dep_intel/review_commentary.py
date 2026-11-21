@@ -186,6 +186,18 @@ def commentary_input(report: dict[str, Any]) -> dict[str, Any]:
         "repository": (report.get("change") or {}).get("repository") or "",
         "service_id": (report.get("change") or {}).get("service_id") or "",
     }
+    scope = report.get("review_scope") if isinstance(report.get("review_scope"), dict) else {}
+    if scope:
+        context = {
+            "review_scope": scope.get("mode") or "repository",
+            "cluster_id": scope.get("cluster_id") or "",
+            "cluster_label": scope.get("cluster_label") or "",
+            "origin_service": scope.get("origin_service_id") or "",
+        }
+        if scope.get("member_count") is not None and scope.get("mode") == "service_cluster":
+            context["affected_member_count"] = scope.get("affected_member_count")
+            context["member_count"] = scope.get("member_count")
+        payload["review_scope"] = context
     summary = report.get("gate_evidence_summary") if isinstance(report.get("gate_evidence_summary"), dict) else {}
     if summary:
         payload["gate_evidence_summary"] = {
