@@ -329,6 +329,8 @@ export type ReviewFinding = {
   evidence_strength: string;
   verification_status?: string;
   policy_id?: string | null;
+  service_id?: string;
+  structured?: { evidence_origin?: string };
   evidence?: { summary: string; source: string; structured_data?: Record<string, unknown> }[];
 };
 
@@ -630,6 +632,22 @@ export type ReviewReport = {
   gate_validation?: GateValidation;
   gate_evidence_summary?: GateEvidenceSummary;
   commentary?: ReviewCommentary;
+  review_scope?: {
+    mode?: string;
+    label?: string;
+    cluster_id?: string;
+    cluster_label?: string;
+    membership_source?: string;
+    membership_source_label?: string;
+    origin_service_id?: string;
+    member_count?: number;
+    affected_member_count?: number;
+    affected_member_services?: string[];
+    unaffected_member_count?: number;
+    unaffected_member_services?: string[];
+    unaffected_note?: string;
+    out_of_scope_targets?: { service_id?: string; reason?: string }[];
+  };
 };
 
 export async function reviewConfig(repository = ""): Promise<{ model_configured: boolean; policies: { id: string; severity: string; check: string }[]; diagnostics: { message: string }[]; score_note: string; verification?: { commands?: string[] } }> {
@@ -809,9 +827,12 @@ export type IntelligenceReport = {
 export type ServiceClusterSummary = {
   cluster_id: string;
   label: string;
+  display_label?: string;
   service_count: number;
   relationship_count: number;
   services: string[];
+  membership_source?: string;
+  membership_source_label?: string;
 };
 
 export async function getServiceClusters(): Promise<{ clusters: ServiceClusterSummary[]; standalone: { service_id: string }[] }> {
@@ -1027,7 +1048,12 @@ export async function previewChange(body: Record<string, unknown>): Promise<{
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error("The change preview could not be built.");
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload.detail;
+    const message = detail && typeof detail === "object" && "message" in detail ? String(detail.message) : "The change preview could not be built.";
+    throw new Error(message);
+  }
   return response.json();
 }
 
@@ -1037,7 +1063,7 @@ export async function purgeReviews(): Promise<{ removed: number }> {
   return response.json();
 }
 
-export async function recentReviews(): Promise<{ review_id: string; decision: string; repository: string; service: string; source_kind: string; completed_at: string; finding_count: number; head_sha?: string; base_sha?: string }[]> {
+export async function recentReviews(): Promise<{ review_id: string; decision: string; repository: string; service: string; source_kind: string; completed_at: string; finding_count: number; head_sha?: string; base_sha?: string; review_scope?: string; review_scope_label?: string }[]> {
   const response = await fetch("/api/reviews?limit=20");
   if (!response.ok) throw new Error("Stored reviews could not be listed.");
   const payload = await response.json();

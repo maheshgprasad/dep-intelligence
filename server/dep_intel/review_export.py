@@ -146,6 +146,8 @@ def canonical_export(report: dict[str, Any], manifest: dict[str, Any] | None = N
             "report_hash_note": "Integrity fingerprint of this export, including commentary. It is not a digital signature.",
         },
     }
+    if isinstance(report.get("review_scope"), dict):
+        payload["review_scope"] = report["review_scope"]
     scrubbed = _scrub(payload)
     scrubbed["reproducibility"]["report_hash"] = _hash(scrubbed)
     return scrubbed
@@ -161,6 +163,7 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
         "Change Intelligence Report",
         "",
         f"Decision: {decision}",
+        *_pdf_scope_lines(payload.get("review_scope") if isinstance(payload.get("review_scope"), dict) else None),
         f"Repository: {identity.get('repository') or ''}",
         f"Service: {identity.get('service') or ''}",
         f"Change: {identity.get('base_sha') or ''} -> {identity.get('head_sha') or ''}",
@@ -172,8 +175,13 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
         assessment.get("summary") or "",
         f"Can this change proceed? {decision}",
         "",
-        "Nami explanation",
+        *_pdf_impact_lead(payload),
+        "",
+        "Required actions",
     ]
+    required = payload.get("required_actions") or []
+    lines.extend([f"- {item.get('title')}: {item.get('description')}" for item in required] or ["None."])
+    lines.extend(["", "Nami explanation"])
     commentary = payload.get("commentary") or {}
     if commentary:
         lines.extend([
@@ -189,12 +197,6 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     else:
         lines.append("No explanation was recorded.")
     lines.extend(_gate_evidence_lines(payload.get("gate_evidence_summary") or {}))
-    lines.extend([
-        "",
-        "Required actions",
-    ])
-    required = payload.get("required_actions") or []
-    lines.extend([f"- {item.get('title')}: {item.get('description')}" for item in required] or ["None."])
     lines.extend(["", "Decision logic validation"])
     lines.extend(_validation_lines(payload.get("gate_validation") or {}))
     lines.extend([
@@ -217,7 +219,11 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     for item in payload.get("inferences") or []:
         lines.append(f"- {item.get('title')}: {item.get('statement')}")
     lines.extend(["", "Evidence"])
-    for item in (payload.get("evidence") or [])[:40]:
+    evidence = list(payload.get("evidence") or [])
+    shown_evidence = evidence[:40]
+    if len(evidence) > len(shown_evidence):
+        lines.append(f"Showing {len(shown_evidence)} of {len(evidence)} evidence records. The evidence package contains the full catalogue.")
+    for item in shown_evidence:
         where = item.get("file_path") or ""
         lines.append(f"- {item.get('evidence_id')}: {item.get('statement')} [{item.get('source_label') or item.get('source')}] {where}")
     lines.extend(["", "Counter-evidence"])
@@ -226,6 +232,8 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
     lines.extend(["", "Suppressed claims"])
     suppressed = payload.get("suppressed_findings") or []
     lines.extend([f"- {item.get('potential_claim')}: {item.get('reason')}" for item in suppressed] or ["None."])
+    lines.extend(["", "Ranked candidates"])
+    lines.extend(_pdf_ranked_lines(payload))
     lines.extend(["", "Affected services"])
     services = (payload.get("impact") or {}).get("affected_services") or []
     lines.extend([f"- {item}" for item in services] or ["None."])
@@ -291,6 +299,8 @@ def build_zip(review_id: str, payload: dict[str, Any], report: dict[str, Any]) -
         f"{root}/metadata/reproducibility.json": _bytes(payload.get("reproducibility") or {}),
         f"{root}/metadata/manifest.json": _bytes({"files": sorted(str(name) for name in [])}),
     }
+    if isinstance(payload.get("review_scope"), dict):
+        files[f"{root}/metadata/review-scope.json"] = _bytes(payload["review_scope"])
     names = sorted(files)
     files[f"{root}/metadata/manifest.json"] = _bytes({"files": [name.split("/", 1)[1] for name in names if not name.endswith("/metadata/manifest.json")] + ["metadata/manifest.json"]})
     buffer = io.BytesIO()
@@ -300,6 +310,82 @@ def build_zip(review_id: str, payload: dict[str, Any], report: dict[str, Any]) -
                 continue
             archive.writestr(name, files[name])
     return buffer.getvalue()
+
+
+def _pdf_impact_lead(payload: dict[str, Any]) -> list[str]:
+    scope = payload.get("review_scope") if isinstance(payload.get("review_scope"), dict) else {}
+    impact = payload.get("impact") if isinstance(payload.get("impact"), dict) else {}
+    candidates = list(impact.get("ranked_candidates") or [])
+    services = []
+    for item in candidates:
+        service = str(item.get("service_id") or "")
+        if service and service not in services:
+            services.append(service)
+    lines = ["Affected-service summary"]
+    if scope.get("mode") == "service_cluster":
+        lines.append(f"Evidenced impact: {scope.get('affected_member_count') or 0} / {scope.get('member_count') or 0} services")
+        lines.append("No evidenced impact found is not a safety claim.")
+    else:
+        lines.append(f"Affected services: {len(services)}")
+    lines.append(f"Ranked candidates: {len(candidates)}")
+    primary = services[0] if services else ""
+    if primary:
+        lines.append(f"Primary review target: {primary}")
+    for service in services[1:3]:
+        lines.append(f"Other review target: {service}")
+    extra = max(len(services) - 3, 0)
+    if extra:
+        lines.append(f"{extra} additional evidenced targets are listed with the ranked candidates.")
+    return lines
+
+
+def _pdf_ranked_lines(payload: dict[str, Any]) -> list[str]:
+    impact = payload.get("impact") if isinstance(payload.get("impact"), dict) else {}
+    candidates = list(impact.get("ranked_candidates") or [])
+    if not candidates:
+        return ["No ranked downstream candidate was produced."]
+    limit = 10
+    shown = candidates[:limit]
+    lines = []
+    if len(candidates) > limit:
+        lines.append(f"Showing {limit} of {len(candidates)} ranked candidates. The evidence package contains the full ranking.")
+    else:
+        lines.append(f"Showing {len(candidates)} of {len(candidates)} ranked candidates.")
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for item in shown:
+        service = str(item.get("service_id") or "unattributed")
+        if service not in grouped:
+            order.append(service)
+            grouped[service] = []
+        grouped[service].append(item)
+    for service in order:
+        lines.append(service)
+        for item in grouped[service]:
+            lines.append(
+                f"- {item.get('file_path')} origin={item.get('evidence_origin')} "
+                f"structural={item.get('structural_score')} temporal={item.get('temporal_score')} nrm={item.get('hybrid_score')}"
+            )
+            if item.get("statement"):
+                lines.append(f"  {item.get('statement')}")
+    lines.append("Ranking scores are not probabilities.")
+    return lines
+
+
+def _pdf_scope_lines(scope: dict[str, Any] | None) -> list[str]:
+    chosen = scope or {}
+    if chosen.get("mode") == "service_cluster":
+        affected = chosen.get("affected_member_count") or 0
+        members = chosen.get("member_count") or 0
+        return [
+            "Review scope: Service Cluster",
+            f"Service cluster: {chosen.get('cluster_label') or ''}",
+            f"Membership source: {chosen.get('membership_source_label') or ''}",
+            f"Cluster members: {members}",
+            f"Change origin: {chosen.get('origin_service_id') or ''}",
+            f"Evidenced impact: {affected} / {members} services",
+        ]
+    return ["Review scope: Individual repository"]
 
 
 def _public_commentary(commentary: dict[str, Any]) -> dict[str, Any]:

@@ -47,11 +47,15 @@ def list_reviews(output_dir: Path, limit: int | None = 20) -> list[dict[str, Any
             gate = report.get("gate") if isinstance(report.get("gate"), dict) else {}
             source = change.get("source") if isinstance(change.get("source"), dict) else {}
             findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+            scope = report.get("review_scope") if isinstance(report.get("review_scope"), dict) else {}
+            scope_mode = str(scope.get("mode") or "repository")
             rows.append({
                 "review_id": str(manifest.get("review_id") or report.get("review_id") or directory.name),
                 "decision": gate.get("decision") or manifest.get("status") or "",
                 "repository": change.get("repository") or manifest.get("repository") or "",
                 "service": change.get("service_id") or manifest.get("service") or "",
+                "review_scope": scope_mode,
+                "review_scope_label": str(scope.get("cluster_label") or "") if scope_mode == "service_cluster" else "Repository",
                 "source_kind": source.get("kind") or "",
                 "base_sha": change.get("base_sha") or manifest.get("base_sha") or "",
                 "head_sha": change.get("head_sha") or manifest.get("head_sha") or "",
@@ -108,6 +112,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         f"Decision: {(gate.get('decision') or 'incomplete').upper()}",
         "",
+        *_scope_markdown(report),
         f"Repository: {change.get('repository') or report.get('repository') or ''}",
         f"Base: {change.get('base_sha') or ''}",
         f"Head: {change.get('head_sha') or ''}",
@@ -119,16 +124,28 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Cross-repository impact",
         "",
     ]
+    scope = _stored_scope(report)
+    if scope.get("mode") == "service_cluster":
+        adjective = "declared" if scope.get("membership_source") == "declared" else "connected"
+        lines.append(f"Analysis boundary: {scope.get('cluster_label') or 'Service Cluster'} · {scope.get('member_count') or 0} {adjective} services.")
+        lines.append("")
     candidates = (report.get("impact") or {}).get("ranked_candidates") or []
     if not candidates:
         lines.append("No ranked downstream candidate was produced.")
-    for item in candidates[:20]:
-        lines.append(
-            f"- {item.get('service_id')}:{item.get('file_path')} origin={item.get('evidence_origin')} "
-            f"structural={item.get('structural_score')} temporal={item.get('temporal_score')} nrm={item.get('hybrid_score')}"
-        )
-        if item.get("statement"):
-            lines.append(f"  {item['statement']}")
+    else:
+        services = []
+        for item in candidates:
+            service = str(item.get("service_id") or "")
+            if service and service not in services:
+                services.append(service)
+        service_word = "service" if len(services) == 1 else "services"
+        candidate_word = "candidate" if len(candidates) == 1 else "candidates"
+        lines.append(f"{len(candidates)} ranked {candidate_word} across {len(services)} {service_word}. Ranking scores are not probabilities.")
+        lines.append("")
+        lines.extend(_grouped_candidate_lines(candidates))
+    outside = _out_of_scope_line(scope)
+    if outside:
+        lines.extend(["", outside])
     lines.extend(["", "## Blocking findings", ""])
     lines.extend(_finding_lines(report, gate.get("blocking_findings") or []))
     lines.extend(["", "## Warnings", ""])
@@ -294,6 +311,61 @@ def _gate_evidence_markdown(report: dict[str, Any]) -> list[str]:
     validation = summary.get("validation") if isinstance(summary.get("validation"), dict) else {}
     lines.extend(["### Validation", "", str(validation.get("statement") or ""), ""])
     return lines
+
+
+def _grouped_candidate_lines(candidates: list[dict[str, Any]]) -> list[str]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for item in candidates:
+        service = str(item.get("service_id") or "unattributed")
+        if service not in grouped:
+            order.append(service)
+            grouped[service] = []
+        grouped[service].append(item)
+    lines: list[str] = []
+    for service in order:
+        lines.append(f"### {service}")
+        lines.append("")
+        for item in grouped[service]:
+            lines.append(
+                f"- {item.get('file_path')} origin={item.get('evidence_origin')} "
+                f"structural={item.get('structural_score')} temporal={item.get('temporal_score')} nrm={item.get('hybrid_score')}"
+            )
+            if item.get("statement"):
+                lines.append(f"  {item['statement']}")
+        lines.append("")
+    return lines
+
+
+def _stored_scope(report: dict[str, Any]) -> dict[str, Any]:
+    scope = report.get("review_scope")
+    if isinstance(scope, dict) and scope.get("mode"):
+        return scope
+    change = report.get("change") if isinstance(report.get("change"), dict) else {}
+    return {"mode": "repository", "label": "Individual repository", "origin_service_id": change.get("service_id") or ""}
+
+
+def _scope_markdown(report: dict[str, Any]) -> list[str]:
+    scope = _stored_scope(report)
+    if scope.get("mode") != "service_cluster":
+        return ["Review scope: Individual repository", ""]
+    return [
+        "Review scope: Service Cluster",
+        f"Service cluster: {scope.get('cluster_label') or ''}",
+        f"Membership source: {scope.get('membership_source_label') or ''}",
+        f"Cluster members: {scope.get('member_count') or 0}",
+        f"Change origin: {scope.get('origin_service_id') or ''}",
+        f"Evidenced impact: {scope.get('affected_member_count') or 0} of {scope.get('member_count') or 0} services",
+        "",
+    ]
+
+
+def _out_of_scope_line(scope: dict[str, Any]) -> str:
+    from dep_intel.review_scope import out_of_scope_note
+
+    if scope.get("mode") != "service_cluster":
+        return ""
+    return out_of_scope_note(scope.get("out_of_scope_targets") or [])
 
 
 def _finding_lines(report: dict[str, Any], identifiers: list[str]) -> list[str]:

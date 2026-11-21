@@ -233,6 +233,10 @@ def gate_input_hash(report: dict[str, Any], settings: dict[str, Any] | None = No
         "verification": verification,
         "diagnostics": diagnostics,
     }
+    scope = report.get("review_scope") if isinstance(report.get("review_scope"), dict) else None
+    if scope is not None:
+        payload["review_scope"] = str(scope.get("mode") or "repository")
+        payload["cluster_id"] = str(scope.get("cluster_id") or "")
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 

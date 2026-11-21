@@ -13,12 +13,18 @@ import {
   TextInput,
   Toggle,
 } from "@carbon/react";
-import { previewChange, purgeReviews, recentReviews, reviewConfig, reviewSourceOptions, runReview, type AppState } from "../api";
+import { getServiceClusters, previewChange, purgeReviews, recentReviews, reviewConfig, reviewSourceOptions, runReview, type AppState, type ServiceClusterSummary } from "../api";
 import { hideFilePaths } from "../labels";
+import { reviewFormState, scopeColumnLabel } from "../reviewForm";
 import { NamiDataTable } from "../components/NamiDataTable";
 import { NamiEmptyState } from "../components/NamiEmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusTag } from "../components/StatusTag";
+
+const REVIEW_SCOPES = [
+  { id: "repository", text: "Individual repository" },
+  { id: "service_cluster", text: "Service cluster" },
+];
 
 const SOURCES = [
   { id: "working_tree", text: "Working tree" },
@@ -28,11 +34,7 @@ const SOURCES = [
   { id: "github_pr", text: "Pull request" },
 ];
 
-const MODE_HELP = [
-  { id: "auto", label: "Recommended", text: "Uses the published graph when it matches this change, and builds a private graph when it does not." },
-  { id: "fast", label: "Fast", text: "Uses the published intelligence snapshot." },
-  { id: "exact", label: "Exact", text: "Builds graph evidence for this revision and does not publish it." },
-] as const;
+const MODE_LABELS = { auto: "Recommended", fast: "Fast", exact: "Exact" } as const;
 
 const SOURCE_LABELS: Record<string, string> = {
   working_tree: "Working tree",
@@ -49,13 +51,16 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const sourceId = params.get("source") || "working_tree";
   const source = SOURCES.find((item) => item.id === sourceId) ?? SOURCES[0];
   const repos = (snapshot?.repositories ?? []).filter((repo) => repo.checkout_status !== "unavailable" && repo.slug);
+  const [reviewScope, setReviewScope] = useState<"repository" | "service_cluster">("repository");
+  const [clusters, setClusters] = useState<ServiceClusterSummary[]>([]);
+  const [clusterId, setClusterId] = useState("");
   const [repository, setRepository] = useState(params.get("repository") || repos[0]?.slug || "");
   const [commit, setCommit] = useState("");
   const [base, setBase] = useState("");
   const [head, setHead] = useState("");
   const [prUrl, setPrUrl] = useState("");
   const [mode, setMode] = useState<"auto" | "fast" | "exact">("auto");
-  const [verify, setVerify] = useState(true);
+  const [verify, setVerify] = useState(false);
   const [model, setModel] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [verificationCommands, setVerificationCommands] = useState<string[]>([]);
@@ -68,18 +73,36 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const [purgeNote, setPurgeNote] = useState("");
   const [purgeError, setPurgeError] = useState("");
 
-  const defaultRepository = repos[0]?.slug || "";
+  const selectedCluster = clusters.find((item) => item.cluster_id === clusterId) ?? null;
+  const clusterRepos = selectedCluster ? repos.filter((repo) => selectedCluster.services.includes(serviceIdOf(repo))) : [];
+  const visibleRepos = reviewScope === "service_cluster" ? clusterRepos : repos;
+  const defaultRepository = (reviewScope === "service_cluster" ? clusterRepos[0]?.slug : repos[0]?.slug) || "";
+  useEffect(() => {
+    void getServiceClusters().then((payload) => setClusters(payload.clusters ?? [])).catch(() => setClusters([]));
+  }, []);
+
+  useEffect(() => {
+    if (reviewScope !== "service_cluster" || clusters.length === 0) return;
+    const cluster = clusters.find((item) => item.cluster_id === clusterId) ?? clusters[0];
+    if (cluster.cluster_id !== clusterId) setClusterId(cluster.cluster_id);
+    const members = repos.filter((repo) => cluster.services.includes(serviceIdOf(repo)));
+    if (members.length > 0 && !members.some((repo) => repo.slug === repository)) setRepository(members[0].slug);
+  }, [reviewScope, clusters, clusterId, repos, repository]);
+
   useEffect(() => {
     if (!repository && defaultRepository) setRepository(defaultRepository);
   }, [repository, defaultRepository]);
 
   useEffect(() => {
     void reviewConfig(repository).then((config) => {
+      const commands = config.verification?.commands ?? [];
       setModelReady(config.model_configured);
-      setVerificationCommands(config.verification?.commands ?? []);
+      setVerificationCommands(commands);
+      setVerify(commands.length > 0);
     }).catch(() => {
       setModelReady(false);
       setVerificationCommands([]);
+      setVerify(false);
     });
   }, [repository]);
 
@@ -94,15 +117,58 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
     void recentReviews().then(setReviews).catch(() => setReviews([]));
   }, []);
 
+  function chooseScope(next: "repository" | "service_cluster") {
+    setReviewScope(next);
+    setPreview(null);
+    if (next !== "service_cluster") return;
+    const cluster = clusters.find((item) => item.cluster_id === clusterId) ?? clusters[0];
+    if (!cluster) return;
+    setClusterId(cluster.cluster_id);
+    const members = repos.filter((repo) => cluster.services.includes(serviceIdOf(repo)));
+    if (!members.some((repo) => repo.slug === repository) && members[0]) setRepository(members[0].slug);
+  }
+
+  function chooseCluster(nextId: string) {
+    setClusterId(nextId);
+    setPreview(null);
+    const cluster = clusters.find((item) => item.cluster_id === nextId);
+    if (!cluster) return;
+    const members = repos.filter((repo) => cluster.services.includes(serviceIdOf(repo)));
+    if (!members.some((repo) => repo.slug === repository) && members[0]) setRepository(members[0].slug);
+  }
+
+  const originRepo = repos.find((item) => item.slug === repository);
+  const originLabel = reviewScope === "service_cluster" ? serviceIdOf(originRepo) || originRepo?.name || repository : originRepo?.name || repository;
+  const form = reviewFormState({
+    reviewScope,
+    clusterId,
+    repository,
+    repositoryLabel: originLabel,
+    source: source.id as "working_tree" | "staged" | "commit" | "range" | "github_pr",
+    commit,
+    base,
+    head,
+    prUrl,
+    dirtyFiles: options ? options.dirty_files : null,
+    stagedFiles: options ? options.staged_files : null,
+    branch: options?.current_branch || "",
+    verificationCommands,
+    verifyRequested: verify,
+    mode,
+  });
+
   function sourceBody() {
+    const clusterReview = reviewScope === "service_cluster";
     return {
       mode,
-      verify,
+      verify: form.verify,
       model: modelReady && model ? { enabled: true } : {},
-      service: "",
+      review_scope: reviewScope,
+      cluster_id: clusterReview ? clusterId : "",
+      service: clusterReview ? serviceIdOf(originRepo) : "",
       source: {
         kind: source.id,
-        repository: source.id === "github_pr" ? "" : repository,
+        repository: source.id === "github_pr" && !clusterReview ? "" : repository,
         commit: source.id === "commit" ? commit : null,
         base_ref: source.id === "range" ? base : null,
         head_ref: source.id === "range" ? head : null,
@@ -183,6 +249,33 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
       <Grid>
         <Column sm={4} md={4} lg={8}>
           <Dropdown
+            id="review-scope"
+            titleText="Review scope"
+            label="Individual repository"
+            items={REVIEW_SCOPES}
+            itemToString={(item) => item?.text ?? ""}
+            selectedItem={REVIEW_SCOPES.find((item) => item.id === reviewScope)}
+            onChange={({ selectedItem }) => chooseScope(selectedItem?.id === "service_cluster" ? "service_cluster" : "repository")}
+          />
+        </Column>
+        {reviewScope === "service_cluster" ? (
+          <Column sm={4} md={4} lg={8}>
+            <Dropdown
+              id="review-cluster"
+              titleText="Service cluster"
+              label="Choose a service cluster"
+              items={clusters}
+              itemToString={(item) => item ? `${item.display_label || item.label} · ${item.service_count} services` : ""}
+              selectedItem={selectedCluster}
+              onChange={({ selectedItem }) => {
+                if (selectedItem?.cluster_id) chooseCluster(selectedItem.cluster_id);
+              }}
+            />
+            {selectedCluster?.membership_source_label ? <p className="helper">{selectedCluster.membership_source_label} · {selectedCluster.service_count} services</p> : null}
+          </Column>
+        ) : null}
+        <Column sm={4} md={4} lg={8}>
+          <Dropdown
             id="change-source"
             titleText="Change source"
             label="Choose a source"
@@ -197,28 +290,34 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
             }}
           />
         </Column>
-        {source.id !== "github_pr" ? (
+        {source.id !== "github_pr" || reviewScope === "service_cluster" ? (
           <Column sm={4} md={4} lg={8}>
             <ComboBox
               id="review-repository"
-              titleText="Repository"
-              placeholder="Choose a repository"
-              items={repos}
-              selectedItem={repos.find((item) => item.slug === repository) ?? null}
-              itemToString={(item) => item?.name ?? ""}
+              titleText={reviewScope === "service_cluster" ? "Change origin repository" : "Repository"}
+              placeholder={reviewScope === "service_cluster" ? "Choose the origin repository" : "Choose a repository"}
+              items={visibleRepos}
+              selectedItem={visibleRepos.find((item) => item.slug === repository) ?? null}
+              itemToString={(item) => item ? (reviewScope === "service_cluster" ? serviceIdOf(item) : item.name) : ""}
               onChange={({ selectedItem }) => {
                 setRepository(selectedItem?.slug ?? "");
                 setPreview(null);
               }}
             />
           </Column>
-        ) : (
+        ) : null}
+        {source.id === "github_pr" ? (
           <Column sm={4} md={4} lg={8}>
             <TextInput id="pr-url" labelText="Pull request URL" value={prUrl} onChange={(event) => setPrUrl(event.target.value)} />
           </Column>
-        )}
-        {source.id === "working_tree" && options ? <Column sm={4} md={8} lg={16}><p className="helper">{options.dirty_files} changed files on {options.current_branch || "the current branch"}</p></Column> : null}
-        {source.id === "staged" && options ? <Column sm={4} md={8} lg={16}><p className="helper">{options.staged_files} staged files</p></Column> : null}
+        ) : null}
+        {form.sourceMessage ? <Column sm={4} md={8} lg={16}><p className="helper">{form.sourceMessage}</p></Column> : null}
+        {form.showClusterContext && selectedCluster ? (
+          <Column sm={4} md={8} lg={16}>
+            <p className="helper">Cluster review · {selectedCluster.display_label || selectedCluster.label} · {selectedCluster.service_count} services · Origin: {originLabel}</p>
+            <p className="helper">Impact is evaluated only for evidenced targets within the selected cluster.</p>
+          </Column>
+        ) : null}
         {source.id === "commit" ? (
           <Column sm={4} md={4} lg={8}>
             <ComboBox
@@ -252,17 +351,11 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
             <RadioButton value="fast" labelText="Fast" />
             <RadioButton value="exact" labelText="Exact" />
           </RadioButtonGroup>
-          <ul className="mode-explanations">
-            {MODE_HELP.map((item) => (
-              <li key={item.id} className={item.id === mode ? "is-selected" : undefined}>
-                <strong>{item.label}. </strong>{item.text}
-              </li>
-            ))}
-          </ul>
+          <p className="helper"><strong>{MODE_LABELS[mode]}. </strong>{form.modeText}</p>
         </div>
         <div>
-          <Toggle id="run-verification" labelText="Run verification" toggled={verify} onToggle={setVerify} />
-          <p className="helper">{verificationCommands.length ? `Runs ${verificationCommands.join(", ")}.` : "No verification commands are configured, so this option does not run a check."}</p>
+          <Toggle id="run-verification" labelText="Run verification" toggled={form.verificationEnabled && verify} disabled={!form.verificationEnabled} onToggle={setVerify} />
+          <p className="helper">{form.verificationEnabled ? `Runs ${verificationCommands.join(", ")}.` : `No verification commands are configured for ${originLabel || "the selected repository"}.`}</p>
         </div>
         {modelReady ? <Toggle id="model-assistance" labelText="Model assistance" toggled={model} onToggle={setModel} /> : null}
       </div>
@@ -275,8 +368,8 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
       <div className="button-row">
         {busy ? <InlineLoading description="Working" /> : (
           <>
-            <Button kind="tertiary" disabled={!repository && source.id !== "github_pr"} onClick={() => void previewSource()}>Preview change</Button>
-            <Button kind="primary" onClick={() => void submit()}>Review change</Button>
+            <Button kind="tertiary" disabled={!form.canPreview} onClick={() => void previewSource()}>Preview change</Button>
+            <Button kind="primary" disabled={!form.canReview} onClick={() => void submit()}>Review change</Button>
           </>
         )}
       </div>
@@ -288,7 +381,8 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
           columns={[
             { key: "decision", header: "Decision", render: (row) => <StatusTag status={row.decision} /> },
             { key: "change", header: "Change", render: (row) => <Link to={`/review/${row.id}`}>{row.change}</Link> },
-            { key: "service", header: "Service" },
+            { key: "scope", header: "Scope" },
+            { key: "service", header: "Origin" },
             { key: "findings", header: "Findings" },
             { key: "when", header: "When" },
           ]}
@@ -296,6 +390,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
             id: item.review_id,
             decision: item.decision,
             change: changeLabel(item),
+            scope: scopeColumnLabel(item.review_scope, item.review_scope_label),
             service: repos.find((repo) => repo.slug === item.service)?.name || item.service || "—",
             findings: String(item.finding_count),
             when: item.completed_at || "—",
@@ -306,6 +401,11 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
       )}
     </div>
   );
+}
+
+function serviceIdOf(repo: { slug: string; service_id?: string } | undefined): string {
+  if (!repo) return "";
+  return repo.service_id || repo.slug;
 }
 
 function changeLabel(item: { source_kind: string; head_sha?: string; base_sha?: string }): string {

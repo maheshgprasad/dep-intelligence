@@ -84,6 +84,7 @@ INFERENCE_TITLES = {
     "policy_violation": "A project rule matched this change",
     "security_attention_required": "A configured security rule matched",
     "deployment_attention_required": "This change needs attention before deployment",
+    "cluster_scope_reach": "Several downstream services are in scope",
 }
 
 
@@ -295,6 +296,7 @@ def build_inferences(report: dict[str, Any], evidence_by_finding: dict[str, list
         created.append(_inference("deployment_attention_required", "medium", "moderate", "Deployment enforcement would treat this gate decision as something to resolve before promotion.", services, []))
     if any(item.get("source") == "LLM" for item in report.get("findings") or []):
         created.append(_inference("verification_required", "info", "weak", "A model suggestion is advisory until deterministic evidence supports it.", [], []))
+    _add_cluster_scope_inference(created, report)
     unique = _dedupe_inferences(created)
     for index, item in enumerate(unique, start=1):
         item["inference_id"] = f"INF-{index:03d}"
@@ -488,9 +490,11 @@ def build_assessment(report: dict[str, Any], inferences: list[dict[str, Any]], a
         else:
             summary = f"Review work remains for {', '.join(services[:3])}."
         level = "cross_service"
+        summary = _with_cluster_assessment(report, summary)
     elif decision == "warn":
         headline = "Review is recommended."
         summary = primary["statement"] if primary else f"The change in {root} has review work and no verified blocker."
+        summary = _with_cluster_assessment(report, summary)
         level = "service"
     else:
         headline = "This change is ready to proceed."
@@ -575,6 +579,33 @@ def summarize_impact(result: dict[str, Any]) -> dict[str, str]:
         statement = f"{target} is a downstream review target. This does not by itself mean a contract is broken."
     recommended = f"Review {file_path} before deployment." if file_path else f"Review {target} before deployment."
     return {"title": title, "statement": statement, "recommended": recommended}
+
+
+def _add_cluster_scope_inference(created: list[dict[str, Any]], report: dict[str, Any]) -> None:
+    scope = report.get("review_scope") if isinstance(report.get("review_scope"), dict) else {}
+    if scope.get("mode") != "service_cluster":
+        return
+    members = int(scope.get("member_count") or 0)
+    if members < 2:
+        return
+    affected = int(scope.get("affected_member_count") or 0)
+    statement = f"This change has evidenced reach to {affected} of {members} services in the selected Service Cluster."
+    for item in created:
+        if item.get("type") == "wide_blast_radius":
+            item["statement"] = statement
+            item["affected_services"] = []
+            return
+    created.append(_inference("cluster_scope_reach", "info", "weak", statement, [], []))
+
+
+def _with_cluster_assessment(report: dict[str, Any], summary: str) -> str:
+    scope = report.get("review_scope") if isinstance(report.get("review_scope"), dict) else {}
+    if scope.get("mode") != "service_cluster":
+        return summary
+    origin = str(scope.get("origin_service_id") or "")
+    if origin and origin not in summary:
+        return f"This change originates in {origin}. {summary}"
+    return summary
 
 
 def _inference(kind: str, severity: str, confidence: str, statement: str, services: list[str], refs: list[str]) -> dict[str, Any]:

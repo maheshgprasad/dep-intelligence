@@ -140,18 +140,25 @@ def cluster_for_service(snapshot: Snapshot | None, service_id: str) -> dict[str,
     return None
 
 
-def cluster_downstream(snapshot: Snapshot | None, service_id: str) -> dict[str, Any]:
+def cluster_downstream(snapshot: Snapshot | None, service_id: str, cluster_id: str = "") -> dict[str, Any]:
     """Confirmed consumers of a clustered service.
 
     A consumer calls this service, or calls another consumer of it. The walk
     stays inside the cluster. It does not invent file ranks, and a service
-    outside every cluster returns an empty result.
+    outside every cluster returns an empty result. An explicit cluster id
+    selects that membership; confirmed calls do not add or remove members.
     """
     empty = {"cluster_id": "", "services": [], "items": []}
     if snapshot is None or not service_id:
         return empty
     rows = confirmed_relationships(snapshot)
-    cluster = cluster_for_service(snapshot, service_id)
+    if cluster_id:
+        selected = get_service_cluster(snapshot, cluster_id)
+        if selected is None or service_id not in set(selected.get("services") or []):
+            return empty
+        cluster = selected
+    else:
+        cluster = cluster_for_service(snapshot, service_id)
     if cluster is None:
         return empty
     members = set(cluster["services"])
