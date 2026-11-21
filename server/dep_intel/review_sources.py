@@ -109,7 +109,7 @@ def resolve_change(repo: Path, source: dict[str, Any], settings: Settings, budge
     kind = source.get("kind") or "working_tree"
     diagnostics: list[dict[str, Any]] = []
     if not repository_allowed(repo, settings):
-        return _empty(kind, diagnostics=[diagnostic("review_repository_not_allowlisted", f"{repo} is not an allowlisted repository or a tool-owned checkout.", severity="error")])
+        return _empty(kind, diagnostics=[diagnostic("review_repository_not_allowlisted", f"{repo.name or 'The selected repository'} is not an allowlisted repository or a tool-owned checkout.", severity="error")])
     if kind == "explicit":
         return {
             "kind": kind,

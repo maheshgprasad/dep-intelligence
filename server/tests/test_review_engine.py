@@ -120,6 +120,28 @@ def test_feedback_does_not_touch_nrm_artifacts(tmp_path: Path) -> None:
     assert not (settings.output_dir / "phase1_predictions.json").exists()
 
 
+def test_checkout_slug_resolves_to_the_tool_checkout(tmp_path: Path) -> None:
+    from dep_intel.review_engine import _repository_path
+    from dep_intel.review_sources import resolve_change
+
+    checkout = tmp_path / "output" / "checkouts" / "hvrcorp_uocp_api_gateway"
+    checkout.mkdir(parents=True)
+    repos = tmp_path / "repos.txt"
+    repos.write_text(
+        "[cluster:omnichannel]\n"
+        "uocp-api-gateway = https://github.com/hvrcorp/uocp-api-gateway\n"
+        "uocp-auth-service = https://github.com/hvrcorp/uocp-auth-service\n",
+        encoding="utf-8",
+    )
+    settings = Settings(root=tmp_path, repos_file=repos, output_dir=tmp_path / "output", github_token="", ghe_token="")
+    resolved = _repository_path({"repository": "hvrcorp_uocp_api_gateway"}, settings)
+    assert resolved == checkout.resolve()
+    assert _repository_path({"repository": "uocp-api-gateway"}, settings) == checkout.resolve()
+    assert not (tmp_path / "hvrcorp_uocp_api_gateway").exists()
+    change = resolve_change(resolved, {"kind": "commit", "commit": "848b79d661f2621b1a7f1c73b027ba004a2b7028"}, settings)
+    assert all(item["code"] != "review_repository_not_allowlisted" for item in change["diagnostics"])
+
+
 def _secret_config() -> dict:
     return {
         "policies": [{

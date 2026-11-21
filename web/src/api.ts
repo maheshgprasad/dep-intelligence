@@ -1,3 +1,7 @@
+import type { ClusterReviewState } from "./clusterReview";
+
+export type { ClusterReviewState };
+
 export type PackageUse = { name: string; version: string; ecosystem: string };
 
 export type Snapshot = {
@@ -656,6 +660,58 @@ export async function reviewConfig(repository = ""): Promise<{ model_configured:
   return response.json();
 }
 
+export type ClusterPreview = {
+  cluster_id: string;
+  cluster_label: string;
+  repository_total: number;
+  changed_count: number;
+  no_change_count: number;
+  repositories: { service_id: string; repository: string; change_detected: boolean; changed_file_count: number; error_summary?: string; commit_count?: number; commits?: { sha: string; committed_at: string; subject: string }[] }[];
+};
+
+export async function previewClusterReview(body: Record<string, unknown>): Promise<ClusterPreview> {
+  const response = await fetch("/api/cluster-review/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(reviewError(payload, response.status, "The cluster preview could not be built."));
+  return payload;
+}
+
+export async function runClusterReview(body: Record<string, unknown>): Promise<{ cluster_review_id: string; job_id: string; status: string; repository_total: number; cluster_label: string }> {
+  const response = await fetch("/api/cluster-review/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(reviewError(payload, response.status, "The cluster review could not be started."));
+  return payload;
+}
+
+export async function getClusterReview(clusterReviewId: string): Promise<ClusterReviewState> {
+  const response = await fetch(`/api/cluster-review/${clusterReviewId}`);
+  if (response.status === 404) throw new Error("This cluster review is not stored.");
+  if (!response.ok) throw new Error("The cluster review could not be loaded.");
+  return response.json();
+}
+
+export async function cancelClusterReview(clusterReviewId: string): Promise<ClusterReviewState> {
+  const response = await fetch(`/api/cluster-review/${clusterReviewId}/cancel`, { method: "POST" });
+  if (!response.ok) throw new Error("The cluster review could not be cancelled.");
+  return response.json();
+}
+
+function reviewError(payload: { detail?: unknown }, status: number, fallback: string): string {
+  const detail = payload.detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && "message" in detail) return String((detail as { message?: string }).message);
+  if (status === 409) return "The published graph is older than this change. Refresh intelligence, or review in Exact mode.";
+  return fallback;
+}
+
 export async function runReview(body: Record<string, unknown>): Promise<ReviewReport & { job_id?: string; status?: string }> {
   const response = await fetch("/api/review/run", {
     method: "POST",
@@ -663,18 +719,7 @@ export async function runReview(body: Record<string, unknown>): Promise<ReviewRe
     body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = payload.detail;
-    const message =
-      typeof detail === "string"
-        ? detail
-        : detail && typeof detail === "object" && "message" in detail
-          ? String((detail as { message?: string }).message)
-          : response.status === 409
-            ? "The published graph is older than this change. Refresh intelligence, or review in Exact mode."
-            : "The review could not be started.";
-    throw new Error(message);
-  }
+  if (!response.ok) throw new Error(reviewError(payload, response.status, "The review could not be started."));
   return payload;
 }
 
@@ -689,6 +734,19 @@ export async function reviewJob(jobId: string): Promise<{ status: string; result
   const response = await fetch(`/api/jobs/${jobId}`);
   if (!response.ok) throw new Error("Review job was not found");
   return response.json();
+}
+
+export async function downloadClusterExport(clusterReviewId: string, format: ExportFormat): Promise<void> {
+  const response = await fetch(`/api/cluster-review/${clusterReviewId}/export/${format}`);
+  if (!response.ok) throw new Error("The export could not be created.");
+  const blob = await response.blob();
+  const extension = format === "evidence" ? "zip" : format === "markdown" ? "md" : format;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nami-cluster-review-${clusterReviewId.slice(0, 8)}.${extension}`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function downloadReviewExport(reviewId: string, format: ExportFormat): Promise<void> {

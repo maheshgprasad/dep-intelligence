@@ -10,6 +10,8 @@ const base = {
   commit: "",
   base: "",
   head: "",
+  since: "",
+  until: "",
   prUrl: "",
   dirtyFiles: 0,
   stagedFiles: 0,
@@ -20,24 +22,32 @@ const base = {
 };
 
 describe("review form readiness", () => {
-  it("blocks an empty working tree", () => {
-    const state = reviewFormState(base);
+  it("blocks an empty working tree for one repository", () => {
+    const state = reviewFormState({ ...base, reviewScope: "repository" });
     expect(state.canPreview).toBe(false);
     expect(state.canReview).toBe(false);
     expect(state.sourceMessage).toBe("No working-tree changes found in uocp-api-gateway.");
   });
 
-  it("blocks an empty staged change", () => {
-    const state = reviewFormState({ ...base, source: "staged", dirtyFiles: 3 });
+  it("lets a cluster review inspect every repository when the origin is clean", () => {
+    const state = reviewFormState(base);
+    expect(state.canPreview).toBe(true);
+    expect(state.canReview).toBe(true);
+    expect(state.showClusterContext).toBe(true);
+    expect(state.sourceMessage).toBe("Preview lists every repository in the cluster before review starts.");
+  });
+
+  it("blocks an empty staged change for one repository", () => {
+    const state = reviewFormState({ ...base, reviewScope: "repository", source: "staged", dirtyFiles: 3 });
     expect(state.canPreview).toBe(false);
     expect(state.sourceMessage).toBe("No staged changes found in uocp-api-gateway.");
   });
 
   it("enables a working tree that has changes", () => {
-    const state = reviewFormState({ ...base, dirtyFiles: 3 });
+    const state = reviewFormState({ ...base, reviewScope: "repository", dirtyFiles: 3 });
     expect(state.canPreview).toBe(true);
     expect(state.canReview).toBe(true);
-    expect(state.showClusterContext).toBe(true);
+    expect(state.showClusterContext).toBe(false);
     expect(state.sourceMessage).toBe("3 changed files on main");
   });
 
@@ -66,6 +76,9 @@ describe("review form readiness", () => {
     expect(reviewFormState({ ...base, source: "range", base: "main", head: "topic" }).canReview).toBe(true);
     expect(reviewFormState({ ...base, source: "github_pr" }).canReview).toBe(false);
     expect(reviewFormState({ ...base, source: "github_pr", prUrl: "https://github.com/acme/repo/pull/1" }).canReview).toBe(true);
+    expect(reviewFormState({ ...base, reviewScope: "repository", source: "timeframe", dirtyFiles: 0 }).canReview).toBe(false);
+    expect(reviewFormState({ ...base, reviewScope: "repository", source: "timeframe", since: "2024-02-01", until: "2024-01-01" }).canReview).toBe(false);
+    expect(reviewFormState({ ...base, reviewScope: "repository", source: "timeframe", since: "2024-01-01", until: "2024-01-31" }).canReview).toBe(true);
   });
 
   it("labels recent review scope with the cluster name", () => {

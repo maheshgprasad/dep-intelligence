@@ -148,6 +148,29 @@ body {
   align-items: flex-start;
 }
 
+.cluster-progress-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+}
+
+.cluster-progress-summary p,
+.cluster-stage-list,
+.cluster-progress-list {
+  margin: 0;
+}
+
+.cluster-progress-list,
+.cluster-stage-list {
+  padding: 0;
+  list-style: none;
+}
+
+.cluster-progress-list li,
+.cluster-stage-list li {
+  padding: 0.35rem 0;
+}
+
 .mode-explanations {
   margin: 0.75rem 0 0;
   padding: 0;

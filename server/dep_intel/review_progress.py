@@ -17,6 +17,20 @@ REVIEW_STAGES: list[tuple[str, str]] = [
 STAGE_INDEX = {stage: index for index, (stage, _label) in enumerate(REVIEW_STAGES)}
 STAGE_LABELS = dict(REVIEW_STAGES)
 
+# Operational labels for a cluster review. Stage ids stay aligned with REVIEW_STAGES.
+CLUSTER_STAGE_LABELS = {
+    "detect_change": "Detecting changes",
+    "resolve_change": "Inspecting repository",
+    "build_change_view": "Building change view",
+    "align_graph": "Aligning graph evidence",
+    "calculate_impact": "Calculating cross-repository impact",
+    "apply_policies": "Applying policies",
+    "collect_findings": "Collecting evidence",
+    "verify_findings": "Running verification",
+    "gate_decision": "Evaluating Boundary Gate",
+    "write_report": "Generating explanation",
+}
+
 
 def resolve_review_mode(requested: str, alignment: str) -> str:
     """Map a requested review mode to the mode that will actually run.
