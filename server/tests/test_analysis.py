@@ -40,10 +40,21 @@ def test_named_repository_lines_keep_the_service_id_and_url(tmp_path: Path) -> N
     ]
 
 
-def test_project_repos_file_is_not_cloned_as_section_headers() -> None:
-    settings = Settings(root=ROOT, repos_file=ROOT / "repos.txt", output_dir=ROOT / "output", github_token="", ghe_token="")
+def test_section_headers_are_not_repository_urls(tmp_path: Path) -> None:
+    repos = tmp_path / "repos.txt"
+    repos.write_text(
+        "\n".join([
+            "[standalone]",
+            "MonitorControl_MonitorControl = https://github.com/MonitorControl/MonitorControl",
+            "[cluster:omnichannel]",
+            "uocp-api-gateway = https://github.com/hvrcorp/uocp-api-gateway",
+            "uocp-auth-service = https://github.com/hvrcorp/uocp-auth-service",
+        ]),
+        encoding="utf-8",
+    )
+    settings = Settings(root=ROOT, repos_file=repos, output_dir=tmp_path, github_token="", ghe_token="")
     loaded = load_repos(settings)
-    assert len(loaded) == 21
+    assert len(loaded) == 3
     assert all(not item.raw.startswith("[") and " = " not in item.raw for item in loaded)
     gateway = next(item for item in loaded if item.service_id == "uocp-api-gateway")
     assert gateway.kind == "github"
