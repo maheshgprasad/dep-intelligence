@@ -137,16 +137,36 @@ def parse_repo_line(line: str, root: Path = PROJECT_ROOT) -> RepoRef:
     return RepoRef(raw=line, name=name, slug=_slug(name), kind="local", path=path.resolve())
 
 
+_SECTION = re.compile(r"^\[[A-Za-z0-9_.:-]+\]$")
+_SERVICE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+
 def load_repos(settings: Settings) -> list[RepoRef]:
+    """Read repos.txt.
+
+    A line may be a local path, a GitHub URL, or ``service-id = url-or-path``.
+    ``[standalone]`` and ``[cluster:name]`` are group labels, not repositories.
+    """
     if not settings.repos_file.is_file():
         return []
     repos: list[RepoRef] = []
     for raw in settings.repos_file.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("#") or _SECTION.fullmatch(line):
             continue
-        repos.append(parse_repo_line(line, settings.root))
+        repos.append(_repo_from_line(line, settings.root))
     return repos
+
+
+def _repo_from_line(line: str, root: Path) -> RepoRef:
+    if "=" in line:
+        left, right = (part.strip().strip('"').strip("'") for part in line.split("=", 1))
+        if _SERVICE_ID.fullmatch(left) and right:
+            ref = parse_repo_line(right, root)
+            ref.name = left
+            ref.slug = left
+            return ref
+    return parse_repo_line(line, root)
 
 
 def _slug(name: str) -> str:

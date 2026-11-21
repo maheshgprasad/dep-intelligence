@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from dep_intel.review_explain import gate_evidence_summary
 from dep_intel.store import read_json, write_json
 
 
@@ -198,6 +199,19 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"Validation comment: {commentary.get('validation_comment') or ''}",
             "",
         ])
+        claims = [item for item in (commentary.get("claims") or []) if isinstance(item, dict) and item.get("claim")]
+        if claims or commentary.get("claims_note"):
+            lines.extend(["### " + str(commentary.get("claims_heading") or "Evidence-grounded AI explanation"), ""])
+            for item in claims:
+                refs = ", ".join(str(value) for value in (item.get("evidence_ids") or []))
+                suffix = f" Evidence: {refs}." if refs else ""
+                lines.append(f"- **{item.get('claim')}**{suffix}")
+            lines.append("")
+            if commentary.get("claims_note"):
+                lines.extend([str(commentary.get("claims_note")), ""])
+            if commentary.get("claims_advisory"):
+                lines.extend([str(commentary.get("claims_advisory")), ""])
+    lines.extend(_gate_evidence_markdown(report))
     validation = report.get("gate_validation") or {}
     if validation:
         lines.extend([
@@ -230,6 +244,56 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"- {item.get('code')}: {item.get('message')}")
     lines.append("")
     return "\n".join(lines)
+
+
+def _gate_evidence_markdown(report: dict[str, Any]) -> list[str]:
+    summary = gate_evidence_summary(report)
+    if not summary:
+        return []
+    lines = [
+        f"## {summary.get('section_title') or 'Boundary Gate evidence'}",
+        "",
+        f"### {summary.get('decision_heading') or 'Why this decision was made'}",
+        "",
+        str(summary.get("heading") or ""),
+        "",
+        str(summary.get("summary") or ""),
+        "",
+    ]
+    for item in summary.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.extend([
+            f"### {item.get('title') or 'Gate rule'}",
+            "",
+            str(item.get("why") or ""),
+            "",
+            str(item.get("meaning") or ""),
+            "",
+            "### Evidence",
+            "",
+        ])
+        evidence = item.get("evidence") or []
+        if not evidence:
+            lines.extend(["No linked evidence was stored for this rule.", ""])
+        for evidence_item in evidence:
+            if not isinstance(evidence_item, dict):
+                continue
+            lines.append(f"- **{evidence_item.get('evidence_id')}** — {evidence_item.get('statement')}")
+        lines.extend([
+            "",
+            f"### {item.get('action_label') or 'Required action'}",
+            "",
+            str(item.get("action") or ""),
+            "",
+            "### Decision rule",
+            "",
+            f"`{item.get('rule_id')}` · {item.get('title') or ''}",
+            "",
+        ])
+    validation = summary.get("validation") if isinstance(summary.get("validation"), dict) else {}
+    lines.extend(["### Validation", "", str(validation.get("statement") or ""), ""])
+    return lines
 
 
 def _finding_lines(report: dict[str, Any], identifiers: list[str]) -> list[str]:

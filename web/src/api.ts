@@ -455,6 +455,11 @@ export type GateValidation = {
   limitations: string[];
 };
 
+export type ReviewClaim = {
+  claim: string;
+  evidence_ids: string[];
+};
+
 export type ReviewCommentary = {
   headline: string;
   summary: string;
@@ -470,6 +475,51 @@ export type ReviewCommentary = {
   model: string;
   generated_at: string;
   purpose?: string;
+  claims?: ReviewClaim[];
+  claim_verification?: { generated: number; accepted: number; rejected: number };
+  claims_heading?: string;
+  claims_note?: string;
+  claims_advisory?: string;
+};
+
+export type GateEvidenceFact = {
+  evidence_id: string;
+  statement: string;
+  observation?: string;
+  source?: string;
+  source_label?: string;
+  supports?: string;
+  freshness?: string;
+  technical?: {
+    graph_version?: string;
+    base_sha?: string;
+    head_sha?: string;
+    extractor?: string;
+    file_path?: string;
+    line_start?: number | null;
+  };
+};
+
+export type GateEvidenceRule = {
+  rule_id: string;
+  title: string;
+  outcome: string;
+  why: string;
+  meaning: string;
+  action_label: string;
+  action: string;
+  evidence: GateEvidenceFact[];
+};
+
+export type GateEvidenceSummary = {
+  decision: string;
+  section_title: string;
+  decision_heading?: string;
+  heading: string;
+  headline: string;
+  summary: string;
+  items: GateEvidenceRule[];
+  validation: { status: string; statement: string };
 };
 
 export type GateValidationCorpus = {
@@ -578,6 +628,7 @@ export type ReviewReport = {
   decision_presentation?: DecisionPresentation;
   copy_summary?: string;
   gate_validation?: GateValidation;
+  gate_evidence_summary?: GateEvidenceSummary;
   commentary?: ReviewCommentary;
 };
 

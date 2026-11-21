@@ -16,6 +16,38 @@ import httpx
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_named_repository_lines_keep_the_service_id_and_url(tmp_path: Path) -> None:
+    repos = tmp_path / "repos.txt"
+    repos.write_text(
+        "\n".join([
+            "[standalone]",
+            "auth = https://github.com/acme/auth-service",
+            "user = fixtures/user-service",
+            "",
+            "[cluster:demo]",
+            "api-gateway = https://github.com/acme/gateway",
+        ]),
+        encoding="utf-8",
+    )
+    settings = Settings(root=ROOT, repos_file=repos, output_dir=tmp_path, github_token="", ghe_token="")
+    loaded = load_repos(settings)
+    assert [(item.slug, item.kind, item.raw) for item in loaded] == [
+        ("auth", "github", "https://github.com/acme/auth-service"),
+        ("user", "local", "fixtures/user-service"),
+        ("api-gateway", "github", "https://github.com/acme/gateway"),
+    ]
+
+
+def test_project_repos_file_is_not_cloned_as_section_headers() -> None:
+    settings = Settings(root=ROOT, repos_file=ROOT / "repos.txt", output_dir=ROOT / "output", github_token="", ghe_token="")
+    loaded = load_repos(settings)
+    assert len(loaded) == 21
+    assert all(not item.raw.startswith("[") and " = " not in item.raw for item in loaded)
+    gateway = next(item for item in loaded if item.slug == "uocp-api-gateway")
+    assert gateway.kind == "github"
+    assert gateway.raw == "https://github.com/hvrcorp/uocp-api-gateway"
+
+
 def test_fixtures_find_mismatch_and_api_edge(tmp_path: Path) -> None:
     repos = tmp_path / "repos.txt"
     repos.write_text("fixtures/auth-service\nfixtures/user-service\nfixtures/report-job\n", encoding="utf-8")

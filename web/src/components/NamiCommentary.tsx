@@ -1,3 +1,4 @@
+import { CheckmarkFilled } from "@carbon/icons-react";
 import { Accordion, AccordionItem, Tile } from "@carbon/react";
 import type { ReviewCommentary as Commentary, ReviewReport } from "../api";
 
@@ -22,6 +23,19 @@ export function NamiCommentary({ report }: { report: ReviewReport }) {
       {commentary.evidence_comment ? <p className="helper">{commentary.evidence_comment}</p> : null}
       {commentary.validation_comment ? <p className="helper">{commentary.validation_comment}</p> : null}
       {commentary.limitation_note ? <p className="helper">{commentary.limitation_note}</p> : null}
+      {commentary.claims_note ? (
+        <>
+          <p className="section-title">{commentary.claims_heading || "Evidence-grounded AI explanation"}</p>
+          {(commentary.claims ?? []).map((item) => (
+            <p key={`${item.claim}-${item.evidence_ids.join(",")}`}>
+              <CheckmarkFilled /> {item.claim}
+              {item.evidence_ids.length ? <span className="helper"> Evidence: {item.evidence_ids.join(", ")}</span> : null}
+            </p>
+          ))}
+          <p className="helper">{commentary.claims_note}</p>
+          {commentary.claims_advisory ? <p className="helper">{commentary.claims_advisory}</p> : null}
+        </>
+      ) : null}
       <p className="helper">{evidenceLine(status)}</p>
       <Accordion>
         <AccordionItem title="Technical details">

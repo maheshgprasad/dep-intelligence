@@ -90,7 +90,7 @@ def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str]
         "evidence_summary": evidence,
         "evidence": [evidence] if evidence.get("statement") else [],
         "ranking_context": ranking,
-        "what_happened": _plain(commentary.get("summary") or assessment.get("summary") or _happened(decision, primary, targets)),
+        "what_happened": _plain(_stored_gate_summary(report) or commentary.get("summary") or assessment.get("summary") or _happened(decision, primary, targets)),
         "why_it_matters": why,
         "next_action": action,
         "validation_status": validation["status"],
@@ -104,6 +104,14 @@ def summarize_review(output_dir: Path, row: dict[str, Any], *, members: set[str]
         card["cross_cluster_note"] = "Cross-cluster review target"
         card["entity_explanations"].extend(explain_cross_cluster(name) for name in outside)
     return card
+
+
+def _stored_gate_summary(report: dict[str, Any]) -> str:
+    """Use the stored human-readable Gate explanation when the review already has one."""
+    summary = report.get("gate_evidence_summary")
+    if not isinstance(summary, dict):
+        return ""
+    return str(summary.get("summary") or "")
 
 
 def _rules(gate: dict[str, Any], decision: str) -> list[dict[str, Any]]:

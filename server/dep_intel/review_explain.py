@@ -7,6 +7,7 @@ Nami Rank scores are not read as a reason to block.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 log = logging.getLogger("nami.boundary")
@@ -779,6 +780,341 @@ def _rule_inferences(rule_id: str, by_type: dict[str, dict[str, Any]]) -> list[d
         "BG-IMPACT-001": ["cross_repository_review_required", "structural_and_historical_support", "structural_dependency_confirmed"],
     }
     return [by_type[kind] for kind in mapping.get(rule_id, []) if kind in by_type]
+
+
+def attach_gate_evidence_summary(report: dict[str, Any]) -> dict[str, Any]:
+    """Store the human-readable Gate presentation. This does not call decide_gate."""
+    stored = report.get("gate_evidence_summary")
+    if isinstance(stored, dict) and stored.get("summary") and stored.get("heading"):
+        return report
+    body = dict(report)
+    before = (body.get("gate") or {}).get("decision")
+    body["gate_evidence_summary"] = build_gate_evidence_summary(body)
+    gate = body.get("gate") or {}
+    if gate.get("decision") != before:
+        restored = dict(gate)
+        restored["decision"] = before
+        body["gate"] = restored
+    return body
+
+
+def gate_evidence_summary(report: dict[str, Any]) -> dict[str, Any]:
+    """Return the stored presentation, or derive it from stored Gate fields."""
+    stored = report.get("gate_evidence_summary")
+    if isinstance(stored, dict) and stored.get("summary") and stored.get("heading"):
+        return stored
+    return build_gate_evidence_summary(report)
+
+
+def build_gate_evidence_summary(report: dict[str, Any]) -> dict[str, Any]:
+    """Presentation only. Reads the stored gate, evidence, inferences, actions, and validation."""
+    gate = report.get("gate") if isinstance(report.get("gate"), dict) else {}
+    decision = str(gate.get("decision") or "incomplete")
+    rules = [
+        item for item in (gate.get("decision_rules") or [])
+        if isinstance(item, dict) and item.get("outcome", "triggered") == "triggered"
+    ]
+    evidence = [item for item in (report.get("evidence_catalog") or []) if isinstance(item, dict)]
+    by_id = {str(item.get("evidence_id")): item for item in evidence if item.get("evidence_id")}
+    inferences = [item for item in (report.get("inferences") or []) if isinstance(item, dict)]
+    actions = [item for item in (report.get("actions") or []) if isinstance(item, dict)]
+    validation = report.get("gate_validation") if isinstance(report.get("gate_validation"), dict) else {}
+    context = _summary_context(report, inferences, evidence)
+    items = [_rule_item(rule, by_id, actions, context) for rule in rules]
+    primary = _primary_item(items, decision)
+    headline, summary = _decision_text(decision, primary, context)
+    return {
+        "decision": decision,
+        "section_title": "Boundary Gate evidence",
+        "decision_heading": "Why this decision was made",
+        "heading": _WHY.get(decision, _WHY["incomplete"]),
+        "headline": headline,
+        "summary": summary,
+        "items": items,
+        "validation": {
+            "status": str(validation.get("status") or "not_recorded"),
+            "statement": _validation_statement(validation, decision),
+        },
+    }
+
+
+_WHY = {
+    "block": "Why Nami blocked this change",
+    "warn": "Why Nami recommends review",
+    "incomplete": "Why Nami could not complete the decision",
+    "pass": "Why Nami allows this change to proceed",
+}
+
+_PASS_SUMMARY = (
+    "No verified blocker was found. Required verification that completed successfully passed, "
+    "and no consumed breaking contract or verified blocking policy violation was recorded."
+)
+
+
+def _decision_text(decision: str, primary: dict[str, Any] | None, context: dict[str, str]) -> tuple[str, str]:
+    if decision == "pass":
+        return "No verified blocker was found", _PASS_SUMMARY
+    if decision == "incomplete":
+        missing = context.get("missing") or "Required evidence for this decision is missing."
+        summary = (
+            f"{missing} Missing required evidence. "
+            "Nami does not have enough required evidence to produce PASS, WARN, or BLOCK."
+        )
+        return "Required evidence is missing", summary
+    if primary:
+        return str(primary.get("headline") or ""), str(primary.get("lead") or primary.get("why") or "")
+    if decision == "warn":
+        return "Review is recommended", "Nami found review evidence and no verified blocker."
+    if decision == "block":
+        return "A verified blocker was found", "A verified blocking rule was triggered. A required action is listed."
+    return "Required evidence is missing", "Required evidence for this decision is missing."
+
+
+def _primary_item(items: list[dict[str, Any]], decision: str) -> dict[str, Any] | None:
+    order = (
+        "BG-CONTRACT-001",
+        "BG-VERIFY-001",
+        "BG-POLICY-001",
+        "BG-CRITICAL-001",
+        "BG-GRAPH-001",
+        "BG-EVIDENCE-001",
+        "BG-IMPACT-001",
+        "BG-TEMPORAL-001",
+        "BG-AI-001",
+    )
+    by_rule = {item.get("rule_id"): item for item in items}
+    for rule_id in order:
+        item = by_rule.get(rule_id)
+        if item and (decision != "block" or item.get("outcome") == "block" or item.get("blocks")):
+            return item
+    return items[0] if items else None
+
+
+def _rule_item(rule: dict[str, Any], by_id: dict[str, dict[str, Any]], actions: list[dict[str, Any]], context: dict[str, str]) -> dict[str, Any]:
+    rule_id = str(rule.get("rule_id") or "")
+    copy = _rule_copy(rule_id, context)
+    action, action_label = _linked_action(rule, actions, copy["action"], copy["action_label"])
+    evidence = []
+    for evidence_id in rule.get("evidence_refs") or []:
+        item = by_id.get(str(evidence_id))
+        if item:
+            evidence.append(_evidence_view(item))
+    return {
+        "rule_id": rule_id,
+        "title": str(rule.get("title") or ""),
+        "outcome": str(rule.get("decision") or ""),
+        "blocks": bool(rule.get("blocks")),
+        "headline": copy["headline"],
+        "lead": copy["lead"],
+        "why": copy["why"],
+        "meaning": copy["meaning"],
+        "action_label": action_label,
+        "action": action,
+        "evidence": evidence,
+    }
+
+
+def _rule_copy(rule_id: str, context: dict[str, str]) -> dict[str, str]:
+    provider = context.get("provider") or "The changed service"
+    consumer = context.get("consumer") or "a known consumer"
+    operation = context.get("operation") or "a consumed contract"
+    target = context.get("consumer") or "a downstream service"
+    named = context.get("file") or "this file"
+    missing = context.get("missing") or "Required evidence for this decision is missing."
+    if rule_id == "BG-CONTRACT-001":
+        return {
+            "headline": "Breaking API has a confirmed consumer",
+            "lead": f"{provider} removes {operation} while {consumer} still consumes the operation. This is a removed contract with a known consumer.",
+            "why": "The changed service removes an API operation that is still consumed by another service.",
+            "meaning": f"The current dependency graph confirms {consumer} as a known consumer, so the provider and consumer would no longer expose a compatible contract.",
+            "action": f"Restore the endpoint or update {consumer} in the same coordinated change.",
+            "action_label": "Required action",
+        }
+    if rule_id == "BG-VERIFY-001":
+        return {
+            "headline": "Required verification failed",
+            "lead": "A required verification command finished without passing.",
+            "why": "A required verification command finished without passing.",
+            "meaning": "The configured verification did not pass, so this verified result blocks the change.",
+            "action": "Fix the failing verification and rerun the review.",
+            "action_label": "Required action",
+        }
+    if rule_id in {"BG-POLICY-001", "BG-CRITICAL-001"}:
+        return {
+            "headline": "A verified project rule matched",
+            "lead": "A verified blocking policy rule matched this change.",
+            "why": "A verified project rule matched this change.",
+            "meaning": "The matched rule is a verified blocking condition.",
+            "action": "Resolve the matched project rule and rerun the review.",
+            "action_label": "Required action",
+        }
+    if rule_id == "BG-IMPACT-001":
+        return {
+            "headline": "Downstream impact needs review",
+            "lead": f"The changed code reaches {target} through a confirmed current dependency. Nami found downstream impact, but there is no verified breaking condition.",
+            "why": f"The changed code reaches {target} through a confirmed current dependency.",
+            "meaning": "Nami found downstream impact, but there is no verified breaking condition.",
+            "action": f"Review {target} before deployment.",
+            "action_label": "Recommended action",
+        }
+    if rule_id == "BG-TEMPORAL-001":
+        return {
+            "headline": "Historical association needs review",
+            "lead": (
+                f"Repository history shows that {named} has often changed after related changes. "
+                "No current structural dependency was confirmed. This is historical association only. "
+                "It is not a current dependency. This warning is non-blocking."
+            ),
+            "why": f"Repository history shows that {named} has often changed after related changes.",
+            "meaning": (
+                "No current structural dependency was confirmed. This is historical association only. "
+                "It is not a current dependency. This warning is non-blocking. "
+                "It does not prove that the services currently depend on each other."
+            ),
+            "action": "Review the associated history before deployment. Historical association is not a confirmed dependency.",
+            "action_label": "Recommended action",
+        }
+    if rule_id == "BG-AI-001":
+        return {
+            "headline": "Model suggestion is advisory",
+            "lead": "A model suggestion was recorded. It is advisory and non-blocking.",
+            "why": "A model suggestion was recorded.",
+            "meaning": "Model suggestions are advisory. This is non-blocking and is not a verified current dependency.",
+            "action": "Read the suggestion as advisory context. It does not decide the gate.",
+            "action_label": "Recommended action",
+        }
+    if rule_id in {"BG-GRAPH-001", "BG-EVIDENCE-001"}:
+        return {
+            "headline": "Required evidence is missing",
+            "lead": f"{missing} Missing required evidence.",
+            "why": "Current dependency evidence was unavailable or a required verification did not finish.",
+            "meaning": f"Missing required evidence: {missing}",
+            "action": "Refresh the graph or complete the missing verification and rerun the review.",
+            "action_label": "Required action",
+        }
+    return {
+        "headline": "Review the stored gate rule",
+        "lead": "The stored gate rule was triggered by the recorded evidence.",
+        "why": "The stored gate rule was triggered by the recorded evidence.",
+        "meaning": "Use the linked evidence, action, and validation result together.",
+        "action": "Review the stored evidence before proceeding.",
+        "action_label": "Recommended action",
+    }
+
+
+def _linked_action(rule: dict[str, Any], actions: list[dict[str, Any]], fallback: str, fallback_label: str) -> tuple[str, str]:
+    rule_id = str(rule.get("rule_id") or "")
+    wanted = {str(item) for item in (rule.get("required_actions") or [])}
+    chosen = [item for item in actions if str(item.get("action_id") or "") in wanted]
+    if not chosen:
+        chosen = [item for item in actions if rule_id in {str(value) for value in (item.get("satisfies") or [])}]
+    if not chosen:
+        return fallback, fallback_label
+    chosen.sort(key=lambda item: (not item.get("required"), str(item.get("title") or "")))
+    text = str(chosen[0].get("description") or chosen[0].get("title") or fallback)
+    label = "Required action" if chosen[0].get("required") or fallback_label == "Required action" else "Recommended action"
+    return text, label
+
+
+def _evidence_view(item: dict[str, Any]) -> dict[str, Any]:
+    source = str(item.get("source") or "")
+    provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
+    return {
+        "evidence_id": str(item.get("evidence_id") or ""),
+        "statement": str(item.get("statement") or ""),
+        "observation": str(item.get("statement") or ""),
+        "source": source,
+        "source_label": str(item.get("source_label") or SOURCE_LABELS.get(source, source or "Stored evidence")),
+        "supports": _support_label(item),
+        "freshness": {"current": "Current", "stale": "Out of date", "unavailable": "Unavailable"}.get(str(item.get("freshness") or ""), "Not recorded"),
+        "technical": {
+            "graph_version": item.get("graph_version") or "",
+            "base_sha": item.get("base_sha") or "",
+            "head_sha": item.get("head_sha") or "",
+            "extractor": provenance.get("extractor") or source,
+            "file_path": item.get("file_path") or "",
+            "line_start": item.get("line_start"),
+        },
+    }
+
+
+def _support_label(item: dict[str, Any]) -> str:
+    statement = str(item.get("statement") or "").lower()
+    source = str(item.get("source") or "")
+    kind = str(item.get("kind") or "")
+    data = item.get("structured_data") if isinstance(item.get("structured_data"), dict) else {}
+    origin = str(data.get("evidence_origin") or "")
+    if "removed" in statement or data.get("kind") == "operation_removed" or kind in {"contract", "contract_removed"}:
+        return "API operation removed"
+    if data.get("consumers") or "consumer" in statement:
+        return "Known consumer confirmed"
+    if source == "git_history" or origin == "temporal_only" or "historical" in statement:
+        return "Historical association"
+    if kind == "graph_alignment" and item.get("freshness") in {"stale", "unavailable"}:
+        return "Missing current dependency evidence"
+    if source == "verification_command":
+        return "Verification result"
+    if source in {"cluster_graph", "CRG"} or origin in {"structural_only", "both"}:
+        return "Current dependency"
+    if kind == "graph_alignment":
+        return "Current dependency graph"
+    return "Stored review evidence"
+
+
+def _summary_context(report: dict[str, Any], inferences: list[dict[str, Any]], evidence: list[dict[str, Any]]) -> dict[str, str]:
+    change = report.get("change") if isinstance(report.get("change"), dict) else {}
+    provider = str(change.get("service_id") or "")
+    consumer = ""
+    for item in inferences:
+        if item.get("type") != "consumer_compatibility_break":
+            continue
+        names = [str(name) for name in (item.get("affected_services") or []) if name]
+        if names:
+            consumer = names[0]
+            break
+    if not consumer:
+        for name in (report.get("impact") or {}).get("affected_services") or []:
+            if name and str(name) != provider:
+                consumer = str(name)
+                break
+    operation = ""
+    for contract in report.get("contract_changes") or []:
+        if not isinstance(contract, dict):
+            continue
+        method = str(contract.get("method") or "")
+        path = str(contract.get("path") or "")
+        if method and path:
+            operation = f"{method} {path}"
+            break
+    if not operation:
+        blob = " ".join(str(item.get("statement") or "") for item in evidence)
+        match = re.search(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_./{}-]+", blob)
+        operation = match.group(0) if match else ""
+    file_path = ""
+    for item in evidence:
+        path = str(item.get("file_path") or "")
+        if path and item.get("source") in {"git_history", "NRM"}:
+            file_path = path
+            break
+    if not file_path:
+        for item in evidence:
+            if item.get("file_path"):
+                file_path = str(item.get("file_path"))
+                break
+    missing = _incomplete_reason(report) if str((report.get("gate") or {}).get("decision") or "") == "incomplete" else ""
+    return {"provider": provider, "consumer": consumer, "operation": operation, "file": file_path, "missing": missing}
+
+
+def _validation_statement(validation: dict[str, Any], decision: str) -> str:
+    status = str(validation.get("status") or "")
+    label = decision.upper()
+    if status == "validated":
+        return f"Independent replay reproduced the same {label} decision from the stored evidence and configured rules."
+    if status == "validated_with_limitations":
+        return f"Independent replay reproduced the same {label} decision, with limitations recorded."
+    if status == "failed":
+        return "Independent replay did not reproduce the stored decision. Do not rely on this decision until the mismatch is reviewed."
+    return "Independent validation was not recorded for this review."
 
 
 def _dedupe_inferences(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

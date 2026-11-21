@@ -102,7 +102,13 @@ _SYSTEM = {
     "commentary": (
         "Task: commentary. You are a technical summarization component. You do not make the Gate decision. "
         "Use only supplied facts. Do not introduce new services, files, evidence, rules, tests, or probabilities. "
-        "Return JSON with keys headline, summary, why_it_matters, next_action, evidence_comment, validation_comment, limitation_note."
+        "Return JSON with keys headline, summary, why_it_matters, next_action, evidence_comment, validation_comment, limitation_note, claims. "
+        "claims is a list of at most 4 objects with claim and evidence_ids. Cite at most 3 supplied evidence IDs on each claim."
+    ),
+    "explanation_baseline": (
+        "Task: explanation_baseline. Explain only the supplied change facts. "
+        "No Nami evidence IDs are provided. Return JSON with key claims, a list of at most 4 objects with claim and evidence_ids. "
+        "Leave evidence_ids empty when no evidence ID was supplied. Do not decide PASS, WARN, BLOCK, or INCOMPLETE."
     ),
 }
 

@@ -207,9 +207,9 @@ export function ReviewDetailPage() {
       />
       <AssessmentSummary report={report} />
       <NamiCommentary report={report} />
+      <DecisionReason summary={report.gate_evidence_summary} rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <ActionList actions={report.actions ?? []} />
       <GateValidationSummary validation={report.gate_validation} />
-      <DecisionReason rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <Tile>
         <p className="section-title">Affected scope</p>
         <p>{scopeText(report)}</p>

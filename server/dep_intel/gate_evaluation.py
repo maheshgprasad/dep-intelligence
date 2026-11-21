@@ -11,7 +11,7 @@ from typing import Any
 
 from dep_intel.gate_validation_corpus import scenarios
 from dep_intel.review_commentary import attach_commentary
-from dep_intel.review_explain import attach_explanation
+from dep_intel.review_explain import attach_explanation, attach_gate_evidence_summary
 from dep_intel.review_gate import decide_gate
 from dep_intel.review_gate_rules import VALIDATOR_VERSION
 from dep_intel.review_gate_validation import validate_gate
@@ -115,6 +115,7 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
     validation = validate_gate(report, config)
     report = dict(report)
     report["gate_validation"] = validation
+    report = attach_gate_evidence_summary(report)
     return attach_commentary(report)
 
 
