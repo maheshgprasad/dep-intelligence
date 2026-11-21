@@ -162,8 +162,13 @@ describe("cluster review progress", () => {
             classification: "broken",
             statement: "uocp-auth-service removed POST /v1/validate. uocp-api-gateway still uses it.",
             required_action: "Migrate the consumer or restore the contract.",
-            evidence_ids: ["EV-021"],
+            evidence_ids: ["CEV-001"],
+            child_evidence_refs: [{ review_id: "review-auth", evidence_id: "EV-021" }],
             child_review_ids: ["review-auth"],
+            provider_service: "uocp-auth-service",
+            consumer_service: "uocp-api-gateway",
+            before: { provider_present: true, consumer_reference_present: true },
+            after: { provider_present: false, consumer_reference_present: true },
             path: [{ service_id: "uocp-auth-service" }, { service_id: "uocp-api-gateway" }],
           },
           {
@@ -185,5 +190,13 @@ describe("cluster review progress", () => {
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByText("1 relationship unchanged")).toBeInTheDocument();
     expect(screen.queryByText("GET /v1/health")).not.toBeInTheDocument();
+    expect(screen.getByText("Provider uocp-auth-service")).toBeInTheDocument();
+    expect(screen.getByText("Consumer uocp-api-gateway")).toBeInTheDocument();
+    expect(screen.getByText("Before Provider present · Consumer reference present")).toBeInTheDocument();
+    expect(screen.getByText("After Provider absent · Consumer reference present")).toBeInTheDocument();
+    expect(screen.getByText("Review review-a · EV-021")).toBeInTheDocument();
+    expect(screen.getByText("Evidence-derived change-set comparison")).toBeInTheDocument();
+    expect(screen.queryByText("Exact historical cluster graph comparison")).not.toBeInTheDocument();
+    expect(screen.getAllByText("No review").length).toBeGreaterThan(0);
   });
 });

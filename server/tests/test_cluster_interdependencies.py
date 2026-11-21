@@ -72,8 +72,13 @@ def test_provider_break_leaves_unchanged_consumer_broken() -> None:
     )
     item = _by(result, "broken", "consumer")
     assert item["source_service"] == "provider"
+    assert item["provider_service"] == "provider"
+    assert item["consumer_service"] == "consumer"
     assert item["contract_id"] == "POST /v1/test"
-    assert "EV-021" in item["evidence_ids"]
+    assert item["after"]["provider_present"] is False
+    assert item["after"]["consumer_reference_present"] is True
+    assert {"review_id": "rev-p", "evidence_id": "EV-021"} in item["child_evidence_refs"]
+    assert item["evidence_ids"][0].startswith("CEV-")
     assert "consumer" in result["unchanged_but_affected_services"]
     assert "provider" in result["changed_services"]
     assert "consumer" not in result["changed_services"]
@@ -153,7 +158,8 @@ def test_temporal_association_is_not_a_break() -> None:
         [_member("provider", True, [_removed("POST", "/v1/test", evidence="EV-1")])],
         [_edge("consumer", "provider", "POST /v1/test", provenance="temporal")],
     )
-    assert not any(item["classification"] == "broken" for item in result["items"])
+    forbidden = {"broken", "potentially_broken", "introduced", "coordinated_change"}
+    assert not any(item["classification"] in forbidden for item in result["items"])
     assert result["temporal_context"]
     assert "not a verified dependency" in result["temporal_context"][0]["statement"].lower()
 
@@ -190,12 +196,13 @@ def test_exact_boundary_mode_and_partial_fallback() -> None:
     assert partial["comparison_mode"] == "partial"
 
 
-def test_dependency_path_uses_only_known_edges() -> None:
+def test_dependency_path_walks_provider_to_downstream_consumers() -> None:
+    # Confirmed rows point consumer → provider. Impact must walk provider → consumer.
     result = analyze_interdependencies(
         [_member("provider", True, [_removed("POST", "/v1/test")])],
         [
             _edge("consumer", "provider", "POST /v1/test"),
-            _edge("consumer", "downstream", "GET /v1/next"),
+            _edge("downstream", "consumer", "GET /v1/next"),
         ],
     )
     path = [step["service_id"] for step in _by(result, "broken")["path"]]

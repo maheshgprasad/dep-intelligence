@@ -63,26 +63,48 @@ export type ClusterReviewState = {
   assessment: ClusterAssessment | null;
   analysis_stage?: string;
   analysis_label?: string;
+  source?: { kind?: string; since?: string; until?: string };
   copy_summary?: string;
   interdependencies?: ClusterInterdependencies | null;
 };
 
+export type ClusterEvidenceRef = { review_id?: string; evidence_id: string };
+
 export type ClusterInterdependency = {
   source_service: string;
   target_service: string;
+  provider_service?: string;
+  consumer_service?: string;
   relationship: string;
   contract_id: string;
   classification: string;
   statement: string;
   required_action?: string;
   evidence_ids?: string[];
+  child_evidence_refs?: ClusterEvidenceRef[];
   child_review_ids?: string[];
   path?: { service_id: string; role?: string; contract?: string }[];
   affected_services?: string[];
+  before?: { provider_present?: boolean; consumer_reference_present?: boolean };
+  after?: { provider_present?: boolean; consumer_reference_present?: boolean };
+  old_contract?: string;
+  new_contract?: string;
+  migration_status?: string;
+  migrated_consumers?: string[];
+  outstanding_consumers?: string[];
 };
 
 export type ClusterInterdependencies = {
   comparison_mode: string;
+  comparison_coverage?: {
+    services_total?: number;
+    services_exact_before?: number;
+    services_exact_after?: number;
+    services_partial?: string[];
+    relationship_types?: Record<string, string>;
+  };
+  limitations?: string[];
+  diagnostic?: { code?: string; stage?: string; message?: string };
   summary: Record<string, number>;
   items: ClusterInterdependency[];
   changed_services?: string[];

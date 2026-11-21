@@ -211,20 +211,28 @@ export function ClusterReviewRecord({ review }: { review: ClusterReviewState }) 
         <h2 className="section-title">Cluster assessment</h2>
         <p>{assessment?.label || "Incomplete"}</p>
         {assessment?.summary ? <p>{assessment.summary}</p> : null}
+        {review.source?.since || review.source?.until ? (
+          <p>Timeframe {review.source?.since || ""} → {review.source?.until || ""}</p>
+        ) : null}
         <p className="helper">
           {review.counters.repositories_inspected} repositories inspected
           {" · "}
           {review.counters.repositories_with_changes} contained changes
           {" · "}
           {review.counters.repositories_no_change} had no changes
+          {commitTotal(review) ? ` · ${commitTotal(review)} commits analysed` : ""}
         </p>
+        {review.interdependencies?.diagnostic?.message ? <p>{review.interdependencies.diagnostic.message}</p> : null}
       </section>
+      <Attention review={review} />
       <InterdependencyChanges review={review} />
       <section aria-label="Cluster-wide impact">
         <h2 className="section-title">Cluster-wide impact</h2>
         <p>{assessment?.evidenced_service_count ?? evidenced.length} / {review.repository_total} services have evidenced impact</p>
-          {evidenced.length > 0 ? <p>{evidenced.join(", ")}</p> : <p>No service has evidenced impact.</p>}
-        </section>
+        <p>Changed services {(review.interdependencies?.changed_services || []).length}</p>
+        <p>Unchanged but affected {(review.interdependencies?.unchanged_but_affected_services || []).length}</p>
+        {evidenced.length > 0 ? <p>{evidenced.join(", ")}</p> : <p>No service has evidenced impact.</p>}
+      </section>
         {review.repositories.some((item) => (item.commits?.length ?? 0) > 0) ? (
           <section aria-label="Commits in timeframe">
             <h2 className="section-title">Commits in timeframe</h2>
@@ -286,6 +294,20 @@ const RESULT_LABEL: Record<string, string> = {
   resolved_by_change_set: "Resolved",
 };
 
+function Attention({ review }: { review: ClusterReviewState }) {
+  const actions = (review.interdependencies?.items || [])
+    .map((item) => item.required_action)
+    .filter((item): item is string => Boolean(item));
+  const unique = [...new Set(actions)];
+  if (!review.interdependencies) return null;
+  return (
+    <section aria-label="What needs attention">
+      <h2 className="section-title">What needs attention</h2>
+      {unique.length ? unique.map((item) => <p key={item}>{item}</p>) : <p>Nothing further is required from the relationship comparison.</p>}
+    </section>
+  );
+}
+
 function InterdependencyChanges({ review }: { review: ClusterReviewState }) {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const analysis = review.interdependencies;
@@ -298,13 +320,20 @@ function InterdependencyChanges({ review }: { review: ClusterReviewState }) {
     <section aria-label="Interdependency changes">
       <h2 className="section-title">Interdependency changes</h2>
       <p className="helper">{comparisonLabel(analysis.comparison_mode)}</p>
+      <Coverage analysis={analysis} />
       <ul className="cluster-progress-list">
         {COUNT_ROWS.map((row) => (
           <li key={row.key}>{row.label} {summary[row.key] ?? 0}</li>
         ))}
       </ul>
-      {affected.length > 0 ? <p>Unchanged but affected: {affected.join(", ")}</p> : null}
-      {changed.map((item) => <RelationshipCard key={`${item.classification}-${item.source_service}-${item.contract_id}-${item.target_service}`} item={item} />)}
+      {affected.length > 0 ? (
+        <div>
+          <h3>Unchanged but affected</h3>
+          <p>Unchanged but affected: {affected.join(", ")}</p>
+          <p className="helper">No commit or change was detected for these repositories, but a dependency they use changed.</p>
+        </div>
+      ) : null}
+      {changed.map((item) => <RelationshipCard key={`${item.classification}-${providerOf(item)}-${item.contract_id}-${consumerOf(item)}`} item={item} />)}
       {unchanged.length > 0 ? (
         <div>
           <p>{unchanged.length} {unchanged.length === 1 ? "relationship" : "relationships"} unchanged</p>
@@ -312,8 +341,8 @@ function InterdependencyChanges({ review }: { review: ClusterReviewState }) {
             {showUnchanged ? "Hide unchanged" : "Show unchanged"}
           </Button>
           {showUnchanged ? unchanged.map((item) => (
-            <p key={`${item.source_service}-${item.contract_id}-${item.target_service}`} className="helper">
-              {item.source_service} · {item.contract_id} · {item.target_service}
+            <p key={`${providerOf(item)}-${item.contract_id}-${consumerOf(item)}`} className="helper">
+              {providerOf(item)} · {item.contract_id} · {consumerOf(item)}
             </p>
           )) : null}
         </div>
@@ -323,25 +352,75 @@ function InterdependencyChanges({ review }: { review: ClusterReviewState }) {
 }
 
 function RelationshipCard({ item }: { item: ClusterInterdependency }) {
-  const reviewId = item.child_review_ids?.[0] || "";
+  const provider = providerOf(item);
+  const consumer = consumerOf(item);
   const path = (item.path || []).map((step) => step.service_id).filter(Boolean).join(" → ");
+  const reviews = item.child_review_ids || [];
   return (
-    <article>
+    <article className="cluster-relationship">
       <h3>{RESULT_LABEL[item.classification] || item.classification}</h3>
-      <p>{item.source_service} · {item.contract_id} · {item.target_service}</p>
+      <p>Provider {provider}</p>
+      <p>Contract {item.old_contract && item.new_contract ? `${item.old_contract} → ${item.new_contract}` : item.contract_id}</p>
+      <p>Consumer {consumer}</p>
+      {item.before ? <p>Before {presence(item.before)}</p> : null}
+      {item.after ? <p>After {presence(item.after)}</p> : null}
       <p>{item.statement}</p>
+      {item.migration_status === "incomplete" ? (
+        <div>
+          <p>Migration incomplete</p>
+          {item.migrated_consumers?.length ? <p>Migrated consumers {item.migrated_consumers.join(", ")}</p> : null}
+          {item.outstanding_consumers?.length ? <p>Outstanding consumers {item.outstanding_consumers.join(", ")}</p> : null}
+        </div>
+      ) : null}
       {path ? <p className="helper">{path}</p> : null}
-      {item.required_action ? <p>Action: {item.required_action}</p> : null}
+      {item.required_action ? <p>Action {item.required_action}</p> : null}
       {item.evidence_ids?.length ? <p className="helper">Evidence {item.evidence_ids.join(", ")}</p> : null}
-      {reviewId ? <Link to={`/review/${reviewId}`}>View repository review</Link> : null}
+      {(item.child_evidence_refs || []).map((ref) => (
+        <p key={`${ref.review_id}-${ref.evidence_id}`} className="helper">Review {(ref.review_id || "").slice(0, 8)} · {ref.evidence_id}</p>
+      ))}
+      {reviews.map((reviewId) => <p key={reviewId}><Link to={`/review/${reviewId}`}>View repository review</Link></p>)}
     </article>
   );
 }
 
+function Coverage({ analysis }: { analysis: NonNullable<ClusterReviewState["interdependencies"]> }) {
+  const coverage = analysis.comparison_coverage;
+  if (!coverage) return null;
+  const partial = coverage.services_partial || [];
+  const types = coverage.relationship_types || {};
+  return (
+    <div>
+      {analysis.comparison_mode === "partial" && partial.length ? (
+        <p>{coverage.services_exact_before ?? 0} / {coverage.services_total ?? 0} services reconstructed exactly. Partial services: {partial.join(", ")}.</p>
+      ) : null}
+      {Object.keys(types).length ? <p className="helper">{Object.entries(types).map(([kind, value]) => `${kind} ${value}`).join(" · ")}</p> : null}
+      {(analysis.limitations || []).map((item) => <p key={item} className="helper">{item}</p>)}
+    </div>
+  );
+}
+
+function providerOf(item: ClusterInterdependency): string {
+  return item.provider_service || item.source_service;
+}
+
+function consumerOf(item: ClusterInterdependency): string {
+  return item.consumer_service || item.target_service;
+}
+
+function presence(side: { provider_present?: boolean; consumer_reference_present?: boolean }): string {
+  const provider = side.provider_present ? "Provider present" : "Provider absent";
+  const consumer = side.consumer_reference_present ? "Consumer reference present" : "Consumer reference absent";
+  return `${provider} · ${consumer}`;
+}
+
 function comparisonLabel(mode: string | undefined): string {
-  if (mode === "exact_boundary_snapshots") return "Exact historical cluster graph comparison";
-  if (mode === "partial") return "Partial comparison";
+  if (mode === "exact_boundary_snapshots") return "Exact boundary dependency comparison";
+  if (mode === "partial") return "Partial boundary comparison";
   return "Evidence-derived change-set comparison";
+}
+
+function commitTotal(review: ClusterReviewState): number {
+  return review.repositories.reduce((sum, item) => sum + (item.commit_count || 0), 0);
 }
 
 function StageList({ review, repository }: { review: ClusterReviewState; repository: ClusterRepositoryState }) {
