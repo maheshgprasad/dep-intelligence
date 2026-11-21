@@ -10,5 +10,5 @@ def services_from_repos(repos: list[RepoRef]) -> list[dict[str, str]]:
     for repo in repos:
         if repo.path is None or not repo.path.is_dir():
             continue
-        rows.append({"service": repo.name, "repository": repo.raw, "path": str(repo.path)})
+        rows.append({"service": repo.service_id or repo.name, "repository": repo.raw, "path": str(repo.path)})
     return rows

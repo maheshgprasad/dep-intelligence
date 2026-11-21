@@ -32,10 +32,14 @@ def repository_allowed(path: Path, settings: Settings) -> bool:
     if contained(resolved, settings.output_dir.resolve()):
         return True
     for repo in load_repos(settings):
+        if repo.kind != "local":
+            continue
         if repo.path is not None and contained(resolved, repo.path.resolve()):
             return True
-        candidate = (settings.root / repo.raw).resolve() if repo.raw else None
-        if candidate is not None and (resolved == candidate or contained(resolved, candidate)):
+        if not repo.raw:
+            continue
+        candidate = (settings.root / repo.raw).resolve()
+        if resolved == candidate or contained(resolved, candidate):
             return True
     return False
 

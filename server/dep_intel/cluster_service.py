@@ -95,8 +95,10 @@ class ClusterEngine:
 
     def catalog(self, service: str) -> dict[str, Any]:
         from dep_intel.app_state import service_catalog
+        from dep_intel.repository_identity import partition_service
 
-        return service_catalog(self.current(), service)
+        resolved = partition_service(self.settings, self.current(), service) or service
+        return service_catalog(self.current(), resolved)
 
     def relationships(self, limit: int = 50, service: str = "", kind: str = "") -> dict[str, Any]:
         from dep_intel.app_state import cross_service_relationships
@@ -133,7 +135,13 @@ class ClusterEngine:
             if cancel is not None and cancel.is_set():
                 return {"status": "cancelled"}
             settings = self.settings
-            repos = load_repos(settings)
+            from dep_intel.sources import RepoConfigError
+
+            try:
+                repos = load_repos(settings)
+            except RepoConfigError as exc:
+                self.config_errors = list(exc.errors)
+                return {"status": "invalid_config", "errors": self.config_errors, "version": self._version()}
             collisions = slug_collisions(repos)
             manifest, errors = self._classify()
             errors = [*collisions, *errors]
@@ -179,7 +187,7 @@ class ClusterEngine:
                             severity="warning",
                         )
                     )
-            if previous is not None and _same_structural_index(previous, partitions):
+            if previous is not None and _same_structural_index(previous, partitions) and _same_declared(previous, manifest):
                 return {
                     "status": "ok",
                     "version": previous.version,
@@ -470,7 +478,18 @@ class ClusterEngine:
             self._snapshot = snapshot
 
     def _classify(self) -> tuple[Any, list[str]]:
-        repos = load_repos(self.settings)
+        from dep_intel.sources import RepoConfigError
+
+        try:
+            from dep_intel.cluster_manifest_generation import ensure_manifest
+
+            ensure_manifest(self.settings)
+            repos = load_repos(self.settings)
+        except RepoConfigError as exc:
+            self.allowlist = []
+            self.config_errors = list(exc.errors)
+            self.notices = []
+            return None, list(exc.errors)
         self.allowlist = [repo.name for repo in repos]
         manifest, errors, notices = applicable_manifest(self._manifest_file(), repos, self.settings.root)
         self.config_errors = errors
@@ -515,6 +534,11 @@ class ClusterEngine:
         for path in snapshots[2:]:
             if path.name not in keep:
                 path.unlink(missing_ok=True)
+
+
+def _same_declared(previous: Snapshot, manifest) -> bool:
+    current = [{"id": cluster.id, "services": list(cluster.services)} for cluster in manifest.clusters]
+    return list(previous.declared_clusters) == current
 
 
 def _same_structural_index(previous: Snapshot, partitions: dict[str, Partition]) -> bool:

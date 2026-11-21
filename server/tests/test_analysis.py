@@ -26,15 +26,17 @@ def test_named_repository_lines_keep_the_service_id_and_url(tmp_path: Path) -> N
             "",
             "[cluster:demo]",
             "api-gateway = https://github.com/acme/gateway",
+            "billing = https://github.com/acme/billing",
         ]),
         encoding="utf-8",
     )
     settings = Settings(root=ROOT, repos_file=repos, output_dir=tmp_path, github_token="", ghe_token="")
     loaded = load_repos(settings)
-    assert [(item.slug, item.kind, item.raw) for item in loaded] == [
-        ("auth", "github", "https://github.com/acme/auth-service"),
-        ("user", "local", "fixtures/user-service"),
-        ("api-gateway", "github", "https://github.com/acme/gateway"),
+    assert [(item.service_id, item.cluster, item.kind, item.raw, item.slug) for item in loaded] == [
+        ("auth", "", "github", "https://github.com/acme/auth-service", "acme_auth_service"),
+        ("user", "", "local", "fixtures/user-service", "user"),
+        ("api-gateway", "demo", "github", "https://github.com/acme/gateway", "acme_gateway"),
+        ("billing", "demo", "github", "https://github.com/acme/billing", "acme_billing"),
     ]
 
 
@@ -43,9 +45,13 @@ def test_project_repos_file_is_not_cloned_as_section_headers() -> None:
     loaded = load_repos(settings)
     assert len(loaded) == 21
     assert all(not item.raw.startswith("[") and " = " not in item.raw for item in loaded)
-    gateway = next(item for item in loaded if item.slug == "uocp-api-gateway")
+    gateway = next(item for item in loaded if item.service_id == "uocp-api-gateway")
     assert gateway.kind == "github"
+    assert gateway.cluster == "omnichannel"
+    assert gateway.slug == "hvrcorp_uocp_api_gateway"
     assert gateway.raw == "https://github.com/hvrcorp/uocp-api-gateway"
+    standalone = next(item for item in loaded if item.service_id == "MonitorControl_MonitorControl")
+    assert standalone.cluster == ""
 
 
 def test_fixtures_find_mismatch_and_api_edge(tmp_path: Path) -> None:

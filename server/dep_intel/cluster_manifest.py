@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from dep_intel.paths import contained
 from dep_intel.sources import RepoRef
 
-SUPPORTED_SCHEMA = 1
+SUPPORTED_SCHEMAS = {1, 2}
 log = logging.getLogger("nami.cluster")
 
 
@@ -190,13 +190,58 @@ class WorkerSettings(BaseModel):
     crg_sessions: int = Field(default=2, ge=1, le=8)
 
 
+class ClusterDecl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    services: list[str]
+
+    @field_validator("id")
+    @classmethod
+    def explicit_cluster_id(cls, value: str) -> str:
+        if not value or not value[0].isalpha() or any(not (ch.isalnum() or ch in "-_") for ch in value):
+            raise ValueError(f"cluster id {value!r} must start with a letter")
+        return value
+
+
+class GeneratedManifestMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    generated_by: str = ""
+    source: str = ""
+    source_hash: str = ""
+
+
 class ClusterManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: int
+    generated: GeneratedManifestMetadata | None = None
+    clusters: list[ClusterDecl] = Field(default_factory=list)
     services: list[ServiceDecl]
     impact: ImpactSettings = Field(default_factory=ImpactSettings)
     watch: WatchSettings = Field(default_factory=WatchSettings)
     workers: WorkerSettings = Field(default_factory=WorkerSettings)
+
+    @model_validator(mode="after")
+    def declared_clusters_reference_services(self) -> "ClusterManifest":
+        if self.schema_version not in SUPPORTED_SCHEMAS:
+            raise ValueError(f"unsupported schema_version {self.schema_version!r}")
+        if not self.clusters:
+            return self
+        ids = [cluster.id for cluster in self.clusters]
+        if len(ids) != len(set(ids)):
+            raise ValueError("cluster ids must be unique")
+        known = {service.id for service in self.services}
+        seen: dict[str, str] = {}
+        for cluster in self.clusters:
+            if len(cluster.services) < 2:
+                raise ValueError(f"cluster {cluster.id!r} needs at least two services")
+            for service_id in cluster.services:
+                if service_id not in known:
+                    raise ValueError(f"cluster {cluster.id!r} names unknown service {service_id!r}")
+                previous = seen.get(service_id)
+                if previous:
+                    raise ValueError(f"service {service_id!r} is in clusters {previous!r} and {cluster.id!r}")
+                seen[service_id] = cluster.id
+        return self
 
 
 def manifest_path(root: Path, override: str = "") -> Path | None:
@@ -234,8 +279,8 @@ def load_manifest(path: Path | None, repos: list[RepoRef], root: Path) -> tuple[
     if not isinstance(payload, dict):
         return None, [f"{path}: manifest must be a JSON object"]
     version = payload.get("schema_version")
-    if version != SUPPORTED_SCHEMA:
-        return None, [f"{path}: unsupported schema_version {version!r}; supported version is {SUPPORTED_SCHEMA}"]
+    if version not in SUPPORTED_SCHEMAS:
+        return None, [f"{path}: unsupported schema_version {version!r}; supported versions are {sorted(SUPPORTED_SCHEMAS)}"]
     try:
         manifest = ClusterManifest.model_validate(payload)
     except Exception:
@@ -335,7 +380,7 @@ def _match_repo(reference: str, repos: list[RepoRef], root: Path) -> list[RepoRe
         target = (root / target).resolve()
     matches: list[RepoRef] = []
     for repo in repos:
-        if reference in {repo.raw, repo.name, repo.slug}:
+        if reference in {repo.raw, repo.name, repo.slug, repo.service_id}:
             matches.append(repo)
             continue
         if repo.path is not None and repo.path.resolve() == target:
@@ -415,20 +460,25 @@ def applicable_manifest(
 def manifest_from_repos(repos: list[RepoRef]) -> ClusterManifest:
     services: list[ServiceDecl] = []
     resolved: dict[str, RepoRef] = {}
+    grouped: dict[str, list[str]] = {}
     for repo in repos:
         service_id = _service_id(repo)
         services.append(ServiceDecl(id=service_id, repository=repo.raw))
         resolved[service_id] = repo
-    manifest = ClusterManifest(schema_version=SUPPORTED_SCHEMA, services=services)
+        if repo.cluster:
+            grouped.setdefault(repo.cluster, []).append(service_id)
+    clusters = [ClusterDecl(id=cluster_id, services=grouped[cluster_id]) for cluster_id in sorted(grouped)]
+    manifest = ClusterManifest(schema_version=2, clusters=clusters, services=services)
     manifest.__dict__["_resolved"] = resolved
     return manifest
 
 
 def _service_id(repo: RepoRef) -> str:
-    slug = repo.slug or "repo"
-    if slug[0].isalpha() and all(ch.isalnum() or ch in "-_" for ch in slug):
-        return slug
-    return f"repo-{slug}"
+    if repo.service_id:
+        return repo.service_id
+    from dep_intel.sources import fallback_service_id
+
+    return fallback_service_id(repo)
 
 
 def _unused_example(path: Path, repos: list[RepoRef], root: Path) -> bool:

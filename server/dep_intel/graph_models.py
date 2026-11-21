@@ -237,6 +237,7 @@ class Snapshot:
     revision_vector: dict[str, dict[str, Any]]
     diagnostics: list[Diagnostic] = field(default_factory=list)
     bridge_fingerprints: list[str] = field(default_factory=list)
+    declared_clusters: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -247,6 +248,7 @@ class Snapshot:
             "diagnostics": [item.to_dict() for item in self.diagnostics],
             "bridge_fingerprints": self.bridge_fingerprints,
             "revision_vector": self.revision_vector,
+            "declared_clusters": self.declared_clusters,
         }
 
     def summary(self) -> dict[str, Any]:

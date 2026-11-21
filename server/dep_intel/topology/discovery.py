@@ -29,11 +29,11 @@ def discover(settings: Settings) -> dict[str, Any]:
     unavailable = []
     for ref in repos:
         root = _local_root(ref, settings)
+        service = ref.service_id or ref.name
         if root is None:
-            unavailable.append(ref.name)
-            services.append({"service": ref.name, "repository": ref.raw, "checkout": "not_scanned"})
+            unavailable.append(service)
+            services.append({"service": service, "repository": ref.raw, "checkout": "not_scanned"})
             continue
-        service = ref.name
         services.append({"service": service, "repository": ref.raw, "checkout": "available"})
         aliases.extend(aliases_from_packages(root, service))
         aliases.extend(kube_aliases(root, service))

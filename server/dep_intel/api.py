@@ -357,6 +357,14 @@ async def refresh_intelligence() -> dict:
         global _running
         try:
             publish_progress("preparing", 8, "Preparing repositories")
+            from dep_intel.cluster_manifest_generation import ensure_manifest
+            from dep_intel.sources import RepoConfigError
+
+            try:
+                await asyncio.to_thread(ensure_manifest, Settings.load())
+            except RepoConfigError as exc:
+                publish_progress("complete", 100, exc.errors[0] if exc.errors else "Repository configuration is invalid")
+                return
             await asyncio.to_thread(run_graphs, "", "", 365, on_nested)
             publish_progress("contracts", 70, "Discovering contracts")
             await asyncio.to_thread(get_engine(Settings.load()).refresh)

@@ -47,9 +47,13 @@ def confirmed_relationships(snapshot: Snapshot | None, *, service: str = "", kin
             file = ""
         status = str(edge.evidence.get("status") or "")
         resolution = str(edge.evidence.get("resolution") or "")
+        from_cluster, to_cluster = _declared_pair(snapshot, caller.service_id, contract.service_id)
         rows.append({
             "from_service": caller.service_id,
             "to_service": contract.service_id,
+            "from_cluster": from_cluster,
+            "to_cluster": to_cluster,
+            "cross_cluster": bool(from_cluster and to_cluster and from_cluster != to_cluster),
             "kind": relation_kind,
             "contract_id": contract.key,
             "contract": contract.name or contract.qualified_name,
@@ -68,8 +72,11 @@ def confirmed_relationships(snapshot: Snapshot | None, *, service: str = "", kin
 
 def detect_service_clusters(snapshot: Snapshot | None, rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     if snapshot is None:
-        return {"clusters": [], "standalone": [], "confirmed_calls": 0}
+        return {"clusters": [], "standalone": [], "confirmed_calls": 0, "membership_source": "derived"}
     edges = list(rows) if rows is not None else confirmed_relationships(snapshot)
+    declared = [item for item in (getattr(snapshot, "declared_clusters", None) or []) if isinstance(item, dict) and item.get("id")]
+    if declared:
+        return _declared_membership(snapshot, declared, edges)
     parent: dict[str, str] = {}
 
     def find(service_id: str) -> str:
@@ -107,6 +114,7 @@ def detect_service_clusters(snapshot: Snapshot | None, rows: list[dict[str, Any]
             "relationship_count": len(internal),
             "services": unique,
             "graph_version": snapshot.version,
+            "membership_source": "derived",
         })
     clusters.sort(key=lambda item: (-item["service_count"], item["cluster_id"]))
     standalone = []
@@ -115,7 +123,7 @@ def detect_service_clusters(snapshot: Snapshot | None, rows: list[dict[str, Any]
             continue
         part = snapshot.partitions[service_id]
         standalone.append({"service_id": service_id, "repository": part.repository})
-    return {"clusters": clusters, "standalone": standalone, "confirmed_calls": len(edges)}
+    return {"clusters": clusters, "standalone": standalone, "confirmed_calls": len(edges), "membership_source": "derived"}
 
 
 def get_service_cluster(snapshot: Snapshot | None, cluster_id: str) -> dict[str, Any] | None:
@@ -176,11 +184,109 @@ def cluster_downstream(snapshot: Snapshot | None, service_id: str) -> dict[str, 
             })
             queue.append(consumer)
     items.sort(key=lambda item: (not item["direct"], item["service_id"]))
-    return {
+    external = _external_targets(rows, service_id, members, cluster["cluster_id"])
+    body = {
         "cluster_id": cluster["cluster_id"],
         "services": [item["service_id"] for item in items],
         "items": items,
     }
+    if external:
+        body["external"] = external
+    return body
+
+
+def annotate_relationship_clusters(rows: list[dict[str, Any]], groups: dict[str, Any]) -> None:
+    """Fill cluster ids from the membership result. Declared ids win over an empty derived label."""
+    membership: dict[str, str] = {}
+    for cluster in groups.get("clusters") or []:
+        for service_id in cluster.get("services") or []:
+            membership[str(service_id)] = str(cluster.get("cluster_id") or "")
+    for row in rows:
+        left = membership.get(str(row.get("from_service") or ""), "")
+        right = membership.get(str(row.get("to_service") or ""), "")
+        row["from_cluster"] = left
+        row["to_cluster"] = right
+        row["cross_cluster"] = bool(left and right and left != right)
+
+
+def membership_source_label(source: str) -> str:
+    if source == "declared":
+        return "Declared in repos.txt"
+    return "Derived from confirmed cross-service relationships"
+
+
+def _declared_membership(snapshot: Snapshot, declared: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, Any]:
+    clusters = []
+    members: set[str] = set()
+    for item in sorted(declared, key=lambda row: str(row.get("id") or "")):
+        services = sorted({str(service) for service in item.get("services") or [] if service})
+        if len(services) < 2:
+            continue
+        members.update(services)
+        member_set = set(services)
+        internal = [
+            row for row in edges
+            if row.get("from_service") in member_set and row.get("to_service") in member_set
+        ]
+        clusters.append({
+            "cluster_id": str(item.get("id") or ""),
+            "label": str(item.get("id") or ""),
+            "service_count": len(services),
+            "relationship_count": len(internal),
+            "services": services,
+            "graph_version": snapshot.version,
+            "membership_source": "declared",
+        })
+    standalone = []
+    for service_id in sorted(snapshot.partitions):
+        if service_id in members:
+            continue
+        part = snapshot.partitions[service_id]
+        standalone.append({"service_id": service_id, "repository": part.repository})
+    return {
+        "clusters": clusters,
+        "standalone": standalone,
+        "confirmed_calls": len(edges),
+        "membership_source": "declared",
+    }
+
+
+def _declared_pair(snapshot: Snapshot | None, left: str, right: str) -> tuple[str, str]:
+    membership: dict[str, str] = {}
+    for item in getattr(snapshot, "declared_clusters", None) or []:
+        cluster_id = str(item.get("id") or "")
+        for service_id in item.get("services") or []:
+            membership[str(service_id)] = cluster_id
+    return membership.get(left, ""), membership.get(right, "")
+
+
+def _external_targets(rows: list[dict[str, Any]], service_id: str, members: set[str], cluster_id: str) -> list[dict[str, Any]]:
+    external = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        provider = str(row.get("to_service") or "")
+        consumer = str(row.get("from_service") or "")
+        inside = {provider, consumer} & members
+        outside = {provider, consumer} - members
+        if not inside or not outside or service_id not in {provider, consumer}:
+            continue
+        other = next(iter(outside))
+        token = (consumer, provider)
+        if token in seen:
+            continue
+        seen.add(token)
+        external.append({
+            "service_id": other,
+            "from_service": consumer,
+            "to_service": provider,
+            "from_cluster": row.get("from_cluster") or (cluster_id if consumer in members else ""),
+            "to_cluster": row.get("to_cluster") or (cluster_id if provider in members else ""),
+            "cross_cluster": True,
+            "contract": row.get("contract") or "",
+            "kind": row.get("kind") or "",
+        })
+    external.sort(key=lambda item: (item["service_id"], item["from_service"], item["to_service"]))
+    return external
 
 
 def cluster_id_for(services: list[str]) -> str:

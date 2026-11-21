@@ -9,6 +9,7 @@ from typing import Any
 from dep_intel.config import Settings
 from dep_intel.graph_models import Snapshot
 from dep_intel.reporting.models import NAMI_TRACE_VERSION, SCHEMA, SCHEMA_VERSION
+from dep_intel.repository_identity import partition_service
 from dep_intel.reporting.scopes.repository import build_repository_document
 from dep_intel.reporting.scopes.service_cluster import build_service_cluster_document
 from dep_intel.reporting.scopes.workspace import build_workspace_document
@@ -51,8 +52,10 @@ def generate_report(
     elif scope == "repository":
         if not service:
             raise ReportError("A repository report needs a service.")
-        if service not in snapshot.partitions:
+        resolved = partition_service(settings, snapshot, service)
+        if not resolved:
             raise ReportError(f"Unknown service {service}.")
+        service = resolved
         body = build_repository_document(settings, snapshot, service)
     else:
         raise ReportError("Scope must be workspace, service_cluster, repository, or the legacy alias cluster.")

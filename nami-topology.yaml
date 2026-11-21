@@ -1,0 +1,65 @@
+aliases:
+  analytics:
+    service: uocp-analytics-service
+  audit:
+    service: uocp-audit-service
+  auth:
+    service: uocp-auth-service
+  billing:
+    service: uocp-billing-service
+  campaign:
+    service: uocp-campaign-service
+  email:
+    service: uocp-email-service
+  gateway:
+    service: uocp-api-gateway
+  notification:
+    service: uocp-notification-service
+  reporting:
+    service: uocp-reporting-service
+  routing:
+    service: uocp-routing-service
+  sms:
+    service: uocp-sms-service
+  tenant:
+    service: uocp-tenant-service
+  uocp-analytics-service:
+    service: uocp-analytics-service
+  uocp-api-gateway:
+    service: uocp-api-gateway
+  uocp-audit-service:
+    service: uocp-audit-service
+  uocp-auth-service:
+    service: uocp-auth-service
+  uocp-billing-service:
+    service: uocp-billing-service
+  uocp-campaign-service:
+    service: uocp-campaign-service
+  uocp-email-service:
+    service: uocp-email-service
+  uocp-notification-service:
+    service: uocp-notification-service
+  uocp-reporting-service:
+    service: uocp-reporting-service
+  uocp-routing-service:
+    service: uocp-routing-service
+  uocp-sms-service:
+    service: uocp-sms-service
+  uocp-tenant-service:
+    service: uocp-tenant-service
+  uocp-voice-service:
+    service: uocp-voice-service
+  uocp-webhook-service:
+    service: uocp-webhook-service
+  uocp-webrtc-service:
+    service: uocp-webrtc-service
+  uocp-whatsapp-service:
+    service: uocp-whatsapp-service
+  voice:
+    service: uocp-voice-service
+  webhook:
+    service: uocp-webhook-service
+  webrtc:
+    service: uocp-webrtc-service
+  whatsapp:
+    service: uocp-whatsapp-service

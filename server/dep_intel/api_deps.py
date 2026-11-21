@@ -63,7 +63,7 @@ def detect_api_dependencies(workspaces: list[Workspace], settings: Settings) -> 
     else:
         by_service = {}
         for service in manifest.services:
-            matched = next((workspace for workspace in workspaces if workspace.ref.raw == service.repository or workspace.ref.name == service.repository or (workspace.ref.path and service.repository.endswith(workspace.ref.path.name))), None)
+            matched = next((workspace for workspace in workspaces if service.repository in {workspace.ref.raw, workspace.ref.name, workspace.ref.service_id} or (workspace.ref.path and service.repository.endswith(workspace.ref.path.name))), None)
             if matched is None:
                 continue
             by_service[service.id] = files_by_name.get(matched.ref.name, {})

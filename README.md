@@ -29,14 +29,17 @@ Startup loads the last files under `output/`. It does not rebuild graphs or watc
 
 The normal flow is:
 
-1. Add repositories to `repos.txt`.
+1. Configure `repos.txt`.
 2. Start Nami Trace.
-3. Refresh intelligence.
-4. Inspect service topology or repository structure.
-5. Explore potential impact.
-6. Review an actual change with Boundary Gate.
-7. Read Nami's explanation, actions, and validation proof.
-8. Generate and share reports.
+3. Nami validates repository declarations.
+4. Nami generates `cluster-manifest.json`.
+5. Nami discovers dependency topology.
+6. Nami analyses cross-repository impact.
+7. Review an actual change with Boundary Gate.
+8. Read Nami's explanation, actions, and validation proof.
+9. Generate and share reports.
+
+`repos.txt` is the source of truth for repositories and declared cluster membership. `cluster-manifest.json` is the generated runtime manifest. `nami-topology.yaml` is an optional provider-alias override. Topology is discovered relationship evidence. Cluster membership is configuration. A confirmed call does not move a service into another declared cluster. When `repos.txt` declares no clusters, membership stays the connected component of confirmed cross-service calls. See `repos.example.txt`.
 
 Primary navigation is Overview, Review change, Impact explorer, Architecture, and Reports. Repository health and Research stay under More. Research is for evaluation. It does not replace a change review.
 
@@ -68,7 +71,7 @@ Structural change impact is a separate cluster graph. It reads each repository's
 
 **Nami Boundary Gate** reviews one change. It builds a Change View, asks Nami Rank for downstream files, applies `nami-review.yaml`, and returns pass, warn, block, or incomplete. Ranking scores stay ranking evidence. Gate feedback does not change NRM. Boundary Gate decisions can be independently replayed and validated against explicit evidence requirements. Optional LLM commentary translates validated results into concise operational language but cannot alter Gate decisions. The stored review explains the decision with evidence, inferences, and actions, and can be exported as Markdown, JSON, PDF, or an evidence package. See [Docs/BOUNDARY_GATE.md](Docs/BOUNDARY_GATE.md), [Docs/GATE_VALIDATION.md](Docs/GATE_VALIDATION.md), [Docs/REVIEW_EVIDENCE.md](Docs/REVIEW_EVIDENCE.md), and [Docs/EXPORTS.md](Docs/EXPORTS.md).
 
-Workspace, service cluster, and repository intelligence reports are a separate scope. A service cluster is a connected component of confirmed cross-service calls, not a Kubernetes cluster. Legacy scope `cluster` means the workspace. Reports describe the published snapshot and do not return pass, warn, or block. On a workspace or service cluster report, internal cross-service relationships and contracts are tables. See [Docs/REPORTING.md](Docs/REPORTING.md).
+Workspace, service cluster, and repository intelligence reports are a separate scope. A declared service cluster comes from `repos.txt`. With no declaration, a service cluster is a connected component of confirmed cross-service calls. It is not a Kubernetes cluster. Legacy scope `cluster` means the workspace. Reports describe the published snapshot and do not return pass, warn, or block. On a workspace or service cluster report, internal cross-service relationships and contracts are tables. See [Docs/REPORTING.md](Docs/REPORTING.md).
 
 When the reviewed service belongs to a cluster, Review Change lists the confirmed consumers inside that cluster. Direct callers come first. The list does not add file ranks and does not change the Boundary Gate decision. One HTTP operation is one contract: a declared copy and an OpenAPI copy of the same method and path share a node, and a caller path that fills a route template attaches to that route. See [Docs/BOUNDARY_GATE.md](Docs/BOUNDARY_GATE.md) and [Docs/CROSS_REPO_IMPACT.md](Docs/CROSS_REPO_IMPACT.md).
 

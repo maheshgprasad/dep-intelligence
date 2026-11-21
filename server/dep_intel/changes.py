@@ -73,6 +73,7 @@ def union_snapshot(old: Snapshot, new: Snapshot) -> Snapshot:
         bridges=bridges,
         diagnostics=list(new.diagnostics),
         fingerprints=[],
+        declared_clusters=list(new.declared_clusters),
     )
 
 

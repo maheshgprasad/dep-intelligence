@@ -86,6 +86,8 @@ class RepoRef:
     host: str = ""
     owner: str = ""
     repo: str = ""
+    service_id: str = ""
+    cluster: str = ""
 
 
 @dataclass
@@ -137,36 +139,120 @@ def parse_repo_line(line: str, root: Path = PROJECT_ROOT) -> RepoRef:
     return RepoRef(raw=line, name=name, slug=_slug(name), kind="local", path=path.resolve())
 
 
-_SECTION = re.compile(r"^\[[A-Za-z0-9_.:-]+\]$")
+_SECTION = re.compile(r"^\[(standalone|cluster:([A-Za-z][A-Za-z0-9_-]*))\]$")
 _SERVICE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+_BINDING = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(\S+)$")
+
+
+class RepoConfigError(ValueError):
+    """repos.txt failed validation. ``errors`` include line numbers."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        super().__init__("\n".join(errors))
 
 
 def load_repos(settings: Settings) -> list[RepoRef]:
     """Read repos.txt.
 
-    A line may be a local path, a GitHub URL, or ``service-id = url-or-path``.
-    ``[standalone]`` and ``[cluster:name]`` are group labels, not repositories.
+    A line is a local path, an https URL, or ``service-id = path-or-url``.
+    ``[standalone]`` and ``[cluster:name]`` stay in effect until the next section.
+    The service id stays on the left. A GitHub checkout slug stays derived from
+    the URL so an existing clone is reused. A legacy line with no service id
+    keeps the slug-based service id.
     """
     if not settings.repos_file.is_file():
         return []
+    return parse_repos_text(settings.repos_file.read_text(encoding="utf-8"), settings.root, settings.repos_file.name)
+
+
+def parse_repos_text(text: str, root: Path, name: str = "repos.txt") -> list[RepoRef]:
     repos: list[RepoRef] = []
-    for raw in settings.repos_file.read_text(encoding="utf-8").splitlines():
+    errors: list[str] = []
+    cluster = ""
+    seen_ids: dict[str, int] = {}
+    seen_repos: dict[str, int] = {}
+    for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
-        if not line or line.startswith("#") or _SECTION.fullmatch(line):
+        if not line or line.startswith("#"):
             continue
-        repos.append(_repo_from_line(line, settings.root))
+        if line.startswith("[") and line.endswith("]"):
+            section = _SECTION.fullmatch(line)
+            if section is None:
+                errors.append(f"{name}:{number}: invalid cluster id in {line}")
+                continue
+            cluster = section.group(2) or ""
+            continue
+        service_id = ""
+        body = line
+        if "=" in line:
+            binding = _BINDING.fullmatch(line)
+            if binding is None:
+                errors.append(f"{name}:{number}: malformed assignment")
+                continue
+            service_id = binding.group(1)
+            body = binding.group(2)
+            if not body:
+                errors.append(f"{name}:{number}: empty repository value")
+                continue
+        try:
+            ref = parse_repo_line(body, root)
+        except ValueError as exc:
+            errors.append(f"{name}:{number}: {exc}")
+            continue
+        if service_id:
+            ref.service_id = service_id
+            if ref.kind == "local":
+                ref.slug = _slug(service_id)
+        else:
+            ref.service_id = fallback_service_id(ref)
+        ref.cluster = cluster
+        previous = seen_ids.get(ref.service_id)
+        if previous:
+            errors.append(f"{name}:{number}: duplicate service id {ref.service_id!r} (also on line {previous})")
+        else:
+            seen_ids[ref.service_id] = number
+        identity = _repository_identity(ref)
+        previous_repo = seen_repos.get(identity)
+        if previous_repo:
+            errors.append(f"{name}:{number}: duplicate repository {ref.raw!r} (also on line {previous_repo})")
+        else:
+            seen_repos[identity] = number
+        repos.append(ref)
+    counts: dict[str, int] = {}
+    for repo in repos:
+        if repo.cluster:
+            counts[repo.cluster] = counts.get(repo.cluster, 0) + 1
+    for cluster_id, count in sorted(counts.items()):
+        if count < 2:
+            errors.append(f"{name}: cluster {cluster_id!r} declares {count} service; a declared cluster needs at least two")
+    if errors:
+        raise RepoConfigError(errors)
     return repos
 
 
-def _repo_from_line(line: str, root: Path) -> RepoRef:
-    if "=" in line:
-        left, right = (part.strip().strip('"').strip("'") for part in line.split("=", 1))
-        if _SERVICE_ID.fullmatch(left) and right:
-            ref = parse_repo_line(right, root)
-            ref.name = left
-            ref.slug = left
-            return ref
-    return parse_repo_line(line, root)
+def fallback_service_id(repo: RepoRef) -> str:
+    """Service id for a legacy line that does not name one.
+
+    A directory or repository name that is already a safe identifier is kept,
+    so ``fixtures/auth-service`` stays ``auth-service``. Anything else uses the
+    checkout slug, which only contains letters, digits, and underscores.
+    """
+    name = repo.name or ""
+    if name and name[0].isalpha() and all(ch.isalnum() or ch in "-_" for ch in name):
+        return name
+    slug = repo.slug or "repo"
+    if slug[0].isalpha() and all(ch.isalnum() or ch in "-_" for ch in slug):
+        return slug
+    return f"repo-{slug}"
+
+
+def _repository_identity(repo: RepoRef) -> str:
+    if repo.kind == "github" and repo.owner and repo.repo:
+        return f"github:{repo.host.lower()}:{repo.owner.lower()}/{repo.repo.lower()}"
+    if repo.path is not None:
+        return f"path:{repo.path.resolve()}"
+    return f"raw:{repo.raw}"
 
 
 def _slug(name: str) -> str:
