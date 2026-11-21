@@ -357,6 +357,14 @@ async def refresh_intelligence() -> dict:
         global _running
         try:
             publish_progress("preparing", 8, "Preparing repositories")
+            from dep_intel.cluster_manifest_generation import ensure_manifest
+            from dep_intel.sources import RepoConfigError
+
+            try:
+                await asyncio.to_thread(ensure_manifest, Settings.load())
+            except RepoConfigError as exc:
+                publish_progress("complete", 100, exc.errors[0] if exc.errors else "Repository configuration is invalid")
+                return
             await asyncio.to_thread(run_graphs, "", "", 365, on_nested)
             publish_progress("contracts", 70, "Discovering contracts")
             refreshed = await asyncio.to_thread(get_engine(Settings.load()).refresh)
@@ -668,8 +676,9 @@ def review_get(review_id: str) -> dict:
     if stored is None:
         raise HTTPException(status_code=404, detail={"code": "review_not_found"})
     from dep_intel.path_hygiene import scrub_value
+    from dep_intel.review_explain import attach_gate_evidence_summary
 
-    return scrub_value(stored)
+    return scrub_value(attach_gate_evidence_summary(stored))
 
 
 @app.get("/api/review/{review_id}/report")

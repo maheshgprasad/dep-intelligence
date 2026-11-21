@@ -1,8 +1,9 @@
 """Workspace and service-cluster intelligence reports.
 
 A workspace is every repository in the published snapshot. A service cluster is
-one connected component of confirmed cross-service calls. Legacy scope
-"cluster" is a workspace, not a service cluster.
+either declared in repos.txt or, when nothing is declared, one connected
+component of confirmed cross-service calls. Legacy scope "cluster" is a
+workspace, not a service cluster.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from dep_intel.reporting.collect import (
 )
 from dep_intel.reporting.explanations import explain_contract
 from dep_intel.reporting.service_summary import service_summary
-from dep_intel.service_clusters import detect_service_clusters
+from dep_intel.service_clusters import detect_service_clusters, membership_source_label
 
 
 def build_workspace_document(
@@ -81,11 +82,14 @@ def build_workspace_document(
         },
     }
     if cluster:
+        source = str(cluster.get("membership_source") or groups.get("membership_source") or "derived")
         identity.update({
             "cluster_id": cluster["cluster_id"],
             "cluster_label": cluster["label"],
             "services": cluster["services"],
             "graph_version": snapshot.version,
+            "membership_source": source,
+            "membership_source_label": membership_source_label(source),
         })
     cluster_items = groups["clusters"] if scope == "workspace" else ([cluster] if cluster else [])
     standalone = groups["standalone"] if scope == "workspace" else []
@@ -184,6 +188,8 @@ def _public_cluster(item: dict[str, Any]) -> dict[str, Any]:
         "service_count": item.get("service_count"),
         "relationship_count": item.get("relationship_count"),
         "services": item.get("services") or [],
+        "membership_source": item.get("membership_source") or "derived",
+        "membership_source_label": membership_source_label(str(item.get("membership_source") or "derived")),
     }
 
 

@@ -114,7 +114,11 @@ def _cluster(canvas: _Canvas, document: dict[str, Any]) -> None:
         canvas.paragraph(str(identity.get("cluster_label") or "Connected service group"))
         canvas.kv("Member services", workspace.get("service_count"))
         canvas.kv("Confirmed internal calls", workspace.get("relationship_count"))
-        canvas.paragraph("This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.")
+        canvas.kv("Membership source", identity.get("membership_source_label") or "Derived from confirmed cross-service relationships")
+        if identity.get("membership_source") == "declared":
+            canvas.paragraph("Membership comes from the cluster declared in repos.txt. Confirmed calls do not add or remove members. Use the Workspace report for the complete repository allowlist.")
+        else:
+            canvas.paragraph("This report contains one connected component of confirmed cross-service relationships. Repositories outside this component are not included. Use the Workspace report for the complete repository allowlist.")
         members = [str(item) for item in (identity.get("services") or []) if item]
         if members:
             canvas.section("Cluster membership")

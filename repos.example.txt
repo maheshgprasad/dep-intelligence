@@ -1,0 +1,9 @@
+# Example allowlist. The name on the left is the stable service id.
+# [cluster:name] declares membership. [standalone] declares none.
+
+[cluster:example-platform]
+gateway = https://github.com/example/gateway
+auth = https://github.com/example/auth
+
+[standalone]
+tool = https://github.com/example/tool

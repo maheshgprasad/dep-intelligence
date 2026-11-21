@@ -5,6 +5,7 @@ The model explains stored facts. It does not decide, grade evidence, or add iden
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -46,10 +47,19 @@ _FORBIDDEN_LANGUAGE = re.compile(
 )
 _OVERCLAIM = ("fully validated", "all checks passed", "all 10 configured safety invariants passed")
 
+MAX_CLAIMS = 4
+MAX_EVIDENCE_IDS = 3
+_CLAIM_OVERCLAIM = re.compile(
+    r"guaranteed production failure|definitely causes?( an)? outage|zero risk|safe to deploy|the change is safe|certainly safe",
+    re.IGNORECASE,
+)
+_BLOCKED = re.compile(r"\bblocked\b", re.IGNORECASE)
+
 COMMENTARY_INSTRUCTIONS = (
     "You are a technical summarization component. You do not make the Gate decision. "
     "Use only supplied facts. Do not introduce new services, files, evidence, rules, tests, or probabilities. "
-    "Return JSON with keys headline, summary, why_it_matters, next_action, evidence_comment, validation_comment, limitation_note. "
+    "Return JSON with keys headline, summary, why_it_matters, next_action, evidence_comment, validation_comment, limitation_note, claims. "
+    "claims is a list of at most 4 objects with claim and evidence_ids. Use at most 3 evidence IDs from the supplied evidence on each claim. "
     "Explain what happened, why it matters, what should happen next, what evidence supports the conclusion, "
     "and whether Gate validation succeeded. Keep each field to one or two short sentences. "
     "Do not treat ranking scores as probabilities."
@@ -106,7 +116,8 @@ def build_commentary(report: dict[str, Any], provider: Any | None = None) -> dic
         log.info("commentary.rejected", extra={"reason": reason})
         text = fallback_commentary(payload)
         return _pack(text, report, source="deterministic", mode="deterministic_fallback", provider_name=provider_name, model=model_name, diagnostic=reason)
-    return _pack(parsed, report, source="llm", mode="llm", provider_name=str(result.get("provider") or provider_name), model=str(result.get("model") or model_name))
+    packed = _pack(parsed, report, source="llm", mode="llm", provider_name=str(result.get("provider") or provider_name), model=str(result.get("model") or model_name))
+    return _attach_claims(packed, parsed.get("claims"), report)
 
 
 def commentary_input(report: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +186,27 @@ def commentary_input(report: dict[str, Any]) -> dict[str, Any]:
         "repository": (report.get("change") or {}).get("repository") or "",
         "service_id": (report.get("change") or {}).get("service_id") or "",
     }
+    summary = report.get("gate_evidence_summary") if isinstance(report.get("gate_evidence_summary"), dict) else {}
+    if summary:
+        payload["gate_evidence_summary"] = {
+            "heading": summary.get("heading") or "",
+            "summary": _clip(str(summary.get("summary") or ""), 500),
+            "items": [
+                {
+                    "rule_id": item.get("rule_id"),
+                    "why": _clip(str(item.get("why") or ""), 240),
+                    "meaning": _clip(str(item.get("meaning") or ""), 240),
+                    "action": _clip(str(item.get("action") or ""), 240),
+                    "evidence": [
+                        {"evidence_id": evidence.get("evidence_id"), "statement": _clip(str(evidence.get("statement") or ""), 180)}
+                        for evidence in (item.get("evidence") or [])[:6]
+                        if isinstance(evidence, dict)
+                    ],
+                }
+                for item in (summary.get("items") or [])[:6]
+                if isinstance(item, dict)
+            ],
+        }
     return _redact_tree(payload)
 
 
@@ -439,3 +471,182 @@ def _redact_tree(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _redact_tree(item) for key, item in value.items()}
     return value
+
+
+def _attach_claims(packed: dict[str, Any], raw: Any, report: dict[str, Any]) -> dict[str, Any]:
+    assessed = assess_claims(raw, report)
+    verification = assessed["claim_verification"]
+    if not verification["generated"]:
+        return packed
+    body = dict(packed)
+    accepted = verification["accepted"]
+    generated = verification["generated"]
+    body["claims"] = assessed["claims"]
+    body["claim_verification"] = {
+        "generated": generated,
+        "accepted": accepted,
+        "rejected": verification["rejected"],
+    }
+    if verification["rejections"]:
+        body["claim_verification"]["rejections"] = verification["rejections"]
+    body["claims_heading"] = "Evidence-grounded AI explanation"
+    body["claims_note"] = f"{accepted} of {generated} generated claims were accepted against stored Nami evidence."
+    body["claims_advisory"] = "AI commentary is advisory and did not influence the Boundary Gate decision."
+    return body
+
+
+def assess_claims(raw: Any, report: dict[str, Any]) -> dict[str, Any]:
+    """Accept evidence-linked claims. Rejected claim text is not returned."""
+    rows = raw if isinstance(raw, list) else []
+    allowlist = json.dumps(commentary_input(report), default=str)
+    catalog = {
+        str(item.get("evidence_id"))
+        for item in list(report.get("evidence_catalog") or []) + list(report.get("counter_evidence") or [])
+        if isinstance(item, dict) and item.get("evidence_id")
+    }
+    decision = str((report.get("gate") or {}).get("decision") or "")
+    accepted: list[dict[str, Any]] = []
+    rejections: list[dict[str, str]] = []
+    unknown_identity = 0
+    invalid_evidence = 0
+    words = 0
+    for index, claim in enumerate(rows):
+        text, evidence_ids = _claim_parts(claim)
+        words += len(text.split()) if text else 0
+        if index >= MAX_CLAIMS:
+            rejections.append({"reason": "unknown_evidence"})
+            continue
+        reason = _reject_claim(text, evidence_ids, allowlist, catalog, decision)
+        if reason:
+            rejections.append({"reason": reason})
+            if reason == "unknown_identity":
+                unknown_identity += 1
+            elif reason == "unknown_evidence":
+                invalid_evidence += 1
+            continue
+        accepted.append({"claim": text, "evidence_ids": evidence_ids[:MAX_EVIDENCE_IDS]})
+    generated = len(rows)
+    return {
+        "claims": accepted,
+        "claim_verification": {
+            "generated": generated,
+            "accepted": len(accepted),
+            "rejected": generated - len(accepted),
+            "rejections": rejections,
+        },
+        "metrics": {
+            "generated_claims": generated,
+            "unknown_identity_count": unknown_identity,
+            "invalid_evidence_reference_count": invalid_evidence,
+            "accepted_evidence_linked_claims": len(accepted),
+            "rejected_claims": generated - len(accepted),
+            "word_count": words,
+        },
+    }
+
+
+def _claim_parts(claim: Any) -> tuple[str, list[str]]:
+    if not isinstance(claim, dict):
+        return "", []
+    text = str(claim.get("claim") or "").strip()
+    evidence_ids: list[str] = []
+    for item in claim.get("evidence_ids") or []:
+        value = str(item).strip()
+        if value and value not in evidence_ids:
+            evidence_ids.append(value)
+    return text, evidence_ids
+
+
+def _reject_claim(text: str, evidence_ids: list[str], allowlist: str, catalog: set[str], decision: str) -> str:
+    mentioned = re.findall(r"\bEV-\d+\b", text)
+    if not text or not evidence_ids or any(item not in catalog for item in evidence_ids) or any(item not in catalog for item in mentioned):
+        return "unknown_evidence"
+    for pattern in _IDENTITY:
+        if pattern.pattern == r"\bEV-\d+\b":
+            continue
+        for match in pattern.findall(text):
+            if match not in allowlist:
+                return "unknown_identity"
+    if decision != "block" and _BLOCKED.search(text):
+        return "decision_conflict"
+    other = {
+        "block": r"\b(?:WARN|PASS|INCOMPLETE)\b",
+        "warn": r"\b(?:BLOCK|PASS|INCOMPLETE)\b",
+        "pass": r"\b(?:BLOCK|WARN|INCOMPLETE)\b",
+        "incomplete": r"\b(?:BLOCK|WARN|PASS)\b",
+    }.get(decision)
+    if other and re.search(other, text):
+        return "decision_conflict"
+    if _CLAIM_OVERCLAIM.search(text) or _FORBIDDEN_LANGUAGE.search(text):
+        return "forbidden_language"
+    return ""
+
+
+def baseline_input(report: dict[str, Any]) -> dict[str, Any]:
+    """Change facts only. Evidence IDs and Gate results are omitted."""
+    change = report.get("change") if isinstance(report.get("change"), dict) else {}
+    files: list[str] = []
+    for item in (report.get("changed_files") or [])[:20]:
+        path = (item.get("new_path") or item.get("old_path")) if isinstance(item, dict) else item
+        if path:
+            files.append(str(path))
+    symbols: list[str] = []
+    for item in (report.get("changed_symbols") or [])[:20]:
+        name = (item.get("qualified_name") or item.get("name")) if isinstance(item, dict) else item
+        if name:
+            symbols.append(str(name))
+    contracts = []
+    for item in (report.get("contract_changes") or [])[:20]:
+        if not isinstance(item, dict):
+            continue
+        contracts.append({
+            "kind": item.get("kind") or "",
+            "method": item.get("method") or "",
+            "path": item.get("path") or "",
+            "breaking": bool(item.get("breaking")),
+        })
+    return _redact_tree({
+        "service_id": change.get("service_id") or "",
+        "repository": change.get("repository") or "",
+        "changed_files": files,
+        "changed_symbols": symbols,
+        "contract_changes": contracts,
+    })
+
+
+def compare_explanations(report: dict[str, Any], provider: Any) -> dict[str, Any]:
+    """Compare a change-only model explanation with a Nami-grounded one. The Gate is not modified."""
+    before = copy.deepcopy(report.get("gate"))
+    try:
+        baseline = provider.complete("explanation_baseline", baseline_input(report), timeout=COMMENTARY_TIMEOUT)
+    except Exception:
+        log.info("commentary.baseline_failed")
+        baseline = {"available": False, "diagnostic": "model_unavailable"}
+    try:
+        grounded = provider.complete(COMMENTARY_PURPOSE, commentary_input(report), timeout=COMMENTARY_TIMEOUT)
+    except Exception:
+        log.info("commentary.grounded_failed")
+        grounded = {"available": False, "diagnostic": "model_unavailable"}
+    if report.get("gate") != before:
+        report["gate"] = before
+    gate = before if isinstance(before, dict) else {}
+    return {
+        "review_id": report.get("review_id") or "",
+        "gate_decision": gate.get("decision") or "",
+        "baseline": _condition_metrics(baseline, report),
+        "grounded": _condition_metrics(grounded, report),
+    }
+
+
+def _condition_metrics(response: Any, report: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(response, dict) or not response.get("available"):
+        metrics = assess_claims([], report)["metrics"]
+        metrics["available"] = False
+        metrics["accepted_claims"] = []
+        return metrics
+    parsed = response.get("parsed") if isinstance(response.get("parsed"), dict) else {}
+    assessed = assess_claims(parsed.get("claims"), report)
+    metrics = dict(assessed["metrics"])
+    metrics["available"] = True
+    metrics["accepted_claims"] = assessed["claims"]
+    return metrics

@@ -391,3 +391,46 @@ def _named_only(left: str, right: str, route: str):
         part.nodes[node.key] = node
         partitions[name] = part
     return index_snapshot(version="names", generated_at="2026-01-01T00:00:00+00:00", partitions=partitions, overlay={}, bridges=[], diagnostics=[], fingerprints=[])
+
+
+def test_declared_membership_invariants(tmp_path: Path) -> None:
+    """DECL-001 through DECL-010."""
+    from dep_intel.cluster_manifest_generation import ensure_manifest
+    from dep_intel.hybrid_impact import HybridSettings
+    from dep_intel.sources import parse_repos_text
+    from test_declared_clusters import _services
+
+    declared = _services(("A", "B", "C"), [("A", "B")], [{"id": "group", "services": ["A", "B", "C"]}])
+    groups = detect_service_clusters(declared)
+    assert groups["membership_source"] == "declared"
+    assert groups["clusters"][0]["services"] == ["A", "B", "C"]
+    crossed = _services(
+        ("A", "B", "C", "D"),
+        [("B", "C")],
+        [{"id": "one", "services": ["A", "B"]}, {"id": "two", "services": ["C", "D"]}],
+    )
+    split = detect_service_clusters(crossed)
+    assert [item["services"] for item in split["clusters"]] == [["A", "B"], ["C", "D"]]
+    legacy = parse_repos_text("fixtures/auth-service\nhttps://github.com/example/repo\n", Path("."))
+    assert all(item.cluster == "" for item in legacy)
+    repos = tmp_path / "repos.txt"
+    repos.write_text("[cluster:pay]\nauth = https://github.com/acme/auth\nbilling = https://github.com/acme/billing\n[standalone]\ntool = https://github.com/acme/tool\n", encoding="utf-8")
+    settings = _settings(tmp_path)
+    settings = type(settings)(root=tmp_path, repos_file=repos, output_dir=tmp_path / "out", github_token="", ghe_token="")
+    ensure_manifest(settings)
+    first = (tmp_path / "cluster-manifest.json").read_bytes()
+    ensure_manifest(settings)
+    assert (tmp_path / "cluster-manifest.json").read_bytes() == first
+    document = json.loads(first)
+    allowlist = {item.raw for item in parse_repos_text(repos.read_text(encoding="utf-8"), tmp_path)}
+    assert {item["repository"] for item in document["services"]} == allowlist
+    assert len({item["id"] for item in document["services"]}) == len(document["services"])
+    clustered = {service for cluster in document["clusters"] for service in cluster["services"]}
+    assert "tool" not in clustered
+    import inspect
+    assert "topology" not in inspect.getsource(detect_service_clusters)
+    weights = HybridSettings()
+    assert weights.alpha_structural == 0.70
+    assert weights.beta_temporal == 0.30
+    temporal = _finding(source="git_history", category="review_target", evidence_strength="strong", origin="temporal_only")
+    assert decide_gate([temporal], [], _GATE, alignment="current", diagnostics=[])["decision"] != "block"

@@ -25,7 +25,7 @@ from dep_intel.impact import analyze
 from dep_intel.review_context import collect_context
 from dep_intel.review_evidence import apply_evidence_gate
 from dep_intel.review_commentary import attach_commentary
-from dep_intel.review_explain import attach_explanation
+from dep_intel.review_explain import attach_explanation, attach_gate_evidence_summary
 from dep_intel.review_commentary import COMMENTARY_VERSION
 from dep_intel.review_gate_rules import VALIDATOR_VERSION
 from dep_intel.review_gate_validation import attach_gate_validation
@@ -38,7 +38,7 @@ from dep_intel.review_models import MODULE_ABBREV, MODULE_NAME, NBG_VERSION, ORI
 from dep_intel.review_progress import progress_event, resolve_review_mode
 from dep_intel.review_policy import evaluate_policies, load_review_config
 from dep_intel.review_sources import materialize_worktree, remove_worktree, repository_allowed, resolve_change, retain_worktrees
-from dep_intel.review_store import read_review, render_markdown, write_review
+from dep_intel.review_store import read_review, render_markdown, review_dir, write_review
 from dep_intel.review_verify import apply_verification_findings, run_verifications
 from dep_intel.store import now, read_json, write_json
 from dep_intel.change_view import build_change_view, graph_alignment
@@ -122,7 +122,12 @@ class ReviewEngine:
         if cached is not None and "gate_validation" not in cached:
             cached = None
         if cached is not None and resolved.get("kind") not in {"working_tree", "staged"}:
-            cached = {**cached, "cache": {"hit": True, "key": cache_key}}
+            enriched = attach_gate_evidence_summary(cached)
+            if enriched is not cached:
+                from dep_intel.store import write_json
+
+                write_json(review_dir(self.settings.output_dir, str(enriched.get("review_id") or "")), "report.json", enriched)
+            cached = {**enriched, "cache": {"hit": True, "key": cache_key}}
             self._event("review_completed", {"review_id": cached.get("review_id"), "decision": (cached.get("gate") or {}).get("decision"), "cache": True})
             return cached
         as_of = resolved.get("committed_at") if resolved.get("kind") in {"commit", "range", "github_pr"} else None
@@ -639,6 +644,7 @@ def _report(review_id: str, change: dict, impact: dict, policies: list, gate: di
     }
     body = attach_explanation(body, config)
     body = attach_gate_validation(body, config)
+    body = attach_gate_evidence_summary(body)
     return attach_commentary(body)
 
 

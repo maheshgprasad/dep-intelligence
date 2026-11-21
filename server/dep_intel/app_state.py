@@ -153,10 +153,11 @@ def service_catalog(snapshot: Snapshot | None, service: str) -> dict[str, Any]:
 def cross_service_relationships(snapshot: Snapshot | None, *, limit: int | None = 50, service: str = "", kind: str = "") -> dict[str, Any]:
     if snapshot is None:
         return {"relationships": [], "total": 0, "truncated": False, "clusters": [], "individuals": []}
-    from dep_intel.service_clusters import confirmed_relationships, detect_service_clusters
+    from dep_intel.service_clusters import annotate_relationship_clusters, confirmed_relationships, detect_service_clusters
 
     all_rows = confirmed_relationships(snapshot)
     groups = detect_service_clusters(snapshot, all_rows)
+    annotate_relationship_clusters(all_rows, groups)
     rows = all_rows
     if service:
         rows = [item for item in rows if service in {item["from_service"], item["to_service"]}]

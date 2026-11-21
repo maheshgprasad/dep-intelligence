@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import copy
+import json
+
 from dep_intel.gate_evaluation import run_scenario
 from dep_intel.gate_validation_corpus import scenarios
-from dep_intel.review_commentary import attach_commentary, build_commentary, commentary_input, fallback_commentary, validate_commentary
+from dep_intel.review_commentary import (
+    assess_claims,
+    attach_commentary,
+    baseline_input,
+    build_commentary,
+    commentary_input,
+    compare_explanations,
+    fallback_commentary,
+    validate_commentary,
+)
+from dep_intel.review_model_provider import NoneProvider
 
 
 def test_temporal_warning_names_the_file_and_does_not_overclaim() -> None:
@@ -122,6 +135,90 @@ def test_validation_failure_commentary_does_not_reassure() -> None:
     assert report["gate"]["decision"] == "block"
 
 
+def test_valid_evidence_claim_is_accepted_and_the_gate_stays() -> None:
+    report = _ready(scenarios()[0])
+    before = copy.deepcopy(report["gate"])
+    evidence_id = report["evidence_catalog"][0]["evidence_id"]
+    prose = _prose(report)
+    prose["claims"] = [{
+        "claim": "user-service consumes POST /api/auth/validate from auth-service.",
+        "evidence_ids": [evidence_id],
+    }]
+    commentary = build_commentary(report, provider=_Provider(prose))
+    stored = attach_commentary(report, provider=_Provider(prose))
+    assert commentary["mode"] == "llm"
+    assert commentary["claims"] == [{"claim": prose["claims"][0]["claim"], "evidence_ids": [evidence_id]}]
+    assert commentary["claim_verification"]["accepted"] == 1
+    assert commentary["claim_verification"]["generated"] == 1
+    assert "accepted against stored" in commentary["claims_note"]
+    assert "proven" not in commentary["claims_note"]
+    assert stored["gate"] == before
+
+
+def test_unsupported_claims_are_rejected_without_changing_the_gate() -> None:
+    report = _ready(scenarios()[0])
+    before = copy.deepcopy(report["gate"])
+    evidence_id = report["evidence_catalog"][0]["evidence_id"]
+    prose = _prose(report)
+    cases = {
+        "unknown_evidence": {"claim": "auth-service removed the operation.", "evidence_ids": ["EV-999"]},
+        "unknown_identity": {"claim": "fake-service consumes the operation.", "evidence_ids": [evidence_id]},
+        "forbidden_language": {"claim": "auth-service is safe to deploy.", "evidence_ids": [evidence_id]},
+    }
+    for reason, claim in cases.items():
+        checked = assess_claims([claim], report)
+        assert checked["claim_verification"]["accepted"] == 0
+        assert checked["claim_verification"]["rejections"] == [{"reason": reason}]
+        assert claim["claim"] not in json.dumps(checked["claims"])
+    warn = _ready(next(item for item in scenarios() if item["name"] == "body-only-handler-change"))
+    warn_id = warn["evidence_catalog"][0]["evidence_id"]
+    conflict = assess_claims([{"claim": "The change is BLOCKED.", "evidence_ids": [warn_id]}], warn)
+    assert conflict["claim_verification"]["rejections"] == [{"reason": "decision_conflict"}]
+    prose["claims"] = [
+        cases["unknown_evidence"],
+        cases["unknown_identity"],
+        {"claim": "The change is PASS.", "evidence_ids": [evidence_id]},
+        cases["forbidden_language"],
+    ]
+    commentary = build_commentary(report, provider=_Provider(prose))
+    stored = attach_commentary(report, provider=_Provider(prose))
+    assert commentary["claims"] == []
+    assert commentary["claim_verification"]["generated"] == 4
+    assert commentary["claim_verification"]["rejected"] == 4
+    assert "EV-999" not in json.dumps(commentary["claims"])
+    assert "fake-service" not in json.dumps(commentary["claims"])
+    assert stored["gate"] == before
+
+
+def test_missing_model_keeps_the_deterministic_explanation() -> None:
+    report = _ready(scenarios()[0])
+    before = copy.deepcopy(report["gate"])
+    commentary = build_commentary(report, provider=NoneProvider())
+    stored = attach_commentary(report, provider=NoneProvider())
+    assert commentary["mode"] == "deterministic_fallback"
+    assert "claims" not in commentary
+    assert "claims_note" not in commentary
+    assert commentary["summary"]
+    assert stored["gate"] == before
+
+
+def test_grounded_comparison_rejects_baseline_claims_and_keeps_the_gate() -> None:
+    report = _ready(scenarios()[0])
+    before = copy.deepcopy(report["gate"])
+    evidence_id = report["evidence_catalog"][0]["evidence_id"]
+    provider = _SplitProvider(evidence_id)
+    result = compare_explanations(report, provider)
+    assert provider.baseline_request is not None
+    assert "EV-" not in json.dumps(provider.baseline_request)
+    assert "evidence_id" not in json.dumps(provider.baseline_request)
+    assert result["baseline"]["invalid_evidence_reference_count"] == 1
+    assert result["baseline"]["unknown_identity_count"] == 0 or result["baseline"]["rejected_claims"] == 1
+    assert result["baseline"]["accepted_evidence_linked_claims"] == 0
+    assert result["grounded"]["accepted_evidence_linked_claims"] == 1
+    assert result["gate_decision"] == "block"
+    assert report["gate"] == before
+
+
 def test_templates_cover_pass_warn_block_and_incomplete() -> None:
     names = {
         "clean-safe-change": "pass",
@@ -140,6 +237,30 @@ def test_templates_cover_pass_warn_block_and_incomplete() -> None:
             commentary_input(report),
             report["gate_validation"],
         )[0] is True
+
+
+def _prose(report: dict) -> dict:
+    text = fallback_commentary(commentary_input(report))
+    return {field: text[field] for field in ("headline", "summary", "why_it_matters", "next_action", "evidence_comment", "validation_comment", "limitation_note")}
+
+
+class _SplitProvider:
+    name = "fake"
+    model = "test-model"
+
+    def __init__(self, evidence_id: str) -> None:
+        self.evidence_id = evidence_id
+        self.baseline_request = None
+
+    def complete(self, purpose: str, request: dict, timeout: float = 20.0) -> dict:
+        if purpose == "explanation_baseline":
+            self.baseline_request = request
+            return {"available": True, "provider": self.name, "parsed": {"claims": [{"claim": "fake-service will fail.", "evidence_ids": ["EV-999"]}]}}
+        return {
+            "available": True,
+            "provider": self.name,
+            "parsed": {"claims": [{"claim": "user-service consumes POST /api/auth/validate from auth-service.", "evidence_ids": [self.evidence_id]}]},
+        }
 
 
 class _Provider:

@@ -21,7 +21,11 @@ from dep_intel.store import write_json
 def test_repository_report_accepts_the_checkout_slug(tmp_path: Path) -> None:
     repos = tmp_path / "repos.txt"
     repos.write_text(
-        "[cluster:omnichannel]\nuocp-billing-service = https://github.com/hvrcorp/uocp-billing-service\n",
+        "\n".join([
+            "[cluster:omnichannel]",
+            "uocp-billing-service = https://github.com/hvrcorp/uocp-billing-service",
+            "uocp-auth-service = https://github.com/hvrcorp/uocp-auth-service",
+        ]),
         encoding="utf-8",
     )
     settings = Settings(root=tmp_path, repos_file=repos, output_dir=tmp_path, github_token="", ghe_token="")

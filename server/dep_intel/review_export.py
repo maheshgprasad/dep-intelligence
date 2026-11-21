@@ -15,6 +15,7 @@ from typing import Any
 
 from dep_intel.hybrid_impact import NRM_VERSION
 from dep_intel.review_models import NBG_VERSION
+from dep_intel.review_explain import gate_evidence_summary
 from dep_intel.review_pdf import render_text_pdf
 from dep_intel.review_store import read_review, render_markdown, review_dir
 from dep_intel.path_hygiene import scrub_text
@@ -130,6 +131,7 @@ def canonical_export(report: dict[str, Any], manifest: dict[str, Any] | None = N
             "items": later,
         },
         "copy_summary": report.get("copy_summary"),
+        "gate_evidence_summary": gate_evidence_summary(report),
         "gate_validation": report.get("gate_validation") or {},
         "commentary": _public_commentary(report.get("commentary") or {}),
         "reproducibility": {
@@ -183,8 +185,10 @@ def pdf_lines(payload: dict[str, Any]) -> list[str]:
         if not (payload.get("required_actions") or []):
             lines.extend(["What to do next", commentary.get("next_action") or ""])
         lines.append(commentary.get("validation_comment") or "")
+        lines.extend(_claim_lines(commentary))
     else:
         lines.append("No explanation was recorded.")
+    lines.extend(_gate_evidence_lines(payload.get("gate_evidence_summary") or {}))
     lines.extend([
         "",
         "Required actions",
@@ -276,6 +280,7 @@ def build_zip(review_id: str, payload: dict[str, Any], report: dict[str, Any]) -
         f"{root}/gate/inferences.json": _bytes(payload.get("inferences") or []),
         f"{root}/gate/rules.json": _bytes(payload.get("decision_rules") or []),
         f"{root}/gate/actions.json": _bytes({"required": payload.get("required_actions"), "recommended": payload.get("recommended_actions")}),
+        f"{root}/gate/gate-evidence-summary.json": _bytes(payload.get("gate_evidence_summary") or {}),
         f"{root}/verification/verification.json": _bytes(payload.get("verification") or []),
         f"{root}/change/change-view.json": _bytes({"identity": payload.get("identity"), "contracts": payload.get("contract_changes")}),
         f"{root}/validation/gate-validation.json": _bytes(payload.get("gate_validation") or {}),
@@ -318,7 +323,87 @@ def _public_commentary(commentary: dict[str, Any]) -> dict[str, Any]:
     }
     if commentary.get("model_diagnostic"):
         kept["model_diagnostic"] = commentary.get("model_diagnostic")
+    claims = []
+    for item in commentary.get("claims") or []:
+        if not isinstance(item, dict) or not item.get("claim"):
+            continue
+        claims.append({
+            "claim": item.get("claim") or "",
+            "evidence_ids": [str(value) for value in (item.get("evidence_ids") or [])[:3]],
+        })
+    verification = commentary.get("claim_verification") if isinstance(commentary.get("claim_verification"), dict) else {}
+    if claims or verification.get("generated"):
+        kept["claims"] = claims[:4]
+        kept["claim_verification"] = {
+            "generated": int(verification.get("generated") or 0),
+            "accepted": int(verification.get("accepted") or 0),
+            "rejected": int(verification.get("rejected") or 0),
+        }
+        reasons = [{"reason": str(item.get("reason"))} for item in (verification.get("rejections") or []) if isinstance(item, dict) and item.get("reason")]
+        if reasons:
+            kept["claim_verification"]["rejections"] = reasons
+        kept["claims_heading"] = commentary.get("claims_heading") or "Evidence-grounded AI explanation"
+        kept["claims_note"] = commentary.get("claims_note") or ""
+        kept["claims_advisory"] = commentary.get("claims_advisory") or "AI commentary is advisory and did not influence the Boundary Gate decision."
     return kept
+
+
+def _claim_lines(commentary: dict[str, Any]) -> list[str]:
+    claims = [item for item in (commentary.get("claims") or []) if isinstance(item, dict) and item.get("claim")]
+    if not claims and not commentary.get("claims_note"):
+        return []
+    lines = ["", commentary.get("claims_heading") or "Evidence-grounded AI explanation"]
+    for item in claims:
+        lines.append(f"- {item.get('claim')}")
+        refs = ", ".join(str(value) for value in (item.get("evidence_ids") or []))
+        if refs:
+            lines.append(f"  Evidence: {refs}")
+    if commentary.get("claims_note"):
+        lines.append(str(commentary.get("claims_note")))
+    if commentary.get("claims_advisory"):
+        lines.append(str(commentary.get("claims_advisory")))
+    return lines
+
+
+def _gate_evidence_lines(summary: dict[str, Any]) -> list[str]:
+    if not summary:
+        return []
+    lines = [
+        "",
+        str(summary.get("section_title") or "Boundary Gate evidence"),
+        str(summary.get("decision_heading") or "Why this decision was made"),
+        str(summary.get("heading") or ""),
+        str(summary.get("summary") or ""),
+    ]
+    for item in summary.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.extend([
+            "",
+            str(item.get("title") or ""),
+            str(item.get("why") or ""),
+            str(item.get("meaning") or ""),
+            "Evidence",
+        ])
+        evidence = item.get("evidence") or []
+        if not evidence:
+            lines.append("No linked evidence was stored for this rule.")
+        for evidence_item in evidence:
+            if not isinstance(evidence_item, dict):
+                continue
+            lines.append(str(evidence_item.get("evidence_id") or ""))
+            lines.append(str(evidence_item.get("statement") or ""))
+            lines.append(f"Source: {evidence_item.get('source_label') or evidence_item.get('source') or ''}")
+            lines.append(f"Supports: {evidence_item.get('supports') or ''}")
+        lines.extend([
+            str(item.get("action_label") or "Required action"),
+            str(item.get("action") or ""),
+            "Decision rule",
+            f"{item.get('rule_id') or ''} · {item.get('title') or ''}",
+        ])
+    validation = summary.get("validation") if isinstance(summary.get("validation"), dict) else {}
+    lines.extend(["", "Validation", str(validation.get("statement") or "")])
+    return lines
 
 
 def _validation_lines(validation: dict[str, Any]) -> list[str]:

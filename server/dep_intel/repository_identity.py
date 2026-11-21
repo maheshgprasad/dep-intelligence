@@ -102,9 +102,13 @@ def partition_service(settings: Settings, snapshot: Any, requested: str = "", ch
         return requested
     aliases = {item for item in (requested, checkout.name if checkout is not None else "") if item}
     if aliases:
-        from dep_intel.sources import load_repos
+        from dep_intel.sources import RepoConfigError, load_repos
 
-        for ref in load_repos(settings):
+        try:
+            loaded = load_repos(settings)
+        except RepoConfigError:
+            loaded = []
+        for ref in loaded:
             names = {ref.slug, ref.service_id, ref.name, ref.raw}
             if aliases & names:
                 aliases.update(item for item in names if item)

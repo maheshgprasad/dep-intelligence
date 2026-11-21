@@ -31,6 +31,10 @@ from dep_intel.graph_models import (
 from dep_intel.store import now
 
 
+def _declared_clusters(manifest: ClusterManifest) -> list[dict[str, Any]]:
+    return [{"id": cluster.id, "services": list(cluster.services)} for cluster in manifest.clusters]
+
+
 def assemble(partitions, manifest, files_by_service, *, version: str, generated_at: str | None = None) -> Snapshot:
     model = build_contract_model(manifest, files_by_service)
     annotate_bounds(partitions, files_by_service)
@@ -53,10 +57,11 @@ def assemble(partitions, manifest, files_by_service, *, version: str, generated_
         bridges=bridges,
         diagnostics=diagnostics,
         fingerprints=fingerprints,
+        declared_clusters=_declared_clusters(manifest),
     )
 
 
-def index_snapshot(*, version, generated_at, partitions, overlay, bridges, diagnostics, fingerprints) -> Snapshot:
+def index_snapshot(*, version, generated_at, partitions, overlay, bridges, diagnostics, fingerprints, declared_clusters=None) -> Snapshot:
     nodes: dict[str, GraphNode] = {}
     edges: list[GraphEdge] = []
     for part in partitions.values():
@@ -110,6 +115,7 @@ def index_snapshot(*, version, generated_at, partitions, overlay, bridges, diagn
         revision_vector=revision,
         diagnostics=diagnostics,
         bridge_fingerprints=fingerprints,
+        declared_clusters=list(declared_clusters or []),
     )
 
 
@@ -126,6 +132,7 @@ def snapshot_from_published(payload: dict[str, Any]) -> Snapshot:
         bridges=bridges,
         diagnostics=diagnostics,
         fingerprints=list(payload.get("bridge_fingerprints") or []),
+        declared_clusters=list(payload.get("declared_clusters") or []),
     )
 
 
