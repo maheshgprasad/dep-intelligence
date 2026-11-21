@@ -1,8 +1,8 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getServiceClusters, previewChange, recentReviews, reviewConfig, reviewSourceOptions, runReview, type AppState } from "../api";
+import { getServiceClusters, previewChange, previewClusterReview, recentReviews, reviewConfig, reviewSourceOptions, runClusterReview, runReview, type AppState } from "../api";
 import { ReviewPage } from "./ReviewPage";
 
 vi.mock("../api", () => ({
@@ -11,7 +11,9 @@ vi.mock("../api", () => ({
   reviewSourceOptions: vi.fn(),
   recentReviews: vi.fn(),
   previewChange: vi.fn(),
+  previewClusterReview: vi.fn(),
   runReview: vi.fn(),
+  runClusterReview: vi.fn(),
   purgeReviews: vi.fn(),
 }));
 
@@ -36,6 +38,7 @@ const cluster = {
 
 describe("Review change page", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(getServiceClusters).mockResolvedValue({ clusters: [cluster], standalone: [] });
     vi.mocked(reviewConfig).mockResolvedValue({ model_configured: false, policies: [], diagnostics: [], score_note: "", verification: { commands: [] } });
     vi.mocked(reviewSourceOptions).mockResolvedValue({ dirty_files: 0, staged_files: 0, current_branch: "main", default_branch: "main", branches: ["main"], recent_commits: [] });
@@ -68,8 +71,9 @@ describe("Review change page", () => {
     await user.click(await screen.findByRole("combobox", { name: "Review scope" }));
     await user.click(await screen.findByRole("option", { name: "Service cluster" }));
     expect(await screen.findByText("Declared in repos.txt · 18 services")).toBeInTheDocument();
-    expect(screen.getByText("No working-tree changes found in uocp-api-gateway.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Preview change" })).toBeDisabled();
+    expect(screen.getByText("Preview lists every repository in the cluster before review starts.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview cluster changes" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Review cluster changes" })).toBeEnabled();
     await user.click(screen.getByRole("combobox", { name: "Change origin repository" }));
     expect(screen.getByRole("option", { name: "uocp-api-gateway" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "uocp-auth-service" })).toBeInTheDocument();
@@ -88,5 +92,43 @@ describe("Review change page", () => {
     await waitFor(() => expect(runReview).toHaveBeenCalled());
     expect(vi.mocked(runReview).mock.calls[0][0]).toMatchObject({ verify: true });
     expect(previewChange).not.toHaveBeenCalled();
+    expect(runClusterReview).not.toHaveBeenCalled();
+  });
+
+  it("previews cluster changes and starts a cluster review without the repository working state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(previewClusterReview).mockResolvedValue({
+      cluster_id: "omnichannel",
+      cluster_label: "Omnichannel",
+      repository_total: 18,
+      changed_count: 2,
+      no_change_count: 16,
+      repositories: [
+        { service_id: "uocp-auth-service", repository: "uocp-auth-service", change_detected: true, changed_file_count: 4 },
+        { service_id: "uocp-api-gateway", repository: "uocp-api-gateway", change_detected: true, changed_file_count: 2 },
+        { service_id: "uocp-audit-service", repository: "uocp-audit-service", change_detected: false, changed_file_count: 0 },
+      ],
+    });
+    vi.mocked(runClusterReview).mockResolvedValue({ cluster_review_id: "cluster-1", job_id: "job-1", status: "running", repository_total: 18, cluster_label: "Omnichannel" });
+    render(
+      <MemoryRouter initialEntries={["/review"]}>
+        <Routes>
+          <Route path="/review" element={<ReviewPage snapshot={snapshot} />} />
+          <Route path="/review/cluster/:clusterReviewId" element={<p>Cluster progress cluster-1</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole("combobox", { name: "Review scope" }));
+    await user.click(await screen.findByRole("option", { name: "Service cluster" }));
+    await user.click(screen.getByRole("button", { name: "Preview cluster changes" }));
+    expect(await screen.findByText("Omnichannel · 18 repositories")).toBeInTheDocument();
+    expect(screen.getByText("Changed repositories: 2")).toBeInTheDocument();
+    expect(screen.getByText("No changes: 16")).toBeInTheDocument();
+    expect(screen.getByText("4 changed files")).toBeInTheDocument();
+    expect(screen.queryByText("uocp-audit-service")).not.toBeInTheDocument();
+    expect(previewChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Review cluster changes" }));
+    expect(await screen.findByText("Cluster progress cluster-1")).toBeInTheDocument();
+    expect(runReview).not.toHaveBeenCalled();
   });
 });

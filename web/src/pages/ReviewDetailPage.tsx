@@ -193,7 +193,7 @@ export function ReviewDetailPage() {
       <DecisionReason summary={report.gate_evidence_summary} rules={report.gate.decision_rules ?? []} evidence={report.evidence_catalog ?? []} />
       <NamiCommentary report={report} />
       {report.gate.reason_codes?.includes("cancelled") ? <InlineNotification kind="info" title="Review cancelled" subtitle="This review stopped before a policy decision." lowContrast hideCloseButton /> : null}
-      {report.diagnostics.some((item) => item.severity === "error") ? <InlineNotification kind="error" title="Review processing issue" subtitle={report.diagnostics.find((item) => item.severity === "error")?.message || "A processing issue was recorded."} lowContrast hideCloseButton /> : null}
+      {report.diagnostics.some((item) => item.severity === "error") ? <InlineNotification kind="error" title="Review processing issue" subtitle={hideFilePaths(report.diagnostics.find((item) => item.severity === "error")?.message || "A processing issue was recorded.")} lowContrast hideCloseButton /> : null}
       <Accordion>
         <AccordionItem title="Review details">
           <dl className="detail-list">

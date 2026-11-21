@@ -1,4 +1,4 @@
-export type ReviewSourceKind = "working_tree" | "staged" | "commit" | "range" | "github_pr";
+export type ReviewSourceKind = "working_tree" | "staged" | "commit" | "range" | "timeframe" | "github_pr";
 
 export type ReviewFormInput = {
   reviewScope: "repository" | "service_cluster";
@@ -9,6 +9,8 @@ export type ReviewFormInput = {
   commit: string;
   base: string;
   head: string;
+  since: string;
+  until: string;
   prUrl: string;
   dirtyFiles: number | null;
   stagedFiles: number | null;
@@ -39,21 +41,36 @@ export function reviewFormState(input: ReviewFormInput): ReviewFormState {
   const label = input.repositoryLabel || "the selected repository";
   let sourceMessage = "";
   let sourceReady = true;
+  const clusterTree = input.reviewScope === "service_cluster" && (input.source === "working_tree" || input.source === "staged");
   if (input.source === "working_tree") {
-    if (input.dirtyFiles === null) sourceReady = false;
+    if (clusterTree) {
+      sourceMessage = "Preview lists every repository in the cluster before review starts.";
+      sourceReady = true;
+    } else if (input.dirtyFiles === null) sourceReady = false;
     else if (input.dirtyFiles === 0) {
       sourceMessage = `No working-tree changes found in ${label}.`;
       sourceReady = false;
     } else sourceMessage = `${input.dirtyFiles} changed files on ${input.branch || "the current branch"}`;
   } else if (input.source === "staged") {
-    if (input.stagedFiles === null) sourceReady = false;
+    if (clusterTree) {
+      sourceMessage = "Preview lists every repository in the cluster before review starts.";
+      sourceReady = true;
+    } else if (input.stagedFiles === null) sourceReady = false;
     else if (input.stagedFiles === 0) {
       sourceMessage = `No staged changes found in ${label}.`;
       sourceReady = false;
     } else sourceMessage = `${input.stagedFiles} staged files`;
   } else if (input.source === "commit") sourceReady = input.commit.trim().length > 0;
   else if (input.source === "range") sourceReady = input.base.trim().length > 0 && input.head.trim().length > 0;
-  else sourceReady = input.prUrl.trim().length > 0;
+  else if (input.source === "timeframe") {
+    const since = input.since.trim();
+    const until = input.until.trim();
+    if (!since || !until) sourceReady = false;
+    else if (since > until) {
+      sourceMessage = "The timeframe ends before it starts.";
+      sourceReady = false;
+    } else sourceMessage = `Commits from ${since} through ${until}. History comes from PyDriller. The existing review covers the net change in that window.`;
+  } else sourceReady = input.prUrl.trim().length > 0;
   const originReady = input.source === "github_pr" && input.reviewScope === "repository" ? true : input.repository.length > 0;
   const clusterReady = input.reviewScope !== "service_cluster" || input.clusterId.length > 0;
   const ready = sourceReady && originReady && clusterReady;

@@ -13,7 +13,7 @@ import {
   TextInput,
   Toggle,
 } from "@carbon/react";
-import { getServiceClusters, previewChange, purgeReviews, recentReviews, reviewConfig, reviewSourceOptions, runReview, type AppState, type ServiceClusterSummary } from "../api";
+import { getServiceClusters, previewChange, previewClusterReview, purgeReviews, recentReviews, reviewConfig, reviewSourceOptions, runClusterReview, runReview, type AppState, type ClusterPreview, type ServiceClusterSummary } from "../api";
 import { hideFilePaths } from "../labels";
 import { reviewFormState, scopeColumnLabel } from "../reviewForm";
 import { NamiDataTable } from "../components/NamiDataTable";
@@ -31,6 +31,7 @@ const SOURCES = [
   { id: "staged", text: "Staged changes" },
   { id: "commit", text: "Commit" },
   { id: "range", text: "Branch / commit range" },
+  { id: "timeframe", text: "Timeframe" },
   { id: "github_pr", text: "Pull request" },
 ];
 
@@ -41,6 +42,7 @@ const SOURCE_LABELS: Record<string, string> = {
   staged: "Staged changes",
   commit: "Commit",
   range: "Commit range",
+  timeframe: "Timeframe",
   github_pr: "Pull request",
   explicit: "Selected files",
 };
@@ -58,6 +60,8 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const [commit, setCommit] = useState("");
   const [base, setBase] = useState("");
   const [head, setHead] = useState("");
+  const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
   const [prUrl, setPrUrl] = useState("");
   const [mode, setMode] = useState<"auto" | "fast" | "exact">("auto");
   const [verify, setVerify] = useState(false);
@@ -65,9 +69,11 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   const [modelReady, setModelReady] = useState(false);
   const [verificationCommands, setVerificationCommands] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"preview" | "review" | "">("");
   const [error, setError] = useState("");
   const [options, setOptions] = useState<Awaited<ReturnType<typeof reviewSourceOptions>> | null>(null);
   const [preview, setPreview] = useState<{ files: number; symbols: number; contracts: number; alignment: string; notes: string[] } | null>(null);
+  const [clusterPreview, setClusterPreview] = useState<ClusterPreview | null>(null);
   const [reviews, setReviews] = useState<Awaited<ReturnType<typeof recentReviews>>>([]);
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [purgeNote, setPurgeNote] = useState("");
@@ -120,6 +126,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   function chooseScope(next: "repository" | "service_cluster") {
     setReviewScope(next);
     setPreview(null);
+    setClusterPreview(null);
     if (next !== "service_cluster") return;
     const cluster = clusters.find((item) => item.cluster_id === clusterId) ?? clusters[0];
     if (!cluster) return;
@@ -131,6 +138,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
   function chooseCluster(nextId: string) {
     setClusterId(nextId);
     setPreview(null);
+    setClusterPreview(null);
     const cluster = clusters.find((item) => item.cluster_id === nextId);
     if (!cluster) return;
     const members = repos.filter((repo) => cluster.services.includes(serviceIdOf(repo)));
@@ -144,10 +152,12 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
     clusterId,
     repository,
     repositoryLabel: originLabel,
-    source: source.id as "working_tree" | "staged" | "commit" | "range" | "github_pr",
+    source: source.id as "working_tree" | "staged" | "commit" | "range" | "timeframe" | "github_pr",
     commit,
     base,
     head,
+    since,
+    until,
     prUrl,
     dirtyFiles: options ? options.dirty_files : null,
     stagedFiles: options ? options.staged_files : null,
@@ -172,6 +182,8 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
         commit: source.id === "commit" ? commit : null,
         base_ref: source.id === "range" ? base : null,
         head_ref: source.id === "range" ? head : null,
+        since: source.id === "timeframe" ? since : null,
+        until: source.id === "timeframe" ? until : null,
         pr_url: source.id === "github_pr" ? prUrl : null,
       },
     };
@@ -179,8 +191,14 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
 
   async function submit() {
     setBusy(true);
+    setBusyAction("review");
     setError("");
     try {
+      if (reviewScope === "service_cluster") {
+        const started = await runClusterReview(sourceBody());
+        navigate(`/review/cluster/${started.cluster_review_id}`);
+        return;
+      }
       const report = await runReview(sourceBody());
       if (report.job_id) navigate(`/review/${report.job_id}?job=1`);
       else if (report.review_id) navigate(`/review/${report.review_id}`);
@@ -189,13 +207,21 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
       setError(exc instanceof Error ? exc.message : "The review could not be started.");
     } finally {
       setBusy(false);
+      setBusyAction("");
     }
   }
 
   async function previewSource() {
     setBusy(true);
+    setBusyAction("preview");
     setError("");
     try {
+      if (reviewScope === "service_cluster") {
+        setPreview(null);
+        setClusterPreview(await previewClusterReview(sourceBody()));
+        return;
+      }
+      setClusterPreview(null);
       const view = await previewChange(sourceBody());
       setPreview({
         files: view.changed_files.length,
@@ -209,6 +235,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
       setError(exc instanceof Error ? exc.message : "The change preview could not be built.");
     } finally {
       setBusy(false);
+      setBusyAction("");
     }
   }
 
@@ -287,6 +314,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
               next.set("source", selectedItem?.id ?? "working_tree");
               setParams(next, { replace: true });
               setPreview(null);
+              setClusterPreview(null);
             }}
           />
         </Column>
@@ -302,6 +330,7 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
               onChange={({ selectedItem }) => {
                 setRepository(selectedItem?.slug ?? "");
                 setPreview(null);
+                setClusterPreview(null);
               }}
             />
           </Column>
@@ -332,6 +361,16 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
               onChange={({ selectedItem, inputValue }) => setCommit(selectedItem || inputValue || "")}
             />
           </Column>
+        ) : null}
+        {source.id === "timeframe" ? (
+          <>
+            <Column sm={4} md={4} lg={8}>
+              <TextInput id="time-from" labelText="From" type="date" value={since} onChange={(event) => { setSince(event.target.value); setPreview(null); setClusterPreview(null); }} />
+            </Column>
+            <Column sm={4} md={4} lg={8}>
+              <TextInput id="time-to" labelText="To" type="date" value={until} onChange={(event) => { setUntil(event.target.value); setPreview(null); setClusterPreview(null); }} />
+            </Column>
+          </>
         ) : null}
         {source.id === "range" ? (
           <>
@@ -365,11 +404,35 @@ export function ReviewPage({ snapshot }: { snapshot: AppState | null }) {
           {preview.notes.map((note) => <p key={note} className="helper">{note}</p>)}
         </div>
       ) : null}
+      {clusterPreview ? (
+        <div>
+          <p>{clusterPreview.cluster_label} · {clusterPreview.repository_total} repositories</p>
+          <p>Changed repositories: {clusterPreview.changed_count}</p>
+          <p>No changes: {clusterPreview.no_change_count}</p>
+          <ul className="cluster-progress-list">
+            {clusterPreview.repositories.filter((item) => item.change_detected).map((item) => (
+              <li key={item.service_id}>
+                <span>{item.service_id || item.repository}</span>
+                <p className="helper">{item.changed_file_count} changed file{item.changed_file_count === 1 ? "" : "s"}{item.commit_count ? ` · ${item.commit_count} commit${item.commit_count === 1 ? "" : "s"}` : ""}</p>
+                {(item.commits ?? []).map((commit) => (
+                  <p key={commit.sha} className="helper">{commit.committed_at.slice(0, 10)} · {commit.sha.slice(0, 7)} · {commit.subject}</p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="button-row">
-        {busy ? <InlineLoading description="Working" /> : (
+        {busy && busyAction === "review" && reviewScope === "service_cluster" ? (
+          <div>
+            <p>Reviewing {selectedCluster?.display_label || selectedCluster?.label || "cluster"} cluster</p>
+            <p className="helper">0 / {selectedCluster?.service_count ?? clusterPreview?.repository_total ?? 0} repositories inspected</p>
+            <p className="helper">Starting cluster review</p>
+          </div>
+        ) : busy ? <InlineLoading description={reviewScope === "service_cluster" && busyAction === "preview" ? "Inspecting repositories" : "Working"} /> : (
           <>
-            <Button kind="tertiary" disabled={!form.canPreview} onClick={() => void previewSource()}>Preview change</Button>
-            <Button kind="primary" disabled={!form.canReview} onClick={() => void submit()}>Review change</Button>
+            <Button kind="tertiary" disabled={!form.canPreview} onClick={() => void previewSource()}>{reviewScope === "service_cluster" ? "Preview cluster changes" : "Preview change"}</Button>
+            <Button kind="primary" disabled={!form.canReview} onClick={() => void submit()}>{reviewScope === "service_cluster" ? "Review cluster changes" : "Review change"}</Button>
           </>
         )}
       </div>

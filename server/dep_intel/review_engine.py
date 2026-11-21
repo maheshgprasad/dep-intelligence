@@ -43,7 +43,7 @@ from dep_intel.review_findings import build_findings
 from dep_intel.review_gate import decide_gate
 from dep_intel.review_model_provider import NoneProvider, model_configured, provider_from_env
 from dep_intel.review_models import MODULE_ABBREV, MODULE_NAME, NBG_VERSION, ORIGIN_STATEMENT, SCORE_NOTE, TEMPORAL_LIMIT, diagnostic
-from dep_intel.review_progress import progress_event, resolve_review_mode
+from dep_intel.review_progress import CLUSTER_STAGE_LABELS, progress_event, resolve_review_mode
 from dep_intel.review_policy import evaluate_policies, load_review_config
 from dep_intel.review_sources import materialize_worktree, remove_worktree, repository_allowed, resolve_change, retain_worktrees
 from dep_intel.review_store import read_review, render_markdown, review_dir, write_review
@@ -77,6 +77,7 @@ class ReviewEngine:
         review_id = str(body.get("review_id") or uuid.uuid4().hex)
         job_id = str(body.get("job_id") or "")
         self._on_progress = on_progress
+        self._cluster_context = _cluster_context(body.get("cluster_context"))
         timings: dict[str, float] = {}
         self._event("review_started", {"review_id": review_id, "job_id": job_id})
         self._progress(review_id, "resolve_change", job_id)
@@ -425,8 +426,16 @@ class ReviewEngine:
                 log.info("progress.callback_failed")
 
     def _event(self, name: str, data: dict) -> None:
+        payload = dict(data)
+        context = getattr(self, "_cluster_context", None) or {}
+        if context:
+            payload = {**context, **payload}
+            if name == "review_progress":
+                stage = str(payload.get("stage") or "")
+                payload["stage_label"] = CLUSTER_STAGE_LABELS.get(stage, payload.get("stage_label") or stage)
+                payload["repository_status"] = "reviewing"
         try:
-            self.publish(name, data)
+            self.publish(name, payload)
         except Exception:
             log.info(name)
 
@@ -741,12 +750,44 @@ def _manifest(review_id: str, report: dict, config: dict, mode: str) -> dict[str
     }
 
 
+def _cluster_context(value: Any) -> dict[str, Any]:
+    """Optional cluster identity attached to an otherwise unchanged repository review."""
+    if not isinstance(value, dict):
+        return {}
+    allowed = (
+        "cluster_review_id",
+        "cluster_id",
+        "cluster_label",
+        "repository",
+        "service_id",
+        "repository_index",
+        "repository_total",
+    )
+    context: dict[str, Any] = {}
+    for key in allowed:
+        item = value.get(key)
+        if item not in (None, ""):
+            context[key] = item
+    return context
+
+
 def _repository_path(source: dict[str, Any], settings: Settings) -> Path:
-    raw = str(source.get("repository") or "")
+    """Resolve a review repository to its checkout.
+
+    A slug or service id is matched to the allowlisted checkout. It is not
+    joined onto the application root. An absolute path is used only when it
+    does not match a known identity, and the allowlist still has to accept it.
+    """
+    raw = str(source.get("repository") or "").strip()
+    from dep_intel.repository_identity import resolve_repository_path
+
+    resolved = resolve_repository_path(settings, raw)
+    if resolved is not None:
+        return resolved
     path = Path(raw)
-    if not path.is_absolute():
-        path = settings.root / raw
-    return path
+    if path.is_absolute():
+        return path
+    return (settings.root / raw) if raw else settings.root
 
 
 def _service_id(settings: Settings, snapshot: Snapshot | None, requested: str, repo: Path) -> str:

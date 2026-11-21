@@ -33,6 +33,7 @@ import { ImpactExplorerPage } from "./pages/ImpactExplorerPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RepositoryHealthPage } from "./pages/RepositoryHealthPage";
 import { ResearchPage } from "./pages/ResearchPage";
+import { ClusterReviewDetailPage, ClusterReviewPage } from "./pages/ClusterReviewPage";
 import { ReviewDetailPage } from "./pages/ReviewDetailPage";
 import { ReviewPage } from "./pages/ReviewPage";
 
@@ -279,6 +280,8 @@ export function App() {
         <Routes>
           <Route path="/" element={<OverviewPage snapshot={snapshot} error={error} loaded={loaded} refreshing={Boolean(refreshing)} onRefresh={() => void refreshCore()} />} />
           <Route path="/review" element={<ReviewPage snapshot={snapshot} />} />
+          <Route path="/review/cluster/:clusterReviewId/detail" element={<ClusterReviewDetailPage />} />
+          <Route path="/review/cluster/:clusterReviewId" element={<ClusterReviewPage />} />
           <Route path="/review/:reviewId" element={<ReviewDetailPage />} />
           <Route path="/impact" element={<ImpactExplorerPage snapshot={snapshot} />} />
           <Route path="/architecture" element={<ArchitecturePage snapshot={snapshot} loaded={loaded} error={error} />} />

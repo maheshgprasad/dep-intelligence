@@ -571,6 +571,8 @@ class ReviewSourceBody(BaseModel):
     base_ref: str | None = None
     head_ref: str | None = None
     commit: str | None = None
+    since: str | None = None
+    until: str | None = None
     pr_url: str | None = None
     pr_number: int | None = None
     requested_by: str | None = None
@@ -604,7 +606,7 @@ def _review_engine():
 @app.post("/api/review/change-view")
 async def review_change_view(body: ReviewRunBody) -> dict:
     engine = _review_engine()
-    return await asyncio.to_thread(_call_review, engine.change_view, _with_checkout(body.model_dump()))
+    return await asyncio.to_thread(_call_review, engine.change_view, _prepare_review_payload(_with_checkout(body.model_dump())))
 
 
 @app.get("/api/review/source-options")
@@ -640,7 +642,7 @@ def reviews_list(limit: int = 20) -> dict:
 @app.post("/api/review/run")
 async def review_run(body: ReviewRunBody) -> dict:
     engine = _review_engine()
-    payload = _with_checkout(body.model_dump())
+    payload = _prepare_review_payload(_with_checkout(body.model_dump()))
     if payload.get("mode") in {"exact", "auto"}:
         cluster = get_engine(Settings.load())
         review_id = uuid.uuid4().hex
@@ -667,6 +669,142 @@ def _call_review(method, payload: dict) -> dict:
         return method(payload)
     except ReviewScopeError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+def _cluster_review_call(method, body: ReviewRunBody):
+    from dep_intel.review_scope import ReviewScopeError
+
+    try:
+        return method(Settings.load(), _with_checkout(body.model_dump()), get_engine(Settings.load()).current())
+    except ReviewScopeError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.post("/api/cluster-review/preview")
+async def cluster_review_preview(body: ReviewRunBody) -> dict:
+    from dep_intel.cluster_review import preview_cluster_review
+
+    return await asyncio.to_thread(_cluster_review_call, preview_cluster_review, body)
+
+
+@app.post("/api/cluster-review/run")
+async def cluster_review_run(body: ReviewRunBody) -> dict:
+    return await asyncio.to_thread(_start_cluster_review, body.model_dump())
+
+
+def _start_cluster_review(body: dict) -> dict:
+    from dep_intel.cluster_review import execute_cluster_review, prepare_cluster_review, public_cluster_review, save_cluster_review
+    from dep_intel.review_scope import ReviewScopeError
+
+    settings = Settings.load()
+    cluster = get_engine(settings)
+    payload = _with_checkout(body)
+    try:
+        record = prepare_cluster_review(settings, payload, cluster.current())
+    except ReviewScopeError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+    save_cluster_review(settings.output_dir, record)
+    publish("cluster_review_progress", public_cluster_review(record))
+
+    def _job(active) -> dict:
+        from dep_intel.cluster_review import _lock_for
+
+        with _lock_for(record["cluster_review_id"]):
+            record["job_id"] = active.id
+            save_cluster_review(settings.output_dir, record)
+        return execute_cluster_review(
+            record,
+            settings=settings,
+            body=payload,
+            publish=publish,
+            cancel=active.cancel,
+            on_progress=lambda percent: cluster.update_job_progress(active.id, percent),
+            cluster=cluster,
+        )
+
+    job = cluster.submit("cluster_review", _job)
+    from dep_intel.cluster_review import _lock_for
+
+    with _lock_for(record["cluster_review_id"]):
+        record["job_id"] = job.id
+        save_cluster_review(settings.output_dir, record)
+    return {
+        "cluster_review_id": record["cluster_review_id"],
+        "job_id": job.id,
+        "status": "running",
+        "repository_total": record["repository_total"],
+        "cluster_label": record["cluster_label"],
+    }
+
+
+@app.get("/api/cluster-review/{cluster_review_id}")
+def cluster_review_get(cluster_review_id: str) -> dict:
+    from dep_intel.cluster_review import load_cluster_review, public_cluster_review
+
+    record = load_cluster_review(Settings.load().output_dir, cluster_review_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail={"code": "cluster_review_not_found"})
+    return public_cluster_review(record)
+
+
+def _cluster_export(cluster_review_id: str, kind: str) -> FileResponse:
+    from dep_intel.cluster_interdependencies import evidence_zip, render_json, render_markdown, render_pdf
+    from dep_intel.cluster_review import load_cluster_review
+
+    settings = Settings.load()
+    record = load_cluster_review(settings.output_dir, cluster_review_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail={"code": "cluster_review_not_found"})
+    formats = {
+        "json": ("application/json", "json", lambda: json.dumps(render_json(record), indent=2).encode()),
+        "markdown": ("text/markdown", "md", lambda: render_markdown(record).encode()),
+        "pdf": ("application/pdf", "pdf", lambda: render_pdf(record)),
+        "evidence": ("application/zip", "zip", lambda: evidence_zip(record)),
+    }
+    if kind not in formats:
+        raise HTTPException(status_code=404, detail={"code": "cluster_export_unknown"})
+    media, extension, render = formats[kind]
+    directory = settings.output_dir / "cluster-reviews" / cluster_review_id
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"cluster-review.{extension}"
+    path.write_bytes(render())
+    return FileResponse(path, media_type=media, filename=f"nami-cluster-review-{cluster_review_id[:8]}.{extension}")
+
+
+@app.get("/api/cluster-review/{cluster_review_id}/export/pdf")
+async def cluster_review_export_pdf(cluster_review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_cluster_export, cluster_review_id, "pdf")
+
+
+@app.get("/api/cluster-review/{cluster_review_id}/export/markdown")
+async def cluster_review_export_markdown(cluster_review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_cluster_export, cluster_review_id, "markdown")
+
+
+@app.get("/api/cluster-review/{cluster_review_id}/export/json")
+async def cluster_review_export_json(cluster_review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_cluster_export, cluster_review_id, "json")
+
+
+@app.get("/api/cluster-review/{cluster_review_id}/export/evidence")
+async def cluster_review_export_evidence(cluster_review_id: str) -> FileResponse:
+    return await asyncio.to_thread(_cluster_export, cluster_review_id, "evidence")
+
+
+@app.post("/api/cluster-review/{cluster_review_id}/cancel")
+def cluster_review_cancel(cluster_review_id: str) -> dict:
+    from dep_intel.cluster_review import request_cluster_cancel
+
+    settings = Settings.load()
+    engine = get_engine(settings)
+
+    def _cancel(job_id: str) -> None:
+        engine.cancel_job(job_id)
+
+    payload = request_cluster_cancel(settings.output_dir, cluster_review_id, _cancel)
+    if payload is None:
+        raise HTTPException(status_code=404, detail={"code": "cluster_review_not_found"})
+    return payload
 
 
 @app.get("/api/review/config")
@@ -845,6 +983,24 @@ def _create_intelligence_report(scope: str, service: str, graph_version: str, re
         "graph_version": document["reproducibility"]["graph_version"],
         "readiness": (document.get("executive_summary") or {}).get("readiness"),
     }
+
+
+def _prepare_review_payload(payload: dict) -> dict:
+    """Turn a timeframe into the commit or range the existing review already runs."""
+    source = payload.get("source") or {}
+    if str(source.get("kind") or "") != "timeframe":
+        return payload
+    from dep_intel.commit_window import as_review_source
+
+    repository = str(source.get("repository") or "")
+    path = Path(repository)
+    if not path.is_dir():
+        raise HTTPException(status_code=400, detail={"code": "invalid_timeframe", "message": "The selected repository checkout is not available."})
+    try:
+        rewritten = as_review_source(source, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "invalid_timeframe", "message": str(exc)}) from exc
+    return {**payload, "source": rewritten}
 
 
 def _with_checkout(payload: dict) -> dict:
