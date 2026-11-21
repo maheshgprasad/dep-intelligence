@@ -140,8 +140,7 @@ def parse_repo_line(line: str, root: Path = PROJECT_ROOT) -> RepoRef:
 
 
 _SECTION = re.compile(r"^\[(standalone|cluster:([A-Za-z][A-Za-z0-9_-]*))\]$")
-_SERVICE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
-_BINDING = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(\S+)$")
+_BINDING = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(\S+)$")
 
 
 class RepoConfigError(ValueError):
@@ -159,7 +158,7 @@ def load_repos(settings: Settings) -> list[RepoRef]:
     ``[standalone]`` and ``[cluster:name]`` stay in effect until the next section.
     The service id stays on the left. A GitHub checkout slug stays derived from
     the URL so an existing clone is reused. A legacy line with no service id
-    keeps the slug-based service id.
+    keeps a safe derived service id.
     """
     if not settings.repos_file.is_file():
         return []

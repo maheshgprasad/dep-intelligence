@@ -17,6 +17,10 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
   const [service, setService] = useState(services[0]?.id || "");
   const [clusterId, setClusterId] = useState("");
   const [clusters, setClusters] = useState<ServiceClusterSummary[]>([]);
+  const selectedService = services.find((item) => item.id === service) ?? services[0] ?? null;
+  const resolvedService = selectedService?.id || "";
+  const selectedCluster = clusters.find((item) => item.cluster_id === clusterId) ?? clusters[0] ?? null;
+  const resolvedClusterId = selectedCluster?.cluster_id || "";
   const [reports, setReports] = useState<IntelligenceReportSummary[]>([]);
   const [drift, setDrift] = useState<Awaited<ReturnType<typeof releaseDrift>> | null>(null);
   const [confirmPurge, setConfirmPurge] = useState(false);
@@ -83,8 +87,10 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
             label="Choose a service cluster"
             items={clusters}
             itemToString={(item) => item ? `${item.label} — ${item.service_count} services · ${item.relationship_count} confirmed calls` : ""}
-            selectedItem={clusters.find((item) => item.cluster_id === clusterId) || clusters[0]}
-            onChange={({ selectedItem }) => setClusterId(selectedItem?.cluster_id || "")}
+            selectedItem={selectedCluster}
+            onChange={({ selectedItem }) => {
+              if (selectedItem?.cluster_id) setClusterId(selectedItem.cluster_id);
+            }}
           />
         ) : (
           <NamiEmptyState title="No connected service clusters were detected." description="Use Workspace or Single repository reporting instead." />
@@ -97,8 +103,10 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
           label="Choose a service"
           items={services}
           itemToString={(item) => item?.id ?? ""}
-          selectedItem={services.find((item) => item.id === service) || null}
-          onChange={({ selectedItem }) => setService(selectedItem?.id || "")}
+          selectedItem={selectedService}
+          onChange={({ selectedItem }) => {
+            if (selectedItem?.id) setService(selectedItem.id);
+          }}
         />
       ) : null}
       <Tile>
@@ -111,7 +119,7 @@ export function ReportsPage({ snapshot }: { snapshot: AppState | null }) {
           </>
         ) : <p>No earlier workspace report is stored.</p>}
       </Tile>
-      <GenerateReportButton scope={scope} service={service} clusterId={clusterId} staleCount={snapshot?.cluster?.stale_services?.length || 0} />
+      <GenerateReportButton scope={scope} service={resolvedService} clusterId={resolvedClusterId} staleCount={snapshot?.cluster?.stale_services?.length || 0} />
       <NamiDataTable
         title="Recent reports"
         columns={[

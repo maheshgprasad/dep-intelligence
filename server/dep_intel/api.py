@@ -367,7 +367,14 @@ async def refresh_intelligence() -> dict:
                 return
             await asyncio.to_thread(run_graphs, "", "", 365, on_nested)
             publish_progress("contracts", 70, "Discovering contracts")
-            await asyncio.to_thread(get_engine(Settings.load()).refresh)
+            refreshed = await asyncio.to_thread(get_engine(Settings.load()).refresh)
+            status = str((refreshed or {}).get("status") or "")
+            if status not in {"ok", ""}:
+                errors = (refreshed or {}).get("errors") or []
+                message = "; ".join(str(item) for item in errors) or f"Intelligence refresh stopped: {status}."
+                publish_progress("failed", 100, message)
+                publish("job_failed", {"name": "intelligence_refresh", "error": message})
+                return
             publish_progress("relationships", 82, "Resolving service relationships")
             publish_progress("topology", 90, "Building topology")
             try:
@@ -379,6 +386,9 @@ async def refresh_intelligence() -> dict:
             publish("file_updated", {"filename": "snapshot"})
             publish_progress("publish", 96, "Publishing intelligence")
             publish_progress("complete", 100, "Intelligence refreshed")
+        except Exception as exc:
+            publish_progress("failed", 100, str(exc) or "Intelligence refresh failed.")
+            raise
         finally:
             _running = False
 

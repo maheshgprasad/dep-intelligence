@@ -59,7 +59,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [streamNote, setStreamNote] = useState("");
   const dark = theme === "g100";
-  const refreshing = snapshot?.running || (progress.phase !== "idle" && progress.phase !== "complete");
+  const refreshing = snapshot?.running || (progress.phase !== "idle" && progress.phase !== "complete" && progress.phase !== "failed");
   const view = intelligenceView(snapshot, Boolean(refreshing));
 
   useEffect(() => {
@@ -110,7 +110,11 @@ export function App() {
     source.addEventListener("file_updated", () => scheduleRefresh());
     source.addEventListener("graph_updated", () => scheduleRefresh());
     source.addEventListener("job_completed", () => scheduleRefresh());
-    source.addEventListener("job_failed", () => scheduleRefresh());
+    source.addEventListener("job_failed", (event) => {
+      const data = JSON.parse((event as MessageEvent).data) as { error?: string };
+      if (data.error) setProgress({ phase: "failed", percent: 100, message: data.error, operation: "intelligence_refresh" });
+      scheduleRefresh();
+    });
     source.addEventListener("resync", () => {
       setStreamNote("The live event stream missed updates. The application state was reloaded.");
       scheduleRefresh();
@@ -265,11 +269,11 @@ export function App() {
       </Header>
       <Content id="main-content" className="app-content" aria-label="Main">
         {streamNote ? <p className="helper">{streamNote}</p> : null}
-        {refreshing && progress.message ? (
+        {(refreshing || progress.phase === "failed") && progress.message ? (
           <div className="activity-strip" role="status">
             <p>{progress.message}</p>
-            <ProgressBar label={progress.message} value={progress.percent || undefined} max={100} status="active" />
-            <p className="helper">Showing the previous snapshot while refresh is in progress.</p>
+            <ProgressBar label={progress.message} value={progress.percent || undefined} max={100} status={progress.phase === "failed" ? "error" : "active"} />
+            {refreshing ? <p className="helper">Showing the previous snapshot while refresh is in progress.</p> : null}
           </div>
         ) : null}
         <Routes>

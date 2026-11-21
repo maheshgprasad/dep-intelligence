@@ -1,6 +1,7 @@
 import { CheckmarkFilled, ErrorFilled, Incomplete, WarningAltFilled } from "@carbon/icons-react";
 import { Tag, Tile } from "@carbon/react";
 import type { ReviewReport } from "../api";
+import { GateOutcomeBanner } from "./GateOutcomeBanner";
 import { decisionCopy } from "../reviewLabels";
 
 const ICONS = {
@@ -35,6 +36,7 @@ export function AssessmentSummary({ report }: { report: ReviewReport }) {
       <p className="section-title">{required ? "Next step" : "Recommended next step"}</p>
       <p>{next}</p>
       {enforcement ? <p className="helper">{enforcementText(enforcement.enforcement_mode, enforcement.workflow_prevented)}</p> : null}
+      <GateOutcomeBanner />
     </Tile>
   );
 }

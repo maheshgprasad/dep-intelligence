@@ -5,6 +5,7 @@ import { getIntelligenceReport, type IntelligenceReport } from "../api";
 import { evidenceLine, externalTargetNote, legacySummary, providerDiscoveryText, rankingLine, scopeDescription, validationLines } from "../reportPresentation";
 import { IntelligenceExportMenu } from "../components/IntelligenceExportMenu";
 import { NamiDataTable } from "../components/NamiDataTable";
+import { GateOutcomeBanner } from "../components/GateOutcomeBanner";
 import { PageHeader } from "../components/PageHeader";
 
 export function ReportDetailPage() {
@@ -139,6 +140,7 @@ function ReviewActivity({ activity }: { activity: IntelligenceReport["review_act
     <Tile>
       <h2 className="section-title">Review activity</h2>
       <p>Pass {counts.pass ?? 0}. Warn {counts.warn ?? 0}. Block {counts.block ?? 0}. Incomplete {counts.incomplete ?? 0}.</p>
+      <GateOutcomeBanner />
       <p className="helper">{activity?.note || "Counts include all stored reviews that matched this report scope at generation time."}</p>
       <h3 className="section-title">Reviews requiring attention</h3>
       {omitted > 0 ? <p className="helper">Showing {reviews.length} of {reviews.length + omitted} attention-bearing reviews.</p> : null}

@@ -18,7 +18,14 @@ export function GenerateReportButton({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  const missingCluster = scope === "service_cluster" && !clusterId;
+  const missingService = scope === "repository" && !service;
+
   async function generate(refresh: boolean) {
+    if (missingCluster || missingService) {
+      setError(missingCluster ? "Choose a service cluster before generating this report." : "Choose a repository before generating this report.");
+      return;
+    }
     setBusy(refresh ? "Refreshing published intelligence" : "Collecting current intelligence");
     setError("");
     try {
@@ -39,8 +46,8 @@ export function GenerateReportButton({
         <InlineNotification kind="warning" title="Current intelligence is out of date" subtitle={`${staleCount} service${staleCount === 1 ? " is" : "s are"} out of date. Generate from the current snapshot, or refresh intelligence first.`} lowContrast hideCloseButton />
       ) : null}
       <div className="button-row">
-        <Button kind="primary" size="sm" disabled={Boolean(busy) || (scope === "repository" && !service) || (scope === "service_cluster" && !clusterId)} onClick={() => void generate(false)}>Generate from current intelligence</Button>
-        <Button kind="ghost" size="sm" disabled={Boolean(busy)} onClick={() => void generate(true)}>Refresh intelligence first</Button>
+        <Button kind="primary" size="sm" disabled={Boolean(busy) || missingCluster || missingService} onClick={() => void generate(false)}>Generate from current intelligence</Button>
+        <Button kind="ghost" size="sm" disabled={Boolean(busy) || missingCluster || missingService} onClick={() => void generate(true)}>Refresh intelligence first</Button>
       </div>
       {busy ? <InlineLoading description={busy} status="active" /> : null}
       {error ? <InlineNotification kind="error" title="Report" subtitle={error} lowContrast hideCloseButton /> : null}
