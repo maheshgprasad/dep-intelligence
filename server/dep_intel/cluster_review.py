@@ -7,6 +7,7 @@ changed. This module does not score impact or decide a Gate.
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from pathlib import Path
@@ -18,6 +19,8 @@ from dep_intel.review_progress import CLUSTER_STAGE_LABELS, REVIEW_STAGES
 from dep_intel.review_scope import ReviewScopeError, display_cluster_label, ensure_cluster_reference
 from dep_intel.service_clusters import get_service_cluster
 from dep_intel.store import now, read_json, write_json
+
+log = logging.getLogger("nami.cluster.review")
 
 ACTIVE_STATUSES = {"inspecting", "reviewing"}
 INSPECTED_STATUSES = {"no_change", "completed", "failed"}
@@ -216,6 +219,11 @@ def public_cluster_review(record: dict[str, Any]) -> dict[str, Any]:
         "assessment": record.get("assessment"),
         "analysis_stage": record.get("analysis_stage") or "",
         "analysis_label": record.get("analysis_label") or "",
+        "source": {
+            "kind": (record.get("source") or {}).get("kind") or "",
+            "since": (record.get("source") or {}).get("since") or "",
+            "until": (record.get("source") or {}).get("until") or "",
+        },
         "interdependencies": public_analysis(record.get("interdependencies")),
         "copy_summary": copy_summary(record),
     }
@@ -544,6 +552,7 @@ class _ClusterRun:
             decision="" if cancelled else decision,
             validation_status="" if cancelled else str(validation.get("status") or ""),
             affected_services=[] if cancelled else affected,
+            reason_codes=[] if cancelled else [str(item) for item in gate.get("reason_codes") or [] if item],
             contract_changes=[] if cancelled else [item for item in report.get("contract_changes") or [] if isinstance(item, dict)],
             error_code="cancelled" if cancelled else "",
             error_summary="The repository review was cancelled." if cancelled else "",
@@ -592,9 +601,11 @@ class _ClusterRun:
         if status != "cancelled":
             try:
                 analysis = self._analyze()
-            except Exception as exc:
+            except Exception:
+                log.exception("cluster interdependency analysis failed")
                 analysis = {
                     "comparison_mode": "partial",
+                    "comparison_coverage": {"services_total": len(self.record.get("repositories") or []), "services_partial": []},
                     "summary": {},
                     "items": [],
                     "changed_services": [],
@@ -602,9 +613,18 @@ class _ClusterRun:
                     "unchanged_but_affected_services": [],
                     "temporal_context": [],
                     "change_set": {},
-                    "diagnostic": str(exc)[:240],
+                    "limitations": ["Cluster interdependency analysis incomplete."],
+                    "diagnostic": {
+                        "code": "analysis_incomplete",
+                        "stage": self.record.get("analysis_stage") or "compare_interdependencies",
+                        "message": "Cluster interdependency analysis incomplete",
+                    },
                 }
                 self.record["interdependencies"] = analysis
+        if self._cancelled() or (isinstance(analysis, dict) and analysis.get("cancelled")):
+            status = "cancelled"
+        elif isinstance(analysis, dict) and (analysis.get("diagnostic") or {}).get("code") == "analysis_incomplete" and status == "completed":
+            status = "incomplete"
         assessment = synthesize_assessment(self.record["repositories"], status)
         if analysis is not None:
             assessment = fold_assessment(assessment, analysis, status)
@@ -622,42 +642,118 @@ class _ClusterRun:
             self.on_progress(int(payload.get("percent") or 0))
 
     def _analyze(self) -> dict[str, Any]:
-        from dep_intel.cluster_interdependencies import analyze_interdependencies, boundary_refs
+        from dep_intel.cluster_dependency_state import build_review_boundaries
+        from dep_intel.cluster_interdependencies import analyze_interdependencies
         from dep_intel.service_clusters import confirmed_relationships
 
         source = dict(self.record.get("source") or {})
-        prepared = []
         self._analysis_stage("collect_change_set", "Collecting cluster change set")
+        if self._cancelled():
+            return {"cancelled": True, "comparison_mode": "partial", "summary": {}, "items": []}
+        prepared = []
         for member in self.record["repositories"]:
-            row = {
+            prepared.append({
                 "service_id": member.get("service_id") or "",
                 "changed": bool(member.get("change_detected")) and member.get("status") == "completed",
                 "review_id": member.get("review_id") or "",
                 "decision": member.get("decision") or "",
+                "reason_codes": list(member.get("reason_codes") or []),
                 "contract_changes": list(member.get("contract_changes") or []),
+                "affected_services": list(member.get("affected_services") or []),
+                "changed_file_count": int(member.get("changed_file_count") or 0),
+                "commit_count": int(member.get("commit_count") or 0),
+                "repository_path": member.get("repository_path") or "",
+                "repository": member.get("repository") or "",
                 "before_ref": "",
                 "after_ref": "",
-            }
-            repo = Path(str(member.get("repository_path") or ""))
-            if source.get("kind") == "timeframe" and source.get("since") and source.get("until"):
-                row.update(boundary_refs(repo, str(source.get("since") or ""), str(source.get("until") or "")))
-            prepared.append(row)
-        self._analysis_stage("build_before_state", "Building dependency baseline")
+            })
         relationships = self._relationships(confirmed_relationships)
-        self._analysis_stage("build_after_state", "Building changed dependency state")
-        self._analysis_stage("compare_interdependencies", "Comparing interdependencies")
-        self._analysis_stage("correlate_changes", "Correlating repository changes")
+        reconstruct = any(str(item.get("repository_path") or "") and Path(str(item.get("repository_path"))).is_dir() for item in prepared)
+        before_state = None
+        after_state = None
+        mode = "evidence_derived"
+        coverage = None
+        limitations = None
+        if reconstruct:
+            directory = cluster_review_dir(self.output_dir, str(self.record.get("cluster_review_id") or ""))
+
+            def progress(kind: str, done: int, total: int) -> None:
+                if kind == "before":
+                    self._analysis_stage("build_before_state", f"Building before dependency state · {done} / {total} services")
+                else:
+                    self._analysis_stage("build_after_state", f"Building after dependency state · {done} / {total} services")
+
+            self._analysis_stage("build_before_state", "Building before dependency state")
+            built = build_review_boundaries(
+                prepared,
+                source,
+                settings=self.settings,
+                work_dir=directory / "worktrees",
+                cancel=self._cancelled,
+                on_progress=progress,
+            )
+            if built.get("cancelled") or self._cancelled():
+                return {"cancelled": True, "comparison_mode": "partial", "summary": {}, "items": [], "before_state": built.get("before_state"), "after_state": built.get("after_state")}
+            before_state = built.get("before_state")
+            after_state = built.get("after_state")
+            mode = str(built.get("comparison_mode") or "partial")
+            coverage = built.get("comparison_coverage") or {}
+            limitations = list(built.get("limitations") or [])
+            examined = len((after_state or {}).get("relationships") or []) + len((before_state or {}).get("relationships") or [])
+            self._analysis_stage("compare_interdependencies", f"Comparing {examined} relationship states")
+        else:
+            self._analysis_stage("compare_interdependencies", "Comparing interdependencies")
+        if self._cancelled():
+            return {"cancelled": True, "comparison_mode": "partial", "summary": {}, "items": []}
+        self._analysis_stage("correlate_changes", "Correlating provider and consumer changes")
         analysis = analyze_interdependencies(
             prepared,
-            relationships,
+            None if reconstruct else relationships,
             source=source,
             cluster_id=str(self.record.get("cluster_id") or ""),
+            comparison_mode=mode,
+            before_state=before_state,
+            after_state=after_state,
+            comparison_coverage=coverage,
+            limitations=limitations,
         )
+        if reconstruct:
+            # Published relationships are not the boundary. Temporal notes may still be attached.
+            temporal = [item for item in relationships if str(item.get("provenance") or "").lower() in {"temporal", "temporal_only", "history", "cochange"} or item.get("temporal_only")]
+            if temporal:
+                from dep_intel.cluster_interdependencies import _temporal_note
+
+                analysis["temporal_context"] = list(analysis.get("temporal_context") or []) + [_temporal_note(item) for item in temporal]
+        self._analysis_stage("synthesize_cluster", "Building dependency paths")
         self._analysis_stage("synthesize_cluster", "Building cluster assessment")
+        self._write_analysis(analysis)
         with self.lock:
             self.record["interdependencies"] = analysis
-        self._analysis_stage("write_cluster_report", "Generating cluster report")
+        self._analysis_stage("write_cluster_report", "Writing cluster report")
         return analysis
+
+    def _write_analysis(self, analysis: dict[str, Any]) -> None:
+        import json
+
+        from dep_intel.path_hygiene import scrub_value
+
+        directory = cluster_review_dir(self.output_dir, str(self.record.get("cluster_review_id") or "")) / "analysis"
+        directory.mkdir(parents=True, exist_ok=True)
+        files = {
+            "before-state.json": analysis.get("before_state") or {},
+            "after-state.json": analysis.get("after_state") or {},
+            "comparison.json": {
+                "comparison_mode": analysis.get("comparison_mode"),
+                "comparison_coverage": analysis.get("comparison_coverage"),
+                "summary": analysis.get("summary"),
+                "items": analysis.get("items"),
+                "dependency_paths": analysis.get("dependency_paths"),
+                "limitations": analysis.get("limitations"),
+            },
+            "cluster-evidence.json": analysis.get("cluster_evidence") or [],
+        }
+        for name, body in files.items():
+            (directory / name).write_text(json.dumps(scrub_value(body), indent=2, sort_keys=True), encoding="utf-8")
 
     def _relationships(self, confirmed_relationships) -> list[dict[str, Any]]:
         snapshot = None
